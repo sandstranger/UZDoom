@@ -13,6 +13,7 @@ enum class ELightBlendMode : uint8_t
 	DEFAULT = CLAMP,
 };
 
+__attribute__((aligned(16)))
 struct HWViewpointUniforms
 {
 	VSMatrix mProjectionMatrix;
@@ -27,8 +28,8 @@ struct HWViewpointUniforms
 	float mClipHeight = 0.f;
 	float mClipHeightDirection = 0.f;
 	int mShadowmapFilter = 1;
-
 	int mLightBlendMode = 0;
+	FVector4 mPadding;
 
 	void CalcDependencies()
 	{

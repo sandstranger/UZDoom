@@ -74,7 +74,11 @@ int HWViewpointBuffer::Bind(FRenderState &di, unsigned int index)
 	if (index != mLastMappedIndex)
 	{
 		mLastMappedIndex = index;
-		mBuffer->BindRange(&di, index * mBlockAlign, mBlockAlign);
+		size_t start = index * mBlockAlign;
+		size_t size = sizeof(HWViewpointUniforms);
+		size = (size + screen->uniformblockalignment - 1)
+			   & ~(screen->uniformblockalignment - 1);
+		mBuffer->BindRange(&di, start, size);
 		di.EnableClipDistance(0, mClipPlaneInfo[index]);
 	}
 	return index;
