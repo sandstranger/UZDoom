@@ -52,6 +52,7 @@
 #include "gl_renderer.h"
 #ifdef ANDROID
 #include "gles_system.h"
+#include "AngleShaderCache.h"
 #endif
 
 #ifdef HAVE_GLES2
@@ -661,6 +662,10 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *hMonitor, bool fullscreen)
 		}
 		else
 		{
+#if ANDROID
+			SDL_GL_MakeCurrent(Priv::window, GLContext);
+			angle_blobcache_install("uzdoom");
+#endif
 			break;
 		}
 	}
