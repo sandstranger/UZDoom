@@ -30,6 +30,10 @@
 #include "printf.h"
 #include "cmdlib.h"
 
+#if ANDROID
+extern bool gEnableSpirvCross;
+#endif
+
 namespace OpenGLRenderer
 {
 
@@ -109,9 +113,21 @@ void FShaderProgram::CompileShader(ShaderType type)
 	FGLDebug::LabelObject(GL_SHADER, handle, mShaderNames[type].GetChars());
 
 	const FString &patchedCode = mShaderSources[type];
-	int lengths[1] = { (int)patchedCode.Len() };
-	const char *sources[1] = { patchedCode.GetChars() };
-	glShaderSource(handle, 1, sources, lengths);
+#if ANDROID
+    if (gEnableSpirvCross) {
+        extern std::string ConvertShaderToGLES(const char *shaderSource, bool isVertexShader);
+        const FString spirvCode = ConvertShaderToGLES(patchedCode.GetChars(), type == Vertex);
+        const int spirvLengths[1] = {(int) spirvCode.Len()};
+        const char *spirvSources[1] = {spirvCode.GetChars()};
+        glShaderSource(handle, 1, spirvSources, spirvLengths);
+    } else{
+#endif
+        int lengths[1] = { (int)patchedCode.Len() };
+        const char *sources[1] = { patchedCode.GetChars() };
+        glShaderSource(handle, 1, sources, lengths);
+#if ANDROID
+    }
+#endif
 
 	glCompileShader(handle);
 
@@ -268,7 +284,11 @@ FString FShaderProgram::PatchShader(ShaderType type, const FString &code, const 
 
 	int shaderVersion = min((int)round(gl.glslversion * 10) * 10, maxGlslVersion);
 #ifdef ANDROID
-	patchedCode.AppendFormat("#version 310 es\n#define NO_CLIPDISTANCE_SUPPORT\n");
+	if (gEnableSpirvCross) {
+		patchedCode.AppendFormat("#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n");
+	} else{
+		patchedCode.AppendFormat("#version 310 es\n#define NO_CLIPDISTANCE_SUPPORT\n");
+	}
 #else
 	patchedCode.AppendFormat("#version %d\n", shaderVersion);
 #endif
@@ -279,12 +299,14 @@ FString FShaderProgram::PatchShader(ShaderType type, const FString &code, const 
 	// #extension GL_ARB_shader_storage_buffer_object : require
 
 #ifdef ANDROID // Actually this is needed before the defines
+if (!gEnableSpirvCross) {
 	patchedCode << "precision highp int;\n";
 	patchedCode << "precision highp float;\n";
 	patchedCode << "precision highp sampler2D;\n";
 	patchedCode << "precision highp sampler2DArray;\n";
 	patchedCode << "precision highp samplerCube;\n";
 	patchedCode << "precision highp sampler2DMS;\n";
+}
 #endif
 
 	if (defines)

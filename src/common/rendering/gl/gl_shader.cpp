@@ -49,14 +49,23 @@
 #include "gl_renderer.h"
 #include <map>
 #include <memory>
-
+#if ANDROID
+#include "SDL.h"
+#endif
 
 EXTERN_CVAR(Bool, r_skipmats)
 #ifdef ANDROID
 EXTERN_CVAR(Bool, gl_customshader)
 extern bool gl_lite_shader;
-#endif
+bool gEnableSpirvCross = false;
 
+extern "C" {
+__attribute__((used)) __attribute__((visibility("default")))
+void setSpirvCrossState(const bool enableSpirvCross) {
+    gEnableSpirvCross = enableSpirvCross;
+}
+}
+#endif
 
 namespace OpenGLRenderer
 {
@@ -70,6 +79,28 @@ struct ProgramBinary
 static const char *ShaderMagic = "ZDSC";
 
 static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a TMap because it doesn't support unique_ptr move semantics
+
+#if ANDROID
+    typedef char* (*GLSLtoGLSLES_t)(const char*, GLenum, unsigned int, unsigned int, int*);
+    static GLSLtoGLSLES_t GLSLtoGLSLES_c = nullptr;
+
+    std::string ConvertShaderToGLES(const char* shaderSource, bool isVertexShader)
+    {
+        if (GLSLtoGLSLES_c == nullptr) {
+            GLSLtoGLSLES_c =(GLSLtoGLSLES_t) SDL_LoadFunction(SDL_LoadObject("libng_gl4es.so"), "GLSLtoGLSLES_c");
+        }
+        const int glesVersion = 310;
+        const unsigned int sourceGLVersion = 410;
+        const auto stage = isVertexShader ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER;
+        int returnCode = 0;
+        SDL_Log("IS NULL = %d", GLSLtoGLSLES_c == nullptr);
+        auto glesShader  = GLSLtoGLSLES_c(shaderSource, stage,glesVersion,sourceGLVersion,&returnCode);
+        std::string result = glesShader;
+        free(glesShader);
+        return result;
+    }
+#endif
+
 
 bool IsShaderCacheActive()
 {
@@ -500,7 +531,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 
 #ifdef ANDROID
     bool lightbuffertype = screen->mLights->GetBufferType();
-	vp_comb.AppendFormat("#version 310 es\n#define NO_CLIPDISTANCE_SUPPORT\n#define NUM_UBO_LIGHTS %d\n#define NUM_UBO_BONES %d\n", screen->mLights->GetBlockSize(), screen->mBones->GetBlockSize());
+    if (gEnableSpirvCross){
+        vp_comb.AppendFormat("#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n#define NUM_UBO_LIGHTS %d\n#define NUM_UBO_BONES %d\n", screen->mLights->GetBlockSize(), screen->mBones->GetBlockSize());
+    } else{
+        vp_comb.AppendFormat("#version 310 es\n#define NO_CLIPDISTANCE_SUPPORT\n#define NUM_UBO_LIGHTS %d\n#define NUM_UBO_BONES %d\n", screen->mLights->GetBlockSize(), screen->mBones->GetBlockSize());
+    }
 #else
 	if ((gl.flags & RFL_SHADER_STORAGE_BUFFER) && screen->allowSSBO())
 		vp_comb << "#version 430 core\n#define SUPPORTS_SHADOWMAPS\n";
@@ -633,16 +668,29 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 
 		FGLDebug::LabelObject(GL_SHADER, hVertProg, vert_prog_lump);
 		FGLDebug::LabelObject(GL_SHADER, hFragProg, frag_prog_lump);
+#if ANDROID
+        if (gEnableSpirvCross) {
+            const FString spirv_vp_comb = ConvertShaderToGLES(vp_comb.GetChars(), true);
+            const FString spirv_fp_comb = ConvertShaderToGLES(fp_comb.GetChars(), false);
+            const int vp_size = (int)spirv_vp_comb.Len();
+            const int fp_size = (int)spirv_fp_comb.Len();
+            const char *spirv_vp_ptr = spirv_vp_comb.GetChars();
+            const char *spirv_fp_ptr = spirv_fp_comb.GetChars();
+            glShaderSource(hVertProg, 1, &spirv_vp_ptr, &vp_size);
+            glShaderSource(hFragProg, 1, &spirv_fp_ptr, &fp_size);
+        } else {
+#endif
+            int vp_size = (int) vp_comb.Len();
+            int fp_size = (int) fp_comb.Len();
 
-		int vp_size = (int)vp_comb.Len();
-		int fp_size = (int)fp_comb.Len();
+            const char *vp_ptr = vp_comb.GetChars();
+            const char *fp_ptr = fp_comb.GetChars();
 
-		const char *vp_ptr = vp_comb.GetChars();
-		const char *fp_ptr = fp_comb.GetChars();
-
-		glShaderSource(hVertProg, 1, &vp_ptr, &vp_size);
-		glShaderSource(hFragProg, 1, &fp_ptr, &fp_size);
-
+            glShaderSource(hVertProg, 1, &vp_ptr, &vp_size);
+            glShaderSource(hFragProg, 1, &fp_ptr, &fp_size);
+#if ANDROID
+        }
+#endif
 		GLint status = 0;
 
 		bool errored = false;
