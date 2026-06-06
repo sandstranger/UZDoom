@@ -143,6 +143,16 @@ void FShaderProgram::Link(const char *name)
 
 	bool loadedFromBinary = false;
 
+	if (binary.Size() > 0 && glProgramBinary)
+	{
+		if (mProgram == 0)
+			mProgram = glCreateProgram();
+		glProgramBinary(mProgram, binaryFormat, binary.Data(), binary.Size());
+		GLint status = 0;
+		glGetProgramiv(mProgram, GL_LINK_STATUS, &status);
+		loadedFromBinary = (status == GL_TRUE);
+	}
+
 	if (!loadedFromBinary)
 	{
 		CompileShader(Vertex);
@@ -155,6 +165,15 @@ void FShaderProgram::Link(const char *name)
 		if (status == GL_FALSE)
 		{
 			I_FatalError("Link Shader '%s':\n%s\n", name, GetProgramInfoLog(mProgram).GetChars());
+		}
+		else if (glProgramBinary && IsShaderCacheActive())
+		{
+			int binaryLength = 0;
+			glGetProgramiv(mProgram, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
+			binary.Resize(binaryLength);
+			glGetProgramBinary(mProgram, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
+			binary.Resize(binaryLength);
+			SaveCachedProgramBinary(mShaderSources[Vertex], mShaderSources[Fragment], binary, binaryFormat);
 		}
 	}
 
