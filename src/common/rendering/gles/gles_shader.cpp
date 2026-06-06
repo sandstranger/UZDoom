@@ -78,7 +78,7 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
 bool IsShaderCacheActive()
 {
 #if ANDROID
-	return true;
+	return !USING_GLES_2;
 #endif
 	static bool active = true;
 	static bool firstcall = true;
