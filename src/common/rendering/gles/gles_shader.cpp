@@ -77,6 +77,9 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
 
 bool IsShaderCacheActive()
 {
+#if ANDROID
+	return true;
+#endif
 	static bool active = true;
 	static bool firstcall = true;
 
@@ -567,6 +570,14 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 
 	bool linked = false;
 
+	if (binary.Size() > 0 && glProgramBinary)
+	{
+		glProgramBinary(shaderData->hShader, binaryFormat, binary.Data(), binary.Size());
+		GLint status = 0;
+		glGetProgramiv(shaderData->hShader, GL_LINK_STATUS, &status);
+		linked = (status == GL_TRUE);
+	}
+
 	if (!linked)
 	{
 		shaderData->hVertProg = glCreateShader(GL_VERTEX_SHADER);
@@ -624,6 +635,15 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		{
 			// only print message if there's an error.
 			I_Error("Init Shader '%s':\n%s\n", name, error.GetChars());
+		}
+		else if (glProgramBinary && IsShaderCacheActive())
+		{
+			int binaryLength = 0;
+			glGetProgramiv(shaderData->hShader, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
+			binary.Resize(binaryLength);
+			glGetProgramBinary(shaderData->hShader, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
+			binary.Resize(binaryLength);
+			SaveCachedProgramBinary(vp_comb, fp_comb, binary, binaryFormat);
 		}
 	}
 	else
