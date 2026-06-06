@@ -93,7 +93,6 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
         const unsigned int sourceGLVersion = 410;
         const auto stage = isVertexShader ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER;
         int returnCode = 0;
-        SDL_Log("IS NULL = %d", GLSLtoGLSLES_c == nullptr);
         auto glesShader  = GLSLtoGLSLES_c(shaderSource, stage,glesVersion,sourceGLVersion,&returnCode);
         std::string result = glesShader;
         free(glesShader);
