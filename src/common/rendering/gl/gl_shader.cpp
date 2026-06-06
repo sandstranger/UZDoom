@@ -150,7 +150,7 @@ static FString CreateProgramCacheName(bool create)
 	FString path = M_GetCachePath(create);
 	if (create) CreatePath(path.GetChars());
 #if ANDROID
-	path << "/gl_shadercache.zdsc";
+	path << (gEnableSpirvCross ? "/spirv_gl_shadercache.zdsc" : "/gl_shadercache.zdsc");
 #else
     path << "/shadercache.zdsc";
 #endif
