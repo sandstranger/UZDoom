@@ -74,7 +74,7 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
 bool IsShaderCacheActive()
 {
 #ifdef ANDROID
-	return false;
+	return true;
 #endif
 	static bool active = true;
 	static bool firstcall = true;
@@ -119,7 +119,11 @@ static FString CreateProgramCacheName(bool create)
 {
 	FString path = M_GetCachePath(create);
 	if (create) CreatePath(path.GetChars());
-	path << "/shadercache.zdsc";
+#if ANDROID
+	path << "/gl_shadercache.zdsc";
+#else
+    path << "/shadercache.zdsc";
+#endif
 	return path;
 }
 

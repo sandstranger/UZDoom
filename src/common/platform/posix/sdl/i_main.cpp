@@ -74,6 +74,7 @@ void Linux_I_FatalError(const char* errortext);
 #if ANDROID
 string g_pathToUserFolder;
 string g_pathToSDLControllerDB;
+string gPathToCacheFolder;
 #endif
 
 // PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
@@ -262,8 +263,9 @@ bool needToReInitGameControllers (){
     return false;
 }
 __attribute__((used)) __attribute__((visibility("default")))
-void setPathToUserFolder (const char *pathToUserFolder) {
+void setPathsToFolders (const char *pathToUserFolder, const char* pathToCacheFolder) {
     g_pathToUserFolder = pathToUserFolder;
+	gPathToCacheFolder = pathToCacheFolder;
 }
 
 __attribute__((used)) __attribute__((visibility("default")))

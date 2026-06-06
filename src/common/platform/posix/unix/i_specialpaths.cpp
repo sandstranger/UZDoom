@@ -82,6 +82,7 @@ DEFGETPATH(Pictures, "XDG_PICTURES_DIR", "$HOME/Pictures");
 #undef DEFGETPATH
 #else
 extern string g_pathToUserFolder;
+extern string gPathToCacheFolder;
 
 const char* GetConfigPath()
 {
@@ -91,7 +92,7 @@ const char* GetConfigPath()
 
 const char* GetCachePath()
 {
-    string cachePath = g_pathToUserFolder + "/cache";
+    string cachePath = gPathToCacheFolder + "/uzdoom_cache";
     return cachePath.c_str();
 }
 
