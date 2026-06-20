@@ -104,7 +104,7 @@ void GLBuffer::SetData(size_t size, const void *data, BufferUsageType usage)
 	}
 	else if (usage == BufferUsageType::Mappable)
 	{
-		glBufferData(mUseType, size, nullptr, GL_STATIC_DRAW);
+		glBufferData(mUseType, size, nullptr, GL_STREAM_DRAW);
 		map = nullptr;
 	}
 	buffersize = size;
