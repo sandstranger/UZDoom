@@ -191,15 +191,8 @@ void GLBuffer::GPUDropSync()
 
 void GLBuffer::GPUWaitSync()
 {
-	GLenum status = glClientWaitSync(mGLSync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000 * 1000 * 50); // Wait for a max of 50ms...
-
-	if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
-	{
-		//Printf("Error on glClientWaitSync: %d\n", status);
-	}
-
+	glWaitSync(mGLSync, 0, 1000 * 1000 * 50);// Wait for a max of 50ms...
 	glDeleteSync(mGLSync);
-
 	mGLSync = NULL;
 }
 
