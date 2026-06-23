@@ -36,9 +36,9 @@
 
 #include <SDL2/SDL.h>
 #include <csignal>
-#include <locale.h>
+#include <clocale>
 #include <new>
-#include <signal.h>
+#include <csignal>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
@@ -53,6 +53,9 @@
 #include "printf.h"
 #include "version.h"
 #include <string>
+#ifdef ANDROID
+#include "SwappyController.h"
+#endif
 // MACROS ------------------------------------------------------------------
 
 // TYPES -------------------------------------------------------------------
@@ -212,7 +215,9 @@ int main (int argc, char **argv)
 
 	I_StartupJoysticks();
 	const int result = GameMain();
-
+#ifdef ANDROID
+	DestroySwappy();
+#endif
 	SDL_Quit();
 
 	return result;

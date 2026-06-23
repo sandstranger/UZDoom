@@ -1884,8 +1884,11 @@ void TryRunTics (void)
 	int 		numplaying;
 
 	bool doWait = (cl_capfps || pauseext || (r_NoInterpolate && !M_IsAnimated()));
-
+#ifndef ANDROID
 	if (vid_dontdowait && ((vid_maxfps > 0) || (vid_vsync == true)))
+#else
+	if (vid_dontdowait)
+#endif
 		doWait = false;
 
 	if (!AppActive && vid_lowerinbackground)

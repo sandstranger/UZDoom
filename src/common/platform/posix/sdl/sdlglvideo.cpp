@@ -53,6 +53,7 @@
 #ifdef ANDROID
 #include "gles_system.h"
 #include "AngleShaderCache.h"
+#include "SwappyController.h"
 #endif
 
 #ifdef HAVE_GLES2
@@ -231,7 +232,11 @@ namespace Priv
 
 	void SetupPixelFormat(int multisample, const int *glver)
 	{
+#ifndef ANDROID
 		SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+#else
+		SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
+#endif
 		SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 		if (multisample > 0) {
@@ -722,6 +727,11 @@ void SystemGLFrameBuffer::SetVSync( bool vsync )
 
 void SystemGLFrameBuffer::SwapBuffers()
 {
+#ifdef ANDROID
+	if(SwappySwapBuffers()){
+		return;
+	}
+#endif
 	SDL_GL_SwapWindow(Priv::window);
 }
 

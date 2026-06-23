@@ -179,7 +179,7 @@ void *GLBuffer::Lock(unsigned int size)
 	SetData(size, nullptr, BufferUsageType::Mappable);
 	if (!isData && gles.useMappedBuffers)
 	{
-		return glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+		return glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
 	}
 	else
 	{

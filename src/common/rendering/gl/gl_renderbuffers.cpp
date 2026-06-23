@@ -195,7 +195,7 @@ void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool need
 	{
 		if (needsSceneTextures)
 		{
-			mSceneMultisampleTex = Create2DMultisampleTexture("SceneMultisample", GL_RGBA16F, width, height, samples, false);
+			mSceneMultisampleTex = Create2DMultisampleTexture("SceneMultisample", GL_RGB10_A2, width, height, samples, false);
 			mSceneDepthStencilTex = Create2DMultisampleTexture("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, samples, false);
 			mSceneFogTex = Create2DMultisampleTexture("SceneFog", GL_RGBA8, width, height, samples, false);
 			mSceneNormalTex = Create2DMultisampleTexture("SceneNormal", GL_RGB10_A2, width, height, samples, false);
@@ -204,7 +204,7 @@ void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool need
 		}
 		else
 		{
-			mSceneMultisampleBuf = CreateRenderBuffer("SceneMultisample", GL_RGBA16F, width, height, samples);
+			mSceneMultisampleBuf = CreateRenderBuffer("SceneMultisample", GL_RGB10_A2, width, height, samples);
 			mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, samples);
 			mSceneFB = CreateFrameBuffer("SceneFB", mSceneMultisampleBuf, mSceneDepthStencilBuf);
 			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mSceneMultisampleBuf, mSceneDepthStencilBuf);

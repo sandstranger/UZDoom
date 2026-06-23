@@ -144,7 +144,7 @@ void *GLBuffer::Lock(unsigned int size)
 {
 	// This initializes this buffer as a static object with no data.
 	SetData(size, nullptr, BufferUsageType::Mappable);
-	return glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+	return glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
 }
 
 void GLBuffer::Unlock()
@@ -181,19 +181,23 @@ void GLBuffer::Resize(size_t newsize)
 
 void GLBuffer::GPUDropSync()
 {
+#ifndef ANDROID
 	if (mGLSync != NULL)
 	{
 		glDeleteSync(mGLSync);
 	}
 
 	mGLSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+#endif
 }
 
 void GLBuffer::GPUWaitSync()
 {
+#ifndef ANDROID
 	glWaitSync(mGLSync, 0, 1000 * 1000 * 50);// Wait for a max of 50ms...
 	glDeleteSync(mGLSync);
 	mGLSync = NULL;
+#endif
 }
 
 //===========================================================================
