@@ -216,7 +216,7 @@ void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool need
 		{
 			mSceneDepthStencilTex = Create2DTexture("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height);
 			mSceneFogTex = Create2DTexture("SceneFog", GL_RGBA8, width, height);
-			mSceneNormalTex = Create2DTexture("SceneNormal", GL_RGB10_A2, width, height);
+			mSceneNormalTex = Create2DTexture("SceneNormal", GL_RGBA8, width, height);
 			mSceneFB = CreateFrameBuffer("SceneFB", mPipelineTexture[0], {}, {}, mSceneDepthStencilTex, false);
 			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mPipelineTexture[0], mSceneFogTex, mSceneNormalTex, mSceneDepthStencilTex, false);
 		}
