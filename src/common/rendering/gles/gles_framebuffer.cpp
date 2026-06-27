@@ -191,7 +191,9 @@ void OpenGLFrameBuffer::CopyScreenToBuffer(int width, int height, uint8_t* scr)
 	GLRenderer->CopyToBackbuffer(&bounds, false);
 
 	// strictly speaking not needed as the glReadPixels should block until the scene is rendered, but this is to safeguard against shitty drivers
+#ifndef ANDROID	
 	glFinish();
+#endif	
 #ifdef ANDROID //karin: glReadPixels using GL_RGBA
 	uint8_t* scr4 = (uint8_t *)calloc(width * height * 4, 1);
 	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, scr4);
@@ -377,7 +379,9 @@ void OpenGLFrameBuffer::SetSceneRenderTarget(bool useSSAO)
 
 void OpenGLFrameBuffer::WaitForCommands(bool finish)
 {
+#ifndef ANDROID	
 	glFinish();
+#endif	
 }
 
 
@@ -496,7 +500,9 @@ FTexture *OpenGLFrameBuffer::WipeStartScreen()
 
 	auto tex = new FWrapperTexture(viewport.width, viewport.height, 1);
 	tex->GetSystemTexture()->CreateTexture(nullptr, viewport.width, viewport.height, 0, false, "WipeStartScreen");
+#ifndef ANDROID	
 	glFinish();
+#endif	
 	static_cast<FHardwareTexture*>(tex->GetSystemTexture())->Bind(0, false);
 
 	GLRenderer->mBuffers->BindCurrentFB();
@@ -518,7 +524,9 @@ FTexture *OpenGLFrameBuffer::WipeEndScreen()
 	const auto &viewport = screen->mScreenViewport;
 	auto tex = new FWrapperTexture(viewport.width, viewport.height, 1);
 	tex->GetSystemTexture()->CreateTexture(NULL, viewport.width, viewport.height, 0, false, "WipeEndScreen");
+#ifndef ANDROID	
 	glFinish();
+#endif
 	static_cast<FHardwareTexture*>(tex->GetSystemTexture())->Bind(0, false);
 	GLRenderer->mBuffers->BindCurrentFB();
 	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport.left, viewport.top, viewport.width, viewport.height);

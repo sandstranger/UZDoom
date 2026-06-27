@@ -75,7 +75,7 @@ CVAR(Bool, win_maximized, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITC
 CVAR(Bool, r_skipmats, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 
 // 0 means 'no pipelining' for non GLES2 and 4 elements for GLES2
-CUSTOM_CVAR(Int, gl_pipeline_depth, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
+CUSTOM_CVAR(Int, gl_pipeline_depth, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 {
 	if (self < 0 || self >= HW_MAX_PIPELINE_BUFFERS) self = 0;
 	Printf("Changing the pipeline depth requires a restart for " GAMENAME ".\n");
