@@ -314,7 +314,7 @@ PPGLTexture FGLRenderBuffers::Create2DTexture(const char *name, GLuint format, i
 #ifdef ANDROID // FIXME
 	if (format == GL_RGBA16F)
 	{
-		format = GL_RGBA;
+		format = GL_RGBA8;
 		dataformat = GL_RGBA;
 		datatype = GL_UNSIGNED_BYTE;
 	}
