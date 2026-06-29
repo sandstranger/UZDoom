@@ -78,6 +78,12 @@ void Linux_I_FatalError(const char* errortext);
 string g_pathToUserFolder;
 string g_pathToSDLControllerDB;
 string gPathToCacheFolder;
+
+namespace OpenGLRenderer
+{
+    extern void UnloadNGGL4ESPTR();
+}
+
 #endif
 
 // PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
@@ -216,6 +222,7 @@ int main (int argc, char **argv)
 	I_StartupJoysticks();
 	const int result = GameMain();
 #ifdef ANDROID
+    OpenGLRenderer::UnloadNGGL4ESPTR();
 	DestroySwappy();
 #endif
 	SDL_Quit();

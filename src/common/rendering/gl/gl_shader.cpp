@@ -82,12 +82,15 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
 
 #if ANDROID
     typedef char* (*GLSLtoGLSLES_t)(const char*, GLenum, unsigned int, unsigned int, int*);
-    static GLSLtoGLSLES_t GLSLtoGLSLES_c = nullptr;
+	static void* ngGL4ESPTR = nullptr;
 
     std::string ConvertShaderToGLES(const char* shaderSource, bool isVertexShader)
     {
-        if (GLSLtoGLSLES_c == nullptr) {
-            GLSLtoGLSLES_c =(GLSLtoGLSLES_t) SDL_LoadFunction(SDL_LoadObject("libng_gl4es.so"), "GLSLtoGLSLES_c");
+		static GLSLtoGLSLES_t GLSLtoGLSLES_c = nullptr;
+
+		if (GLSLtoGLSLES_c == nullptr) {
+			ngGL4ESPTR = SDL_LoadObject("libng_gl4es.so");
+			GLSLtoGLSLES_c =(GLSLtoGLSLES_t) SDL_LoadFunction(ngGL4ESPTR, "GLSLtoGLSLES_c");
         }
         const int glesVersion = 310;
         const unsigned int sourceGLVersion = 410;
@@ -98,6 +101,14 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
         free(glesShader);
         return result;
     }
+
+	void UnloadNGGL4ESPTR()
+	{
+		if (ngGL4ESPTR!= nullptr)
+		{
+			SDL_UnloadObject(ngGL4ESPTR);
+		}
+	}
 #endif
 
 
