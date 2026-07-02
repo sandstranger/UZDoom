@@ -507,9 +507,7 @@ void OpenGLFrameBuffer::UpdateShadowMap()
 
 void OpenGLFrameBuffer::WaitForCommands(bool finish)
 {
-#ifndef ANDROID	
 	glFinish();
-#endif	
 }
 
 void OpenGLFrameBuffer::SetSaveBuffers(bool yes)

@@ -379,9 +379,7 @@ void OpenGLFrameBuffer::SetSceneRenderTarget(bool useSSAO)
 
 void OpenGLFrameBuffer::WaitForCommands(bool finish)
 {
-#ifndef ANDROID	
 	glFinish();
-#endif	
 }
 
 
