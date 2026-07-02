@@ -181,23 +181,19 @@ void GLBuffer::Resize(size_t newsize)
 
 void GLBuffer::GPUDropSync()
 {
-#ifndef ANDROID
 	if (mGLSync != NULL)
 	{
 		glDeleteSync(mGLSync);
 	}
 
 	mGLSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-#endif
 }
 
 void GLBuffer::GPUWaitSync()
 {
-#ifndef ANDROID
-	glWaitSync(mGLSync, 0, 1000 * 1000 * 50);// Wait for a max of 50ms...
+	glClientWaitSync(mGLSync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000 * 1000 * 50);
 	glDeleteSync(mGLSync);
 	mGLSync = NULL;
-#endif
 }
 
 //===========================================================================
