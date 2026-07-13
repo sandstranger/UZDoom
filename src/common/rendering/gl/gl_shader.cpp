@@ -107,6 +107,7 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
 		if (ngGL4ESPTR!= nullptr)
 		{
 			SDL_UnloadObject(ngGL4ESPTR);
+			ngGL4ESPTR = nullptr;
 		}
 	}
 #endif
