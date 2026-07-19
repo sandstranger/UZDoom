@@ -179,21 +179,24 @@ void GLBuffer::Resize(size_t newsize)
 	}
 }
 
+void GLBuffer::GPUWaitSync()
+{
+	if (mGLSync != nullptr)
+	{
+		GLenum status = glClientWaitSync(mGLSync, 0, 1000 * 1000 * 50); // 50ms timeout
+		glDeleteSync(mGLSync);
+		mGLSync = nullptr;
+	}
+}
+
 void GLBuffer::GPUDropSync()
 {
-	if (mGLSync != NULL)
+	if (mGLSync != nullptr)
 	{
 		glDeleteSync(mGLSync);
 	}
 
 	mGLSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-}
-
-void GLBuffer::GPUWaitSync()
-{
-	glClientWaitSync(mGLSync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000 * 1000 * 50);
-	glDeleteSync(mGLSync);
-	mGLSync = NULL;
 }
 
 //===========================================================================
