@@ -183,7 +183,10 @@ void GLBuffer::GPUWaitSync()
 {
 	if (mGLSync != nullptr)
 	{
-		GLenum status = glClientWaitSync(mGLSync, 0, 1000 * 1000 * 50); // 50ms timeout
+        const GLenum status = glClientWaitSync(mGLSync, 0, 1000 * 1000 * 16);
+        if (status == GL_TIMEOUT_EXPIRED) {
+            glClientWaitSync(mGLSync, 0, 1000 * 1000 * 50);
+        }
 		glDeleteSync(mGLSync);
 		mGLSync = nullptr;
 	}
