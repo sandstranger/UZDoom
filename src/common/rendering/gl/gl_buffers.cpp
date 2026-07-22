@@ -123,7 +123,7 @@ void GLBuffer::Map()
 	if (!mPersistent && !nomap)
 	{
 		Bind();
-		map = (FFlatVertex*)glMapBufferRange(mUseType, 0, buffersize, GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT);
+		map = (FFlatVertex*)glMapBufferRange(mUseType, 0, buffersize, GL_MAP_WRITE_BIT| GL_MAP_INVALIDATE_BUFFER_BIT |GL_MAP_UNSYNCHRONIZED_BIT);
 		InvalidateBufferState();
 	}
 }
