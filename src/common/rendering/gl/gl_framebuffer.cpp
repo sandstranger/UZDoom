@@ -305,7 +305,6 @@ void OpenGLFrameBuffer::Swap()
 	else
 	{
 		mVertexData->DropSync();
-		glFlush();   
 		FPSLimit();
 		SwapBuffers();
 
