@@ -164,6 +164,8 @@ void I_DetectOS()
 void I_StartupJoysticks();
 
 #ifdef ANDROID
+static int SDLCALL AndroidLifeCycleEventFilter(void*, SDL_Event* event);
+
 int SDL_main(int argc, char **argv)
 #else
 int main (int argc, char **argv)
@@ -196,7 +198,9 @@ int main (int argc, char **argv)
 		fprintf (stderr, "Could not initialize SDL:\n%s\n", SDL_GetError());
 		return -1;
 	}
-
+#ifdef ANDROID
+	SDL_AddEventWatch(AndroidLifeCycleEventFilter, nullptr);
+#endif
 	printf("\n");
 
 	Args = new FArgs(argc, argv);
@@ -233,7 +237,6 @@ int main (int argc, char **argv)
 #ifdef ANDROID
 #include "menustate.h"
 #include "i_soundinternal.h"
-extern bool engineInitialized;
 extern bool StartScreenRendered;
 bool gl_lite_shader = false;
 extern bool AppActive;
@@ -246,17 +249,9 @@ void UpdateGLLiteShaderState (bool enableGLLiteShader){
 
 __attribute__((used)) __attribute__((visibility("default")))
 void onNativeResume() {
-    if (engineInitialized) {
-        S_SetSoundPaused(1);
-    }
-    AppActive = true;
 }
 __attribute__((used)) __attribute__((visibility("default")))
 void onNativePause() {
-    if (engineInitialized) {
-        S_SetSoundPaused(0);
-    }
-    AppActive = false;
 }
 __attribute__((used)) __attribute__((visibility("default")))
 bool needToShowScreenControls() {
@@ -287,5 +282,20 @@ void setPathToSDLControllerDB (const char *pathToSDLControllerDB){
 __attribute__((used)) __attribute__((visibility("default")))
 void setUseGLES2_0State(const bool useGLES2_0) {
 }
+}
+
+static int SDLCALL AndroidLifeCycleEventFilter(void*, SDL_Event* event){
+	switch (event->type)
+	{
+		case SDL_APP_WILLENTERBACKGROUND:
+			S_SetSoundPaused(0);
+			AppActive = false;
+			break;
+		case SDL_APP_DIDENTERFOREGROUND:
+			S_SetSoundPaused(1);
+			AppActive = true;
+			break;
+	}
+	return 1;
 }
 #endif
