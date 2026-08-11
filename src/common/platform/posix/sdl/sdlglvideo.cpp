@@ -749,6 +749,7 @@ void ProcessSDLWindowEvent(const SDL_WindowEvent &event)
 
 #endif
         case SDL_WINDOWEVENT_RESIZED:
+        case SDL_WINDOWEVENT_SIZE_CHANGED:	
 #ifndef ANDROID
             if (!vid_fullscreen && !Priv::fullscreenSwitch)
             {
