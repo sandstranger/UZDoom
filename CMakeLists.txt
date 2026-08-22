@@ -503,7 +503,7 @@ add_subdirectory( wadsrc_lights )
 add_subdirectory( wadsrc_extra )
 add_subdirectory( wadsrc_widepix )
 
-if( ZMUSIC_SYSTEM_INSTALL )
+if( ZMUSIC_SYSTEM_INSTALL OR ANDROID )
 	# Internal ZMusic library provides miniz target, miniz.h file in partuclar
 	# It's not the case with system-wide ZMusic installation
 	add_subdirectory( libraries/miniz )

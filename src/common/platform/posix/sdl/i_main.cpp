@@ -77,7 +77,7 @@ namespace OpenGLRenderer
 void Mac_I_FatalError(const char* errortext);
 #endif
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(ANDROID)
 void Linux_I_FatalError(const char* errortext);
 
 static void Linux_I_TryRestart(char **argv)
@@ -101,7 +101,7 @@ static void I_TryRestart(char **argv)
 {
 	// TODO: Mac support
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(ANDROID)
 	Linux_I_TryRestart(argv);
 #endif
 }
@@ -313,11 +313,7 @@ bool needToShowScreenControls() {
 }
 __attribute__((used)) __attribute__((visibility("default")))
 bool needToInvokeMouseButtonsEvents(){
-    bool isMenuActive = menuactive!=MENU_Off;
-    if (isMenuActive){
-        StartScreenRendered = false;
-    }
-    return isMenuActive || StartScreenRendered;
+    return menuactive!=MENU_Off;
 }
 __attribute__((used)) __attribute__((visibility("default")))
 bool needToReInitGameControllers (){

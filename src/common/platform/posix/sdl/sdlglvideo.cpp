@@ -191,16 +191,11 @@ namespace Priv
         Priv::window = SDL_CreateWindow(caption.GetChars(), 0, 0, 0, 0, extraFlags);
 
         int windowWidth, windowHeight;
-
-        if (V_GetBackend() != 1) {
-            SDL_GL_GetDrawableSize(Priv::window, &windowWidth, &windowHeight);
-        } else {
-            SDL_Vulkan_GetDrawableSize(Priv::window, &windowWidth, &windowHeight);
-        }
+        SDL_GL_GetDrawableSize(Priv::window, &windowWidth, &windowHeight);
 
         win_w = windowWidth;
         win_h = windowHeight;
-#endif		
+#endif
 	}
 
 	void DestroyWindow()
@@ -225,7 +220,7 @@ namespace Priv
 			SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
 			SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, multisample);
 		}
-#ifndef ANDROID		
+#ifndef ANDROID
 		if (gl_debug)
 			SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
 
@@ -264,14 +259,14 @@ namespace Priv
             SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
             SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
         }
-#endif		
+#endif
 	}
 }
 
 
 CUSTOM_CVAR(Int, vid_adapter, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL)
 {
-#ifndef ANDROID	
+#ifndef ANDROID
   if (Priv::window != nullptr) {
 		// Get displays and default display size
 		Priv::updateDisplayInfo();
@@ -324,7 +319,7 @@ CUSTOM_CVAR(Int, vid_adapter, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITC
 			Printf("A problem occured trying to change of display %s\n", SDL_GetError());
 		}
   }
-#endif  
+#endif
 }
 
 class SDLVideo : public IVideo
@@ -519,14 +514,14 @@ bool SystemBaseFrameBuffer::IsFullscreen ()
 {
 #ifdef ANDROID
     return true;
-#else	
+#else
 	return (SDL_GetWindowFlags(Priv::window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
-#endif	
+#endif
 }
 
 void SystemBaseFrameBuffer::ToggleFullscreen(bool yes)
 {
-#ifndef ANDROID	
+#ifndef ANDROID
 	SDL_ShowWindow(Priv::window);
 	SDL_SetWindowFullscreen(Priv::window, yes ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
 	if ( !yes )
@@ -542,12 +537,12 @@ void SystemBaseFrameBuffer::ToggleFullscreen(bool yes)
 			SetWindowSize(win_w, win_h);
 		}
 	}
-#endif	
+#endif
 }
 
 void SystemBaseFrameBuffer::SetWindowSize(int w, int h)
 {
-#ifndef ANDROID		
+#ifndef ANDROID
 	if (w < VID_MIN_WIDTH || h < VID_MIN_HEIGHT)
 	{
 		w = VID_MIN_WIDTH;
@@ -571,7 +566,7 @@ void SystemBaseFrameBuffer::SetWindowSize(int w, int h)
 		win_y = y;
 
 	}
-#endif	
+#endif
 }
 
 
@@ -613,7 +608,7 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *hMonitor, bool fullscreen)
 		Priv::SetupPixelFormat(0, glvers[glveridx]);
 #ifdef ANDROID
 		Priv::CreateWindow(SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP );
-#else		
+#else
 		Priv::CreateWindow(SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN | (fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
 #endif
 		if (Priv::window == nullptr)
@@ -631,7 +626,7 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *hMonitor, bool fullscreen)
 #ifdef ANDROID
 			SDL_GL_MakeCurrent(Priv::window, GLContext);
 			angle_blobcache_install("uzdoom");
-#endif			
+#endif
 			break;
 		}
 	}
@@ -692,7 +687,7 @@ void SystemGLFrameBuffer::SwapBuffers()
 	if(SwappySwapBuffers()){
 		return;
 	}
-#endif	
+#endif
 	SDL_GL_SwapWindow(Priv::window);
 }
 
@@ -701,7 +696,7 @@ void ProcessSDLWindowEvent(const SDL_WindowEvent &event)
 {
 	switch (event.event)
 	{
-#ifndef ANDROID		
+#ifndef ANDROID
 	extern bool AppActive;
 
 	case SDL_WINDOWEVENT_FOCUS_GAINED:
@@ -725,7 +720,7 @@ void ProcessSDLWindowEvent(const SDL_WindowEvent &event)
 		break;
 #endif
 	case SDL_WINDOWEVENT_RESIZED:
-    case SDL_WINDOWEVENT_SIZE_CHANGED:			
+    case SDL_WINDOWEVENT_SIZE_CHANGED:
 #ifndef ANDROID
 		if (!vid_fullscreen && !Priv::fullscreenSwitch)
 		{
@@ -736,8 +731,8 @@ void ProcessSDLWindowEvent(const SDL_WindowEvent &event)
 		int w,h;
         SDL_GL_GetDrawableSize(Priv::window, &w, &h);
         win_w = w;
-        win_h = h;		
-#endif		
+        win_h = h;
+#endif
 		break;
 
 	case SDL_WINDOWEVENT_MAXIMIZED:

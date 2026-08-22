@@ -29,10 +29,16 @@
 
 #include "basics.h"
 #include "c_console.h"
+#ifndef ANDROID
 #include "gitinfo.h"
+#endif
 #include "version.h"
 #include "versioninfo.h"
 #include "zstring.h"
+
+#ifdef ANDROID
+#define TEST_MESSAGE "test_commit"
+#endif
 
 //==========================================================================
 //
@@ -42,7 +48,11 @@
 
 const char *GetVersionString()
 {
+#ifndef ANDROID
 	return GIT_DESCRIPTION;
+#else
+    return TEST_MESSAGE;
+#endif
 }
 
 //==========================================================================
@@ -53,7 +63,11 @@ const char *GetVersionString()
 
 const char *GetGitHash()
 {
+#ifndef ANDROID
 	return GIT_HASH;
+#else
+    return TEST_MESSAGE;
+#endif
 }
 
 //==========================================================================
@@ -64,7 +78,11 @@ const char *GetGitHash()
 
 const char *GetGitTime()
 {
+#ifndef ANDROID
 	return GIT_TIME;
+#else
+    return TEST_MESSAGE;
+#endif
 }
 
 //==========================================================================
@@ -75,7 +93,11 @@ const char *GetGitTime()
 
 const char *GetGitTag()
 {
+#ifndef ANDROID
 	return GIT_TAG;
+#else
+    return TEST_MESSAGE;
+#endif
 }
 
 //==========================================================================
@@ -86,17 +108,25 @@ const char *GetGitTag()
 
 int GetGitDistance()
 {
+#ifndef ANDROID
 	return GIT_DISTANCE;
+#else
+    return 1;
+#endif
 }
 
 VersionInfo GetCurrentVersionForUpdater()
 {
 	static VersionInfo version = ([]() {
+#ifndef ANDROID
 		VersionInfo v = VersionInfo{GIT_DESCRIPTION};
 		assert(v.major == VER_MAJOR);
 		assert(v.minor == VER_MINOR);
 		assert(v.revision == VER_REVISION);
 		DEBUG_LOG("%d|%d|%d|%s|%s", v.major, v.minor, v.revision, v.prerelease, v.build);
+#else
+        VersionInfo v = VersionInfo{TEST_MESSAGE};
+#endif
 		return v;
 	})();
 

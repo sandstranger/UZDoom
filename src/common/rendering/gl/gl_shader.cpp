@@ -154,7 +154,7 @@ static FString CreateProgramCacheName(bool create)
 #ifdef ANDROID
 	path << (gEnableSpirvCross ? "/spirv_glshadercache" : "/glshadercache");
 #else
-	path << "/glshadercache";	
+	path << "/glshadercache";
 #endif
 	return path;
 }
@@ -715,10 +715,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 #if ANDROID
         }
 #endif
-		GLint status = 0;
-
-		bool errored = false;
-
 		GLint status = 0;
 
 		bool errored = false;
