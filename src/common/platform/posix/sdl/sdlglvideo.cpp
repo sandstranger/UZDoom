@@ -205,14 +205,8 @@ namespace Priv
         Priv::window = SDL_CreateWindow(caption.GetChars(), 0, 0, 0, 0, extraFlags);
 
         int windowWidth, windowHeight;
-
-        if (V_GetBackend() != 1) {
-            SDL_GL_GetDrawableSize(Priv::window, &windowWidth, &windowHeight);
-        } else {
-            SDL_Vulkan_GetDrawableSize(Priv::window, &windowWidth, &windowHeight);
-        }
-
-        win_w = windowWidth;
+		SDL_GL_GetDrawableSize(Priv::window, &windowWidth, &windowHeight);
+		win_w = windowWidth;
         win_h = windowHeight;
 #endif
 	}
@@ -758,11 +752,7 @@ void ProcessSDLWindowEvent(const SDL_WindowEvent &event)
             }
 #else
             int w,h;
-            if (!Priv::vulkanEnabled) {
-                SDL_GL_GetDrawableSize(Priv::window, &w, &h);
-            } else {
-                SDL_Vulkan_GetDrawableSize(Priv::window, &w, &h);
-            }
+			SDL_GL_GetDrawableSize(Priv::window, &w, &h);
             win_w = w;
             win_h = h;
 #endif

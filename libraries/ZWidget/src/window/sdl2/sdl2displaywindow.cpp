@@ -173,11 +173,7 @@ Rect SDL2DisplayWindow::GetWindowFrame() const
 	int h = 0;
 	double uiscale = GetDpiScale();
 	SDL_GetWindowPosition(WindowHandle, &x, &y);
-    if (isVulkanEnabled()){
-        SDL_Vulkan_GetDrawableSize(WindowHandle, &w, &h);
-    } else{
-        SDL_GL_GetDrawableSize(WindowHandle, &w, &h);
-    }
+    SDL_GL_GetDrawableSize(WindowHandle, &w, &h);
 	return Rect::xywh(x / uiscale, y / uiscale, w / uiscale, h / uiscale);
 }
 
