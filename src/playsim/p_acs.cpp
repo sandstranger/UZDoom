@@ -5373,6 +5373,7 @@ int DLevelScript::SwapActorTeleFog(AActor *activator, int tid)
 		} \
 	} while(0)
 
+
 int DLevelScript::CallFunction(int argCount, int funcIndex, int32_t *args, int &needCount)
 {
 	AActor *actor;

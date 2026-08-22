@@ -2198,7 +2198,12 @@ void TryRunTics()
 	}
 
 	bool doWait = (cl_capfps || pauseext || (!netgame && r_NoInterpolate && !M_IsAnimated()));
-	if (vid_dontdowait && (vid_maxfps > 0 || vid_vsync))
+
+#ifndef ANDROID
+	if (vid_dontdowait && (vid_maxfps > 0 || vid_vsync))	
+#else
+	if (vid_dontdowait)
+#endif
 		doWait = false;
 	if (!netgame && !AppActive && vid_lowerinbackground)
 		doWait = true;

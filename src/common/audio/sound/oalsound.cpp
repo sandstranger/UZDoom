@@ -71,7 +71,7 @@ CUSTOM_CVAR (Float, snd_superstereowidth, 0.45f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
 #ifdef _WIN32
 #define OPENALLIB "soft_oal.dll"
-#elif defined(__OpenBSD__)
+#elif defined(__OpenBSD__) || defined(ANDROID)
 #define OPENALLIB "libopenal.so"
 #else
 #define OPENALLIB "libopenal.so.1"

@@ -81,7 +81,7 @@
 #include "version.h"
 #include "vm.h"
 #include "wi_stuff.h"
-
+#include <miniz.h>
 // MACROS ------------------------------------------------------------------
 
 #define MAXPLMOVE        (forwardmove[1])

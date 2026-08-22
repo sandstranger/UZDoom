@@ -54,6 +54,7 @@
 #include <array>
 #include <string_view>
 #include <vector>
+#include "SDL_log.h"
 
 namespace Console::Defaults
 {
@@ -468,6 +469,10 @@ int PrintString (PrintFlag iprintlevel, const char *outline)
 		if (prebuffer) prebuffer->push_back({iprintlevel, outline});
 		return 0;
 	}
+
+#ifdef ANDROID
+    SDL_Log("%s", outline);
+#endif
 
 	auto ret = ::detail::PrintString(iprintlevel, outline);
 

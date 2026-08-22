@@ -32,6 +32,7 @@ if( NOT ZDOOM_ENABLE_SWR )
 	add_definitions( -DNO_SWRENDERER )
 endif()
 
+if (NOT ANDROID)
 target_architecture(TARGET_ARCHITECTURE)
 message(STATUS "Architecture is ${TARGET_ARCHITECTURE}")
 
@@ -44,6 +45,23 @@ if( ${TARGET_ARCHITECTURE} MATCHES "x86_64" )
 	set( X64 64 )
 	add_definitions( -DARCH_IA32 )
 endif()
+else ()
+    if ( ${ANDROID_ABI} STREQUAL "arm64" )
+        set (ARM64 aarch64)
+        add_definitions( -DNO_SSE -D__ARM__ -DRAPIDJSON_ENDIAN=RAPIDJSON_LITTLEENDIAN)
+    endif()
+
+    if (${ANDROID_ABI} STREQUAL "armeabi-v7a")
+        add_definitions( -DNO_SSE -D__ARM__ -DRAPIDJSON_ENDIAN=RAPIDJSON_LITTLEENDIAN)
+    endif()
+
+    if( ${ANDROID_ABI} STREQUAL "x86_64" )
+        set( X64 64 )
+    endif()
+    if( X64 OR ${ANDROID_ABI} STREQUAL "x86" )
+        add_definitions( -DARCH_IA32 )
+    endif()
+endif ()
 
 if( NOT PROJECT_LIBRARIES )
 	set( PROJECT_LIBRARIES "" )
@@ -85,7 +103,10 @@ if( WIN32 )
 		endif()
 	endif()
 else()
-	if( APPLE )
+    if (ANDROID)
+        set( NO_GTK ON )
+        set( DYN_GTK OFF )
+    elseif ( APPLE )
 		# Prevent inclusion of fp.h and FixMath.h from Carbon framework
 		# Declarations from these files are not used but cause the following conflicts:
 		#  - redefinition of 'FixedToFloat' and 'FloatToFixed' macros
@@ -288,11 +309,13 @@ option(BUILD_FLATPAK "Enable Flatpak-specific build options" OFF)
 
 # Update gitinfo.h
 
+if (NOT ANDROID)
 add_custom_target( revision_check
 	COMMAND "${CMAKE_COMMAND}" -P "${CMAKE_SOURCE_DIR}/cmake/UpdateRevision.cmake" "${CMAKE_BINARY_DIR}/gitinfo.h"
 	BYPRODUCTS "${CMAKE_BINARY_DIR}/gitinfo.h"
 	WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+endif ()
 
 # required libraries
 
@@ -386,6 +409,7 @@ if (HAVE_VULKAN)
 	list (APPEND PLAT_WIN32_SOURCES common/platform/win32/win32vulkanvideo.cpp )
 endif()
 
+if (NOT ANDROID)
 # todo: implement an actual crash catcher for ARM
 # for now this is purely experimental
 if (NOT ${TARGET_ARCHITECTURE} MATCHES "arm" )
@@ -395,6 +419,7 @@ if (MSVC AND ${TARGET_ARCHITECTURE} MATCHES "arm")
 	set (PLAT_WIN32_SOURCES ${PLAT_WIN32_SOURCES} common/platform/win32/i_crash_arm.cpp )
 	add_definitions( -DNO_SSE -D__ARM__ -DRAPIDJSON_ENDIAN=RAPIDJSON_LITTLEENDIAN)
 endif()
+endif ()
 
 set( PLAT_POSIX_SOURCES
 	posix/i_steam.cpp
@@ -494,6 +519,7 @@ else()
 	endif( NOT NO_OPENMP )
 endif()
 
+if (NOT ANDROID)
 add_custom_command( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/xlat_parser.c ${CMAKE_CURRENT_BINARY_DIR}/xlat_parser.h
 	COMMAND lemon -C${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/gamedata/xlat/xlat_parser.y
 	DEPENDS lemon ${CMAKE_CURRENT_SOURCE_DIR}/gamedata/xlat/xlat_parser.y )
@@ -505,6 +531,19 @@ add_custom_command( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/zcc-parse.c ${CMAKE_CURRE
 add_custom_command( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sc_man_scanner.h
 	COMMAND re2c --no-generation-date -s -o ${CMAKE_CURRENT_BINARY_DIR}/sc_man_scanner.h ${CMAKE_CURRENT_SOURCE_DIR}/common/engine/sc_man_scanner.re
 	DEPENDS re2c ${CMAKE_CURRENT_SOURCE_DIR}/common/engine/sc_man_scanner.re )
+else ()
+    add_custom_command( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/xlat_parser.c ${CMAKE_CURRENT_BINARY_DIR}/xlat_parser.h
+            COMMAND ${LEMON_EXECUTABLE} -C${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/gamedata/xlat/xlat_parser.y
+            DEPENDS ${LEMON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gamedata/xlat/xlat_parser.y )
+
+    add_custom_command( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/zcc-parse.c ${CMAKE_CURRENT_BINARY_DIR}/zcc-parse.h
+            COMMAND ${LEMON_EXECUTABLE} -C${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/common/scripting/frontend/zcc-parse.lemon
+            DEPENDS ${LEMON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/common/scripting/frontend/zcc-parse.lemon )
+
+    add_custom_command( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sc_man_scanner.h
+            COMMAND ${RE2C_EXECUTABLE} --no-generation-date -s -o ${CMAKE_CURRENT_BINARY_DIR}/sc_man_scanner.h ${CMAKE_CURRENT_SOURCE_DIR}/common/engine/sc_man_scanner.re
+            DEPENDS ${RE2C_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/common/engine/sc_man_scanner.re )
+endif ()
 
 include_directories( ${CMAKE_CURRENT_BINARY_DIR} )
 
@@ -1279,6 +1318,7 @@ set( GAME_SOURCES
 set( GAME_NONPCH_SOURCES ${GAME_SOURCES} )
 list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 
+if (NOT ANDROID)
 add_executable( zdoom MACOSX_BUNDLE ${GAME_SOURCES} )
 
 target_include_directories( zdoom PRIVATE ${CMAKE_BINARY_DIR} )
@@ -1287,6 +1327,12 @@ option(USE_PCH "Enable Pre-compiled headers" ON)
 if (USE_PCH)
 	target_precompile_headers( zdoom PRIVATE g_pch.h )
 endif()
+else()
+	option(USE_PCH "Enable Pre-compiled headers" OFF)
+    add_library(zdoom SHARED ${GAME_SOURCES})
+endif()    
+
+target_include_directories( zdoom PRIVATE ${CMAKE_BINARY_DIR} )
 
 set_source_files_properties( ${FASTMATH_SOURCES} PROPERTIES COMPILE_FLAGS ${ZD_FASTMATH_FLAG} )
 set_source_files_properties( xlat/parse_xlat.cpp PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/xlat_parser.c" )
@@ -1328,7 +1374,12 @@ if( UNIX )
 	endif()
 endif()
 
-target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} absl::base absl::flat_hash_map absl::strings absl::hash )
+if (NOT ANDROID)
+	target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} absl::base absl::flat_hash_map absl::strings absl::hash )
+else ()
+	target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} absl::base absl::flat_hash_map absl::strings absl::hash EGL AndroidGraphicsLayer)
+endif ()
+
 include_directories(
 	BEFORE
 	.
@@ -1397,7 +1448,9 @@ include_directories(
 )
 
 set_target_properties( zdoom PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ZDOOM_OUTPUT_DIR} )
-set_target_properties( zdoom PROPERTIES OUTPUT_NAME ${ZDOOM_EXE_NAME} )
+if (NOT ANDROID)
+	set_target_properties( zdoom PROPERTIES OUTPUT_NAME ${ZDOOM_EXE_NAME} )
+endif ()
 
 if(NOT MINGW AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 	set_target_properties(zdoom PROPERTIES LINK_FLAGS "-z nostart-stop-gc")
@@ -1434,7 +1487,7 @@ elseif (APPLE)
 	IF ("${INSTALL_RPATH}" STREQUAL "")
 		set_target_properties(zdoom PROPERTIES MACOSX_RPATH TRUE)
 	endif()
-else()
+elseif (NOT ANDROID)	
 	FILE( WRITE ${CMAKE_CURRENT_BINARY_DIR}/link-make "if [ ! -e ${ZDOOM_OUTPUT_DIR}/${ZDOOM_EXE_NAME} ]; then ln -sf ${CMAKE_CURRENT_BINARY_DIR}/${ZDOOM_EXE_NAME} ${ZDOOM_OUTPUT_DIR}/${ZDOOM_EXE_NAME}; fi" )
 	add_custom_command( TARGET zdoom POST_BUILD
 		COMMAND chmod +x ${CMAKE_CURRENT_BINARY_DIR}/link-make
@@ -1448,6 +1501,7 @@ else()
 	endif()
 endif()
 
+if( NOT ANDROID )
 add_custom_command(TARGET zdoom POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${ZDOOM_RESOURCE_DIR}/soundfonts"
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${ZDOOM_RESOURCE_DIR}/fm_banks"
@@ -1466,6 +1520,7 @@ add_custom_command(TARGET zdoom POST_BUILD
 
 	VERBATIM
 )
+endif ()
 
 if ( NOT ZMUSIC_SYSTEM_INSTALL AND (NOT DEFINED BUILD_SHARED_LIBS OR BUILD_SHARED_LIBS))
 	# bring zmusic in
@@ -1573,7 +1628,9 @@ install(TARGETS zdoom
 		DESTINATION ${INSTALL_PATH}
 		COMPONENT "Game executable")
 
+if (NOT ANDROID)
 add_dependencies( zdoom revision_check )
+endif()
 
 source_group("Audio Files" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/sound/.+")
 source_group("Game Data" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/gamedata/.+")

@@ -669,10 +669,40 @@ protected:
 static SDLInputJoystickManager *JoystickManager;
 
 void I_StartupJoysticks()
-{
+{	
 #ifndef NO_SDL_JOYSTICK
-	if(SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER) >= 0)
+#ifdef ANDROID
+    SDL_SetHint(SDL_HINT_TV_REMOTE_AS_JOYSTICK, "0");
+    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
+    SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS3, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAMDECK, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_COMBINE_JOY_CONS, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_SWITCH, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_JOY_CONS, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_GAMECUBE, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "1");
+#endif
+
+	if(SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER) >= 0){
+#ifdef ANDROID
+        extern std::string g_pathToSDLControllerDB;
+        const auto *pathToSdl2ControllerDb = g_pathToSDLControllerDB.c_str();
+        if (SDL_GameControllerAddMappingsFromFile(pathToSdl2ControllerDb) < 0) {
+            SDL_Log("Couldn't load mappings: %s\n", SDL_GetError());
+        } else{
+            SDL_Log("Custom controller db was loaded from: %s", pathToSdl2ControllerDb);
+        }
+#endif		
 		JoystickManager = new SDLInputJoystickManager();
+	}
 #endif
 }
 void I_ShutdownInput()

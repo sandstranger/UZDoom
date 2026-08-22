@@ -63,7 +63,7 @@ ADD_STAT(shadowmap)
 	return out;
 }
 
-CUSTOM_CVAR(Int, gl_shadowmap_quality, 1024, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, gl_shadowmap_quality, 256, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	switch (self)
 	{

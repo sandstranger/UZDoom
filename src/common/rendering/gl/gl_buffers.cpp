@@ -93,7 +93,7 @@ void GLBuffer::SetData(size_t size, const void *data, BufferUsageType usage)
 	}
 	else if (usage == BufferUsageType::Mappable)
 	{
-		glBufferData(mUseType, size, nullptr, GL_STATIC_DRAW);
+		glBufferData(mUseType, size, nullptr, GL_STREAM_DRAW);
 		map = nullptr;
 	}
 	buffersize = size;
@@ -112,7 +112,7 @@ void GLBuffer::Map()
 	if (!mPersistent && !nomap)
 	{
 		Bind();
-		map = (FFlatVertex*)glMapBufferRange(mUseType, 0, buffersize, GL_MAP_WRITE_BIT|GL_MAP_UNSYNCHRONIZED_BIT);
+		map = (FFlatVertex*)glMapBufferRange(mUseType, 0, buffersize, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
 		InvalidateBufferState();
 	}
 }
@@ -133,7 +133,7 @@ void *GLBuffer::Lock(unsigned int size)
 {
 	// This initializes this buffer as a static object with no data.
 	SetData(size, nullptr, BufferUsageType::Mappable);
-	return glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+	return glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
 }
 
 void GLBuffer::Unlock()
@@ -168,28 +168,27 @@ void GLBuffer::Resize(size_t newsize)
 	}
 }
 
+void GLBuffer::GPUWaitSync()
+{
+	if (mGLSync != nullptr)
+	{
+        const GLenum status = glClientWaitSync(mGLSync, 0, 1000 * 1000 * 16);
+        if (status == GL_TIMEOUT_EXPIRED) {
+            glClientWaitSync(mGLSync, 0, 1000 * 1000 * 50);
+        }
+		glDeleteSync(mGLSync);
+		mGLSync = nullptr;
+	}
+}
+
 void GLBuffer::GPUDropSync()
 {
-	if (mGLSync != NULL)
+	if (mGLSync != nullptr)
 	{
 		glDeleteSync(mGLSync);
 	}
 
 	mGLSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-}
-
-void GLBuffer::GPUWaitSync()
-{
-	GLenum status = glClientWaitSync(mGLSync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000 * 1000 * 50); // Wait for a max of 50ms...
-
-	if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
-	{
-		//Printf("Error on glClientWaitSync: %d\n", status);
-	}
-
-	glDeleteSync(mGLSync);
-
-	mGLSync = NULL;
 }
 
 //===========================================================================

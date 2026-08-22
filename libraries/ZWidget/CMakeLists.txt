@@ -1,20 +1,11 @@
 cmake_minimum_required(VERSION 3.11)
 project(zwidget)
 
-if (UNIX AND NOT APPLE)
-	include(FindPkgConfig)
-	pkg_check_modules(DBUS dbus-1)
-	if (!DBUS_FOUND)
-		pkg_check_modules(DBUS REQUIRED dbus) # Fedora Linux looks for dbus instead
-	endif()
-endif()
-
-# SDL2 finding stuff
 # Optional on all platforms
 find_package(SDL2 QUIET)
 if(NOT ${SDL2_FOUND})
-	include(FindPkgConfig)
-	pkg_search_module(SDL2 sdl2)
+    include(FindPkgConfig)
+    pkg_search_module(SDL2 sdl2)
 endif()
 
 set(ZWIDGET_SOURCES
@@ -200,6 +191,9 @@ if(WIN32)
 		# Ignore warning about legacy CRT functions
 		#set(ZWIDGET_DEFINES ${ZWIDGET_DEFINES} -D_CRT_SECURE_NO_WARNINGS)
 	endif()
+elseif(ANDROID)
+    add_definitions(-DUNIX -D_UNIX)
+    set(ZWIDGET_SOURCES ${ZWIDGET_SOURCES} ${ZWIDGET_SDL2_SOURCES})
 elseif(APPLE)
 	set(ZWIDGET_SOURCES ${ZWIDGET_SOURCES} ${ZWIDGET_COCOA_SOURCES})
 	set(ZWIDGET_LIBS ${CMAKE_DL_LIBS} -ldl)
@@ -244,6 +238,15 @@ if(SDL2_FOUND)
 endif()
 set_target_properties(zwidget PROPERTIES CXX_STANDARD 20)
 target_compile_options(zwidget PRIVATE ${CXX_WARNING_FLAGS})
+
+if(SDL2_FOUND)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(zwidget PRIVATE SDL2::SDL2)
+    else() # needed for gzdoom compat for now
+        target_include_directories(zwidget PRIVATE ${SDL2_INCLUDE_DIR} ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(zwidget PRIVATE ${SDL2_LIBRARY})
+    endif()
+endif()
 
 if(MSVC)
 	set_property(TARGET zwidget PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

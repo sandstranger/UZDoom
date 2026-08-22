@@ -22,7 +22,7 @@
 **
 */
 
-#include <stdio.h>
+#include <cstdio>
 
 
 #include "v_video.h"
@@ -44,6 +44,17 @@
 #include <chrono>
 #include <thread>
 
+#ifdef ANDROID
+int gTargetFps = 60;
+
+extern "C"{
+__attribute__((used)) __attribute__((visibility("default")))
+void setTargetFPS (const int targetFPS){
+	gTargetFps = targetFPS;
+}
+}
+
+#endif
 
 CVAR(Bool, gl_scale_viewport, true, CVAR_ARCHIVE);
 
@@ -245,10 +256,18 @@ void DFrameBuffer::FPSLimit()
 	using namespace std::chrono;
 	using namespace std::this_thread;
 
+#ifndef ANDROID
 	if (vid_maxfps <= 0 || cl_capfps)
+#else
+	if (cl_capfps)
+#endif
 		return;
 
+#ifndef ANDROID
 	uint64_t targetWakeTime = fpsLimitTime + 1'000'000 / vid_maxfps;
+#else
+	uint64_t targetWakeTime = fpsLimitTime + 1'000'000 / gTargetFps;
+#endif
 
 	while (true)
 	{

@@ -12,3 +12,7 @@ space +use
 mouse2 +strafe
 mouse3 +forward
 mouse4 +speed
+r +reload
+z +zoom
+enter +attack
+ctrl +altattack

@@ -39,8 +39,23 @@
 #include "gl_renderer.h"
 #include <map>
 #include <memory>
+#if ANDROID
+#include "SDL.h"
+#endif
 
 EXTERN_CVAR(Bool, r_skipmats)
+#ifdef ANDROID
+EXTERN_CVAR(Bool, gl_customshader)
+extern bool gl_lite_shader;
+bool gEnableSpirvCross = false;
+
+extern "C" {
+__attribute__((used)) __attribute__((visibility("default")))
+void setSpirvCrossState(const bool enableSpirvCross) {
+    gEnableSpirvCross = enableSpirvCross;
+}
+}
+#endif
 
 namespace OpenGLRenderer
 {
@@ -55,8 +70,44 @@ static const char *ShaderMagic = "ZDSC";
 
 static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a TMap because it doesn't support unique_ptr move semantics
 
+#if ANDROID
+    typedef char* (*GLSLtoGLSLES_t)(const char*, GLenum, unsigned int, unsigned int, int*);
+	static void* ngGL4ESPTR = nullptr;
+
+    std::string ConvertShaderToGLES(const char* shaderSource, bool isVertexShader)
+    {
+		static GLSLtoGLSLES_t GLSLtoGLSLES_c = nullptr;
+
+		if (GLSLtoGLSLES_c == nullptr) {
+			ngGL4ESPTR = SDL_LoadObject("libng_gl4es.so");
+			GLSLtoGLSLES_c =(GLSLtoGLSLES_t) SDL_LoadFunction(ngGL4ESPTR, "GLSLtoGLSLES_c");
+        }
+        const int glesVersion = 310;
+        const unsigned int sourceGLVersion = 410;
+        const auto stage = isVertexShader ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER;
+        int returnCode = 0;
+        auto glesShader  = GLSLtoGLSLES_c(shaderSource, stage,glesVersion,sourceGLVersion,&returnCode);
+        std::string result = glesShader;
+        free(glesShader);
+        return result;
+    }
+
+	void UnloadNGGL4ESPTR()
+	{
+		if (ngGL4ESPTR!= nullptr)
+		{
+			SDL_UnloadObject(ngGL4ESPTR);
+			ngGL4ESPTR = nullptr;
+		}
+	}
+#endif
+
+
 bool IsShaderCacheActive()
 {
+#ifdef ANDROID
+	return true;
+#endif
 	static bool active = true;
 	static bool firstcall = true;
 
@@ -100,7 +151,11 @@ static FString CreateProgramCacheName(bool create)
 {
 	FString path = M_GetCachePath(create);
 	if (create) CreatePath(path.GetChars());
-	path << "/glshadercache";
+#ifdef ANDROID
+	path << (gEnableSpirvCross ? "/spirv_glshadercache" : "/glshadercache");
+#else
+	path << "/glshadercache";	
+#endif
 	return path;
 }
 
@@ -301,6 +356,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		// these settings are actually pointless but there seem to be some old ATI drivers that fail to compile the shader without setting the precision here.
 		precision highp int;
 		precision highp float;
+		precision highp sampler2DArray;
 
 		// This must match the HWViewpointUniforms struct
 		layout(std140) uniform ViewpointUBO {
@@ -474,7 +530,14 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 	assert(screen->mLights != NULL);
 	assert(screen->mBones != NULL);
 
-
+#ifdef ANDROID
+    bool lightbuffertype = screen->mLights->GetBufferType();
+    if (gEnableSpirvCross){
+        vp_comb.AppendFormat("#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n#define NUM_UBO_LIGHTS %d\n#define NUM_UBO_BONES %d\n", screen->mLights->GetBlockSize(), screen->mBones->GetBlockSize());
+    } else{
+        vp_comb.AppendFormat("#version 310 es\n#define NO_CLIPDISTANCE_SUPPORT\n#define NUM_UBO_LIGHTS %d\n#define NUM_UBO_BONES %d\n", screen->mLights->GetBlockSize(), screen->mBones->GetBlockSize());
+    }
+#else
 	if ((gl.flags & RFL_SHADER_STORAGE_BUFFER) && screen->allowSSBO())
 		vp_comb << "#version 430 core\n#define SUPPORTS_SHADOWMAPS\n";
 	else
@@ -485,6 +548,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		vp_comb.AppendFormat("#define NUM_UBO_LIGHTS %d\n#define NUM_UBO_BONES %d\n", screen->mLights->GetBlockSize(), screen->mBones->GetBlockSize());
 	else
 		vp_comb << "#define SHADER_STORAGE_LIGHTS\n#define SHADER_STORAGE_BONES\n";
+#endif
 
 	FString fp_comb = vp_comb;
 	vp_comb << defines << i_data.GetChars();
@@ -628,15 +692,32 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 
 		FGLDebug::LabelObject(GL_SHADER, hVertProg, vert_prog_lump);
 		FGLDebug::LabelObject(GL_SHADER, hFragProg, frag_prog_lump);
+#if ANDROID
+        if (gEnableSpirvCross) {
+            const FString spirv_vp_comb = ConvertShaderToGLES(vp_comb.GetChars(), true);
+            const FString spirv_fp_comb = ConvertShaderToGLES(fp_comb.GetChars(), false);
+            const int vp_size = (int)spirv_vp_comb.Len();
+            const int fp_size = (int)spirv_fp_comb.Len();
+            const char *spirv_vp_ptr = spirv_vp_comb.GetChars();
+            const char *spirv_fp_ptr = spirv_fp_comb.GetChars();
+            glShaderSource(hVertProg, 1, &spirv_vp_ptr, &vp_size);
+            glShaderSource(hFragProg, 1, &spirv_fp_ptr, &fp_size);
+        } else {
+#endif
+            int vp_size = (int) vp_comb.Len();
+            int fp_size = (int) fp_comb.Len();
 
-		int vp_size = (int)vp_comb.Len();
-		int fp_size = (int)fp_comb.Len();
+            const char *vp_ptr = vp_comb.GetChars();
+            const char *fp_ptr = fp_comb.GetChars();
 
-		const char *vp_ptr = vp_comb.GetChars();
-		const char *fp_ptr = fp_comb.GetChars();
+            glShaderSource(hVertProg, 1, &vp_ptr, &vp_size);
+            glShaderSource(hFragProg, 1, &fp_ptr, &fp_size);
+#if ANDROID
+        }
+#endif
+		GLint status = 0;
 
-		glShaderSource(hVertProg, 1, &vp_ptr, &vp_size);
-		glShaderSource(hFragProg, 1, &fp_ptr, &fp_size);
+		bool errored = false;
 
 		GLint status = 0;
 
@@ -832,6 +913,11 @@ FShader *FShaderCollection::Compile (const char *ShaderName, const char *ShaderP
 	if (!usediscard) defines += "#define NO_ALPHATEST\n";
 	if (passType == GBUFFER_PASS) defines += "#define GBUFFER_PASS\n";
 
+#ifdef ANDROID
+	if(gl_lite_shader)
+		defines += "#define SHADER_LITE\n";
+#endif
+
 	FShader *shader = NULL;
 	try
 	{
@@ -975,7 +1061,11 @@ bool FShaderCollection::CompileNextShader()
 		{
 			mCompileIndex = 0;
 			mCompileState++;
+#ifdef ANDROID
+			if (usershaders.Size() == 0 || !gl_customshader) mCompileState++;
+#else
 			if (usershaders.Size() == 0) mCompileState++;
+#endif
 		}
 	}
 	else if (mCompileState == 2)

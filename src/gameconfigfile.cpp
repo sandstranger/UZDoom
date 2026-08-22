@@ -230,6 +230,10 @@ FGameConfigFile::FGameConfigFile ()
 		}
 	}
 
+#ifdef ANDROID
+    extern std::string g_pathToUserFolder;
+#endif
+
 	// Set default IWAD search paths if none present
 	if (!SetSection ("IWADSearch.Directories"))
 	{
@@ -249,6 +253,9 @@ FGameConfigFile::FGameConfigFile ()
 		SetSection ("FileSearch.Directories", true);
 		SetValueForKey ("Path", "$DOOMWADDIR", true);
 		SetValueForKey ("PathList", "$DOOMWADPATH", true);
+#ifdef ANDROID
+      		SetValueForKey ("Path", g_pathToUserFolder.c_str(), true);
+#endif		
 		for (unsigned int i = 0; i < DefaultSearchPaths.Size(); i++)
 		{
 			SetValueForKey ("Path", DefaultSearchPaths[i].GetChars(), true);
@@ -259,7 +266,12 @@ FGameConfigFile::FGameConfigFile ()
 	if (!SetSection("SoundfontSearch.Directories"))
 	{
 		SetSection("SoundfontSearch.Directories", true);
-
+#ifdef ANDROID
+      		std::string pathToSoundFonts = g_pathToUserFolder + std::string ("/soundfonts");
+	        std::string pathToFmBanks = g_pathToUserFolder + std::string ("/fm_banks");
+        	SetValueForKey ("Path", pathToSoundFonts.c_str(), true);
+        	SetValueForKey ("Path", pathToFmBanks.c_str(), true);
+#endif
 		for (unsigned int i = 0; i < DefaultSearchPaths.Size(); i++)
 		{
 			SetValueForKey ("Path", (DefaultSearchPaths[i] + "/soundfonts").GetChars(), true);

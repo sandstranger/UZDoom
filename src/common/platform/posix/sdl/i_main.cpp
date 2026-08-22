@@ -46,6 +46,13 @@
 #include "version.h"
 #include "zstring.h"
 
+#include <string>
+#ifdef ANDROID
+#include "SwappyController.h"
+#endif
+
+using namespace std;
+
 // MACROS ------------------------------------------------------------------
 
 // TYPES -------------------------------------------------------------------
@@ -53,6 +60,18 @@
 // EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
 
 extern "C" int cc_install_handlers(int, char**, int, int*, const char*, int(*)(char*, char*));
+
+#if ANDROID
+string g_pathToUserFolder;
+string g_pathToSDLControllerDB;
+string gPathToCacheFolder;
+
+namespace OpenGLRenderer
+{
+    extern void UnloadNGGL4ESPTR();
+}
+
+#endif
 
 #ifdef __APPLE__
 void Mac_I_FatalError(const char* errortext);
@@ -178,14 +197,24 @@ void I_StartupJoysticks();
 		if (SDL_setenv(k, v, 0)) DEBUG_LOG("Failed to set %s", k); \
 	} while (0);
 
+#ifdef ANDROID
+static int SDLCALL AndroidLifeCycleEventFilter(void*, SDL_Event* event);
+
+int SDL_main(int argc, char **argv)
+#else
 int main (int argc, char **argv)
+#endif
 {
-#if !defined (__APPLE__)
+#if !defined (__APPLE__) && !ANDROID
 	{
 		int s[4] = { SIGSEGV, SIGILL, SIGFPE, SIGBUS };
 		cc_install_handlers(argc, argv, 4, s, GAMENAMELOWERCASE "-crash.log", GetCrashInfo);
 	}
 #endif // !__APPLE__
+
+#ifdef ANDROID
+    chdir(g_pathToUserFolder.c_str());
+#endif
 
 	signal(SIGINT, SignalHandler);
 	signal(SIGTERM, SignalHandler);
@@ -213,6 +242,10 @@ int main (int argc, char **argv)
 		fprintf (stderr, "Could not initialize SDL:\n%s\n", SDL_GetError());
 		return -1;
 	}
+
+#ifdef ANDROID
+	SDL_AddEventWatch(AndroidLifeCycleEventFilter, nullptr);
+#endif
 
 	Args = new FArgs(argc, argv);
 
@@ -243,8 +276,80 @@ int main (int argc, char **argv)
 		I_TryRestart(argv);
 	}
 
+#ifdef ANDROID
+    OpenGLRenderer::UnloadNGGL4ESPTR();
+	DestroySwappy();
+#endif
+
 	SDL_SetRelativeMouseMode(SDL_FALSE);
 	SDL_Quit();
 
 	return result;
 }
+
+
+#ifdef ANDROID
+#include "menustate.h"
+#include "i_soundinternal.h"
+extern bool StartScreenRendered;
+bool gl_lite_shader = false;
+extern bool AppActive;
+
+extern "C"{
+__attribute__((used)) __attribute__((visibility("default")))
+void UpdateGLLiteShaderState (bool enableGLLiteShader){
+    gl_lite_shader = enableGLLiteShader;
+}
+
+__attribute__((used)) __attribute__((visibility("default")))
+void onNativeResume() {
+}
+__attribute__((used)) __attribute__((visibility("default")))
+void onNativePause() {
+}
+__attribute__((used)) __attribute__((visibility("default")))
+bool needToShowScreenControls() {
+    return menuactive == MENU_Off;
+}
+__attribute__((used)) __attribute__((visibility("default")))
+bool needToInvokeMouseButtonsEvents(){
+    bool isMenuActive = menuactive!=MENU_Off;
+    if (isMenuActive){
+        StartScreenRendered = false;
+    }
+    return isMenuActive || StartScreenRendered;
+}
+__attribute__((used)) __attribute__((visibility("default")))
+bool needToReInitGameControllers (){
+    return false;
+}
+__attribute__((used)) __attribute__((visibility("default")))
+void setPathsToFolders (const char *pathToUserFolder, const char* pathToCacheFolder) {
+    g_pathToUserFolder = pathToUserFolder;
+	gPathToCacheFolder = pathToCacheFolder;
+}
+
+__attribute__((used)) __attribute__((visibility("default")))
+void setPathToSDLControllerDB (const char *pathToSDLControllerDB){
+    g_pathToSDLControllerDB = pathToSDLControllerDB;
+}
+__attribute__((used)) __attribute__((visibility("default")))
+void setUseGLES2_0State(const bool useGLES2_0) {
+}
+}
+
+static int SDLCALL AndroidLifeCycleEventFilter(void*, SDL_Event* event){
+	switch (event->type)
+	{
+		case SDL_APP_WILLENTERBACKGROUND:
+			S_SetSoundPaused(0);
+			AppActive = false;
+			break;
+		case SDL_APP_DIDENTERFOREGROUND:
+			S_SetSoundPaused(1);
+			AppActive = true;
+			break;
+	}
+	return 1;
+}
+#endif

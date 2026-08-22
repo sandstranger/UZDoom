@@ -49,18 +49,30 @@ if(USE_UPDATER)
 endif()
 
 find_package(Threads REQUIRED)
+if (NOT ANDROID)
 find_package(Python3 3.6 REQUIRED)
 
 list( APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake )
+else()
+    add_compile_options(-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES)
+    set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
+endif()
+
 include( FindPackageHandleStandardArgs )
 
-# Support cross compiling
-option( FORCE_CROSSCOMPILE "Turn on cross compiling." NO )
+
+if (NOT ANDROID)
+    option( FORCE_CROSSCOMPILE "Turn on cross compiling." YES )
+else ()
+    option( FORCE_CROSSCOMPILE "Turn on cross compiling." NO )
+    set( CMAKE_CROSSCOMPILING TRUE )
+endif ()
+
 if( FORCE_CROSSCOMPILE )
 	set( CMAKE_CROSSCOMPILING TRUE )
 endif()
 
-if(CMAKE_CROSSCOMPILING)
+if(CMAKE_CROSSCOMPILING AND NOT ANDROID)
 	set(IMPORT_EXECUTABLES "IMPORTFILE-NOTFOUND" CACHE FILEPATH "Export file from native build.")
 	include(${IMPORT_EXECUTABLES})
 endif()
@@ -93,8 +105,9 @@ if( PK3_QUIET_ZIPDIR )
 	set( PK3_ZIPDIR_OPTIONS "-q" )
 endif()
 
-# Simplify pk3 building, add_pk3(filename srcdirectory [srcdirectory2 ...])
-function( add_pk3 PK3_NAME )
+if (NOT ANDROID)
+	# Simplify pk3 building, add_pk3(filename srcdirectory [srcdirectory2 ...])
+	function( add_pk3 PK3_NAME )
 	# Generate target name. Just use "pk3" for main pk3 target.
 	string( REPLACE "." "_" PK3_TARGET ${PK3_NAME} )
 
@@ -157,6 +170,7 @@ function( add_pk3 PK3_NAME )
 		DESTINATION ${INSTALL_PK3_PATH}
 		COMPONENT "Game resources")
 endfunction()
+endif ()
 
 macro( generate_language_files target destination identifier )
 	# right now, this dumps temp files into the source tree and deletes them after build
@@ -267,13 +281,17 @@ if (CURL_REQUIRED)
 	endif()
 endif()
 
+if (NOT ANDROID)
 include( TargetArch )
-
 target_architecture(TARGET_ARCHITECTURE)
-
 if( ${TARGET_ARCHITECTURE} MATCHES "x86_64" )
-	set( HAVE_VM_JIT ON )
+    set( HAVE_VM_JIT ON )
 endif()
+else ()
+    if( ${ANDROID_ABI} STREQUAL "x86_64" )
+        set( HAVE_VM_JIT ON )
+    endif ()
+endif ()
 
 option (HAVE_VULKAN "Enable Vulkan support" ON)
 if( APPLE )
@@ -425,7 +443,7 @@ if( ${HAVE_VM_JIT} )
 	set( ASMJIT_LIBRARIES asmjit )
 endif()
 
-if( BZIP2_FOUND AND NOT FORCE_INTERNAL_BZIP2 )
+if( BZIP2_FOUND AND NOT FORCE_INTERNAL_BZIP2 AND NOT ANDROID)
 	message( STATUS "Using system bzip2 library, includes found at ${BZIP2_INCLUDE_DIR}" )
 else()
 	message( STATUS "Using internal bzip2 library" )

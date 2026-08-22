@@ -98,6 +98,15 @@ static const TBuiltInResource DefaultTBuiltInResource = {
 	/* .maxTaskWorkGroupSizeY_NV = */ 1,
 	/* .maxTaskWorkGroupSizeZ_NV = */ 1,
 	/* .maxMeshViewCountNV = */ 4,
+                       1,
+                       1,
+                       1,
+                       1,
+                       1,
+                       1,
+                       1,
+                       1,
+                       1,
 	/* .maxDualSourceDrawBuffersEXT = */ 1,
 
 	/* .limits = */ {
@@ -1795,7 +1804,7 @@ VulkanDeviceBuilder& VulkanDeviceBuilder::OptionalDescriptorIndexing()
 	return *this;
 }
 
-VulkanDeviceBuilder& VulkanDeviceBuilder::Surface(std::shared_ptr<VulkanSurface> surface)
+VulkanDeviceBuilder& VulkanDeviceBuilder::Surface(VulkanSurface *surface)
 {
 	if (surface)
 	{
@@ -1832,7 +1841,6 @@ std::vector<VulkanCompatibleDevice> VulkanDeviceBuilder::FindDevices(const std::
 		// Check if all required features are there
 		if (info.Features.Features.samplerAnisotropy != VK_TRUE ||
 			info.Features.Features.fragmentStoresAndAtomics != VK_TRUE ||
-			info.Features.Features.multiDrawIndirect != VK_TRUE ||
 			info.Features.Features.independentBlend != VK_TRUE)
 			continue;
 

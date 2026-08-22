@@ -30,9 +30,12 @@
 #include "printf.h"
 #include "version.h"
 #include "zstring.h"
+#include <string>
+
+using namespace std;
 
 extern bool netgame;
-
+#ifndef ANDROID
 #ifdef __APPLE
 #define DEFGETPATH(name, var, fallback) \
 	const char * Get##name##Path()      \
@@ -65,6 +68,29 @@ DEFGETPATH(Data, "XDG_DATA_HOME", "$HOME/.local/share");
 DEFGETPATH(Pictures, "XDG_PICTURES_DIR", "$HOME/Pictures");
 #endif
 #undef DEFGETPATH
+#else
+extern string g_pathToUserFolder;
+extern string gPathToCacheFolder;
+
+const char* GetConfigPath()
+{
+    string configPath = g_pathToUserFolder + "/config";
+    return configPath.c_str();
+}
+
+const char* GetCachePath()
+{
+    string cachePath = gPathToCacheFolder + "/uzdoom_cache";
+    return cachePath.c_str();
+}
+
+const char* GetDataPath()
+{
+    string sharePath = g_pathToUserFolder + "/share";
+    return sharePath.c_str();
+}
+#endif
+
 
 FString GetUserFile (const char *file)
 {
@@ -204,7 +230,7 @@ FString M_GetDocumentsPath()
 
 FString M_GetScreenshotsPath()
 {
-#ifdef __HAIKU__
+#if __HAIKU__ || ANDROID
 	static FString path = M_GetDocumentsPath() + "screenshots";
 #else
 	static FString path = FStringf("%s/Screenshots/" GAMENAME, GetPicturesPath());

@@ -96,6 +96,9 @@ static void* LoadGLES2Proc(const char* name)
 
 static TArray<FString>  m_Extensions;
 
+#ifdef __ANDROID__ //karin: force GL version
+extern float GLimp_GetGLVersion(void);
+#endif
 
 static void CollectExtensions()
 {
@@ -177,6 +180,9 @@ namespace OpenGLESRenderer
 		}
 		const char* glVersionStr = (const char*)glGetString(GL_VERSION);
 		double glVersion = strtod(glVersionStr, NULL);
+#ifdef __ANDROID__ //karin: force GL version
+		glVersion = GLimp_GetGLVersion();
+#endif
 
 		Printf("GL Version parsed = %f\n", glVersion);
 
@@ -201,6 +207,9 @@ namespace OpenGLESRenderer
 
 
 		// Check if running on a GLES device, version string will start with 'OpenGL ES'
+#ifdef ANDROID //karin: custom GL version
+		if(USING_GLES_AUTO) {
+#endif
 		if (!strncmp(glVersionStr, "OpenGL ES", strlen("OpenGL ES")))
 		{
 			gles.glesMode = GLES_MODE_GLES;
@@ -212,6 +221,16 @@ namespace OpenGLESRenderer
 			else
 				gles.glesMode = GLES_MODE_OGL2; // Below 3.3
 		}
+#ifdef ANDROID //karin: custom GL version
+		} else {
+			if(USING_GLES_2)
+				gles.glesMode = GLES_MODE_OGL2; // Below 3.3
+			else if(USING_GLES_32)
+				gles.glesMode = GLES_MODE_OGL32; // 3.3 or above
+			else
+				gles.glesMode = GLES_MODE_OGL3; // 3.3 or above
+		}
+#endif
 
 
 		if (gles.glesMode == GLES_MODE_GLES)
@@ -229,24 +248,51 @@ namespace OpenGLESRenderer
 			Printf("GLES choosing mode: GLES_MODE_OGL2\n");
 
 			gles.shaderVersionString = "100";
+#ifdef ANDROID //karin: check extensions on OpenGLES
+			gles.depthStencilAvailable = CheckExtension("GL_OES_packed_depth_stencil");
+			gles.npotAvailable = CheckExtension("GL_OES_texture_npot");
+			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
+			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
+#else
 			gles.depthStencilAvailable = true;
 			gles.npotAvailable = true;
 			gles.useMappedBuffers = true;
 			gles.depthClampAvailable = true;
 			gles.anistropicFilterAvailable = true;
+#endif
 		}
 		else if (gles.glesMode == GLES_MODE_OGL3)
 		{
 			Printf("GLES choosing mode: GLES_MODE_OGL3\n");
 
+#ifdef ANDROID //karin: using #version 100 on OpenGLES
+			gles.shaderVersionString = "100";
+			gles.depthStencilAvailable = CheckExtension("GL_OES_packed_depth_stencil");
+			gles.npotAvailable = CheckExtension("GL_OES_texture_npot");
+			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
+			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
+#else
 			gles.shaderVersionString = "330";
 			gles.depthStencilAvailable = true;
 			gles.npotAvailable = true;
 			gles.useMappedBuffers = true;
 			gles.depthClampAvailable = true;
 			gles.anistropicFilterAvailable = true;
+#endif
 		}
 
+#ifdef ANDROID //karin: add extras configs
+		else if (gles.glesMode == GLES_MODE_OGL32) //karin: using GLES3.2 + GLSL 320 es shader
+		{
+			Printf("GLES choosing mode: GLES_MODE_OGL32\n");
+
+			gles.shaderVersionString = "300 es"; // for 320 es need make attribute/varying/gl_FragColor -> in/out
+			gles.depthStencilAvailable = CheckExtension("GL_OES_packed_depth_stencil");
+			gles.npotAvailable = CheckExtension("GL_OES_texture_npot");
+			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
+			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
+		}
+#endif		
 		setGlVersion(glVersion);
 	}
 }

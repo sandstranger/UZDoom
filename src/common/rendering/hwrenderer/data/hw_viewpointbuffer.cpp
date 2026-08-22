@@ -66,7 +66,11 @@ int HWViewpointBuffer::Bind(FRenderState &di, unsigned int index)
 	if (index != mLastMappedIndex)
 	{
 		mLastMappedIndex = index;
-		mBuffer->BindRange(&di, index * mBlockAlign, mBlockAlign);
+		size_t start = index * mBlockAlign;
+		size_t size = sizeof(HWViewpointUniforms);
+		size = (size + screen->uniformblockalignment - 1)
+			   & ~(screen->uniformblockalignment - 1);
+		mBuffer->BindRange(&di, start, size);
 		di.EnableClipDistance(0, mClipPlaneInfo[index]);
 	}
 	return index;
@@ -114,6 +118,10 @@ void HWViewpointBuffer::Clear()
 	bool needNewPipeline = mUploadIndex > 0; // Clear might be called multiple times before any actual rendering
 
 	mUploadIndex = 0;
+#ifdef ANDROID // Needed to fix screen wipe when it's first run on a launch. Otherwise viewport does not get set properly for the first frame
+	mLastMappedIndex = UINT_MAX;
+#endif
+
 	mClipPlaneInfo.Clear();
 
 	if (needNewPipeline)

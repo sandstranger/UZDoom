@@ -80,6 +80,11 @@
 	#define GL_SYNC_FLUSH_COMMANDS_BIT        0x00000001
 	#define GL_ALREADY_SIGNALED               0x911A
 	#define GL_CONDITION_SATISFIED            0x911C
+    #define GL_TEXTURE_SWIZZLE_A 0x8E45
+    #define GL_TEXTURE_SWIZZLE_B 0x8E44
+    #define GL_TEXTURE_SWIZZLE_G 0x8E43
+    #define GL_TEXTURE_SWIZZLE_R 0x8E42
+    #define GL_TEXTURE_SWIZZLE_RGBA 0x8E46
 
 #else
 	#include "gl_load/gl_load.h"
@@ -103,6 +108,9 @@ namespace OpenGLESRenderer
 		GLES_MODE_GLES = 0,
 		GLES_MODE_OGL2 = 1,
 		GLES_MODE_OGL3 = 2,
+#ifdef ANDROID //karin: GLES3.2 + GLSL 300es shader
+		GLES_MODE_OGL32 = 4,
+#endif
 	};
 
 	struct RenderContextGLES
@@ -135,6 +143,19 @@ namespace OpenGLESRenderer
 
 #pragma warning(disable : 4018)     // signed/unsigned mismatch
 #pragma warning(disable : 4305)     // truncate from double to float
+#endif
+
+#ifdef ANDROID //karin: custom GLES version
+#include "c_cvars.h"
+extern int harm_gl_es;
+#define HARM_GL_ES_DEFAULT 0
+#define HARM_GL_ES_GLES2 2
+#define HARM_GL_ES_GLES3 3
+#define HARM_GL_ES_GLES32 4
+#define USING_GLES_AUTO (harm_gl_es == HARM_GL_ES_DEFAULT)
+#define USING_GLES_2 (harm_gl_es == HARM_GL_ES_GLES2)
+#define USING_GLES_3 (harm_gl_es == HARM_GL_ES_GLES3)
+#define USING_GLES_32 (harm_gl_es == HARM_GL_ES_GLES32)
 #endif
 
 #endif //__GL_PCH_H
