@@ -28,7 +28,7 @@ endif(${BUILD_SHARED_LIBS})
 if(WIN32)
     add_definitions(-DDISCORD_WINDOWS)
     set(BASE_RPC_SRC ${BASE_RPC_SRC} connection_win.cpp discord_register_win.cpp)
-    add_library(discord-rpc ${BASE_RPC_SRC})
+    add_library(discord-rpc-legacy ${BASE_RPC_SRC})
     if (MSVC)
         if(USE_STATIC_CRT)
             foreach(CompilerFlag
@@ -41,7 +41,7 @@ if(WIN32)
                 string(REPLACE "/MD" "/MT" ${CompilerFlag} "${${CompilerFlag}}")
             endforeach()
         endif(USE_STATIC_CRT)
-        target_compile_options(discord-rpc PRIVATE /EHsc
+        target_compile_options(discord-rpc-legacy PRIVATE /EHsc
             /wd4100 # unreferenced formal parameter
             /wd4514 # unreferenced inline
             /wd4625 # copy constructor deleted
@@ -55,7 +55,7 @@ if(WIN32)
             /wd5027 # move assignment operator was implicitly defined as deleted
         )
     endif(MSVC)
-    target_link_libraries(discord-rpc PRIVATE psapi advapi32)
+    target_link_libraries(discord-rpc-legacy PRIVATE psapi advapi32)
 endif(WIN32)
 
 if(UNIX)
@@ -69,26 +69,26 @@ if(UNIX)
         set(BASE_RPC_SRC ${BASE_RPC_SRC} discord_register_linux.cpp)
     endif(APPLE)
 
-    add_library(discord-rpc ${BASE_RPC_SRC})
+    add_library(discord-rpc-legacy ${BASE_RPC_SRC})
     if (NOT ANDROID)
-        target_link_libraries(discord-rpc PUBLIC pthread)
+        target_link_libraries(discord-rpc-legacy PUBLIC pthread)
     endif()
 
-    target_compile_options(discord-rpc PRIVATE
+    target_compile_options(discord-rpc-legacy PRIVATE
         -Wall
         -Wextra
         -Wpedantic
     )
 
     if (${CMAKE_BUILD_TYPE} STREQUAL Debug OR ${CMAKE_BUILD_TYPE} STREQUAL RelWithDebInfo)
-        target_compile_options(discord-rpc PRIVATE -g)
+        target_compile_options(discord-rpc-legacy PRIVATE -g)
     endif ()
 
     if (${WARNINGS_AS_ERRORS})
-      target_compile_options(discord-rpc PRIVATE -Werror)
+      target_compile_options(discord-rpc-legacy PRIVATE -Werror)
     endif (${WARNINGS_AS_ERRORS})
 
-    target_compile_options(discord-rpc PRIVATE
+    target_compile_options(discord-rpc-legacy PRIVATE
         -Wno-unknown-pragmas # pragma push thing doesn't work on clang
         -Wno-old-style-cast # it's fine
         -Wno-c++98-compat # that was almost 2 decades ago
@@ -101,30 +101,30 @@ if(UNIX)
     )
 
     if (${BUILD_SHARED_LIBS})
-        target_compile_options(discord-rpc PRIVATE -fPIC)
+        target_compile_options(discord-rpc-legacy PRIVATE -fPIC)
     endif (${BUILD_SHARED_LIBS})
 
     if (APPLE)
-        target_link_libraries(discord-rpc PRIVATE "-framework AppKit")
+        target_link_libraries(discord-rpc-legacy PRIVATE "-framework AppKit")
     endif (APPLE)
 endif(UNIX)
 
-target_include_directories(discord-rpc PRIVATE ${RAPIDJSON}/include)
+target_include_directories(discord-rpc-legacy PRIVATE ${RAPIDJSON}/include)
 
 if (NOT ${ENABLE_IO_THREAD})
-    target_compile_definitions(discord-rpc PUBLIC -DDISCORD_DISABLE_IO_THREAD)
+    target_compile_definitions(discord-rpc-legacy PUBLIC -DDISCORD_DISABLE_IO_THREAD)
 endif (NOT ${ENABLE_IO_THREAD})
 
 if (${BUILD_SHARED_LIBS})
-    target_compile_definitions(discord-rpc PUBLIC -DDISCORD_DYNAMIC_LIB)
-    target_compile_definitions(discord-rpc PRIVATE -DDISCORD_BUILDING_SDK)
+    target_compile_definitions(discord-rpc-legacy PUBLIC -DDISCORD_DYNAMIC_LIB)
+    target_compile_definitions(discord-rpc-legacy PRIVATE -DDISCORD_BUILDING_SDK)
 endif(${BUILD_SHARED_LIBS})
 
 # install
 
 install(
-    TARGETS discord-rpc
-    EXPORT "discord-rpc"
+    TARGETS discord-rpc-legacy
+    EXPORT "discord-rpc-legacy"
     RUNTIME
         DESTINATION "${CMAKE_INSTALL_BINDIR}"
     LIBRARY

@@ -4,7 +4,7 @@ set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DZ7_PPMD_SUPPORT" )
 
 find_package(Threads)
 
-add_library( lzma STATIC
+add_library( lzma-legacy STATIC
 	C/7zAlloc.c
 	C/7zArcIn.c
 	C/7zBuf.c
@@ -49,10 +49,10 @@ add_library( lzma STATIC
 )
 
 if (NOT ANDROID)
-    target_sources(lzma PRIVATE C/Sha256Opt.c)
+    target_sources(lzma-legacy PRIVATE C/Sha256Opt.c)
 else ()
     if (NOT ${ANDROID_ABI} STREQUAL "armeabi-v7a")
-        target_sources(lzma PRIVATE C/Sha256Opt.c)
+        target_sources(lzma-legacy PRIVATE C/Sha256Opt.c)
     endif ()
 endif ()
-target_link_libraries( lzma Threads::Threads )
+target_link_libraries( lzma-legacy Threads::Threads )

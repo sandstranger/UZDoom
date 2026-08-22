@@ -2,7 +2,7 @@
 
 project(asmjit C)
 
-set(ASMJITNAME asmjit)
+set(ASMJITNAME asmjit-legacy)
 
 add_definitions(-DASMJIT_BUILD_EMBED)
 add_definitions(-DASMJIT_STATIC)

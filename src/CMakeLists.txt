@@ -349,8 +349,8 @@ if (HAVE_VULKAN)
 	list( APPEND PROJECT_LIBRARIES "zvulkan" )
 endif()
 
-list( APPEND PROJECT_LIBRARIES "zwidget" )
-list( APPEND PROJECT_LIBRARIES "webp" )
+list( APPEND PROJECT_LIBRARIES "zwidget-legacy" )
+list( APPEND PROJECT_LIBRARIES "webp-legacy" )
 
 # ZMUSIC
 
@@ -399,6 +399,10 @@ if( MSVC AND NOT VPX_FOUND )
 	endif()
 	set( VPX_FOUND TRUE )
 endif()
+
+if (ANDROID)
+	set(VPX_FOUND TRUE)
+endif ()
 
 if( VPX_FOUND )
 	add_definitions( "-DUSE_LIBVPX=1" )
@@ -1287,13 +1291,13 @@ set( GAME_NONPCH_SOURCES ${GAME_SOURCES} )
 list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 
 if (NOT ANDROID)
-    add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
-    target_precompile_headers( zdoom PRIVATE g_pch.h )
+    add_executable( zdoom-legacy WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
+    target_precompile_headers( zdoom-legacy PRIVATE g_pch.h )
 else ()
-    add_library(zdoom SHARED ${GAME_SOURCES})
+    add_library(zdoom-legacy SHARED ${GAME_SOURCES})
 endif ()
 
-target_include_directories( zdoom PRIVATE ${CMAKE_BINARY_DIR} )
+target_include_directories( zdoom-legacy PRIVATE ${CMAKE_BINARY_DIR} )
 
 set_source_files_properties( ${FASTMATH_SOURCES} PROPERTIES COMPILE_FLAGS ${ZD_FASTMATH_FLAG} )
 set_source_files_properties( xlat/parse_xlat.cpp PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/xlat_parser.c" )
@@ -1315,9 +1319,9 @@ if( UNIX )
 endif()
 
 if (NOT ANDROID)
-    target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} )
+    target_link_libraries( zdoom-legacy ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} )
 else ()
-    target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} EGL AndroidGraphicsLayer)
+    target_link_libraries( zdoom-legacy ${PROJECT_LIBRARIES} lzma zwidget-legacy ${ZMUSIC_LIBRARIES} EGL AndroidGraphicsLayer)
 endif ()
 include_directories(
 	BEFORE
@@ -1387,17 +1391,17 @@ include_directories(
 )
 
 if (NOT ANDROID)
-    add_dependencies( zdoom revision_check )
+    add_dependencies( zdoom-legacy revision_check )
 endif ()
 
 # Due to some quirks, we need to do this in this order
 if( NOT ZDOOM_OUTPUT_OLDSTYLE )
 	# RUNTIME_OUTPUT_DIRECTORY does not exist in CMake 2.4.
 	# Linux distributions are slow to adopt 2.6. :(
-	set_target_properties( zdoom PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ZDOOM_OUTPUT_DIR} )
-	set_target_properties( zdoom PROPERTIES OUTPUT_NAME ${ZDOOM_EXE_NAME} )
+	set_target_properties( zdoom-legacy PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ZDOOM_OUTPUT_DIR} )
+	set_target_properties( zdoom-legacy PROPERTIES OUTPUT_NAME ${ZDOOM_EXE_NAME} )
 else()
-	set_target_properties( zdoom PROPERTIES
+	set_target_properties( zdoom-legacy PROPERTIES
 		RUNTIME_OUTPUT_NAME ${ZDOOM_EXE_NAME}
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE ${ZDOOM_OUTPUT_DIR}
 		RUNTIME_OUTPUT_NAME_DEBUG ${ZDOOM_EXE_NAME}d
@@ -1423,10 +1427,10 @@ if( MSVC )
 	if( ZDOOM_GENERATE_MAPFILE )
 		set( LINKERSTUFF "${LINKERSTUFF} /MAP" )
 	endif()
-	set_target_properties(zdoom PROPERTIES LINK_FLAGS ${LINKERSTUFF})
+	set_target_properties(zdoom-legacy PROPERTIES LINK_FLAGS ${LINKERSTUFF})
 
-	add_custom_command(TARGET zdoom POST_BUILD
-		COMMAND "mt.exe" -manifest \"${CMAKE_CURRENT_SOURCE_DIR}\\common\\platform\\win32\\manifest.xml\" -outputresource:\"$<TARGET_FILE:zdoom>\"\;\#1
+	add_custom_command(TARGET zdoom-legacy POST_BUILD
+		COMMAND "mt.exe" -manifest \"${CMAKE_CURRENT_SOURCE_DIR}\\common\\platform\\win32\\manifest.xml\" -outputresource:\"$<TARGET_FILE:zdoom-legacy>\"\;\#1
 		COMMENT "Adding manifest..."
 	)
 
@@ -1434,11 +1438,11 @@ endif()
 
 if( NOT WIN32 AND NOT APPLE AND NOT ANDROID)
 	FILE( WRITE ${CMAKE_CURRENT_BINARY_DIR}/link-make "if [ ! -e ${ZDOOM_OUTPUT_DIR}/${ZDOOM_EXE_NAME} ]; then ln -sf ${CMAKE_CURRENT_BINARY_DIR}/${ZDOOM_EXE_NAME} ${ZDOOM_OUTPUT_DIR}/${ZDOOM_EXE_NAME}; fi" )
-	add_custom_command( TARGET zdoom POST_BUILD
+	add_custom_command( TARGET zdoom-legacy POST_BUILD
 		COMMAND chmod +x ${CMAKE_CURRENT_BINARY_DIR}/link-make
 		COMMAND ${CMAKE_CURRENT_BINARY_DIR}/link-make )
 	IF ("${INSTALL_RPATH}" STREQUAL "")
-		set_target_properties(zdoom PROPERTIES
+		set_target_properties(zdoom-legacy PROPERTIES
 			#allow libzmusic.so.1 library in same folder as executable at runtime
 			INSTALL_RPATH "\$ORIGIN:\$ORIGIN/zmusic/build/source"
 			BUILD_WITH_INSTALL_RPATH ON
@@ -1447,18 +1451,18 @@ if( NOT WIN32 AND NOT APPLE AND NOT ANDROID)
 endif()
 
 if( NOT ANDROID )
-add_custom_command(TARGET zdoom POST_BUILD
+add_custom_command(TARGET zdoom-legacy POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-	${CMAKE_SOURCE_DIR}/soundfont/uzdoom.sf2 $<TARGET_FILE_DIR:zdoom>/soundfonts/uzdoom.sf2
+	${CMAKE_SOURCE_DIR}/soundfont/uzdoom.sf2 $<TARGET_FILE_DIR:zdoom-legacy>/soundfonts/uzdoom.sf2
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-	${CMAKE_SOURCE_DIR}/fm_banks/GENMIDI.GS.wopl $<TARGET_FILE_DIR:zdoom>/fm_banks/GENMIDI.GS.wopl
+	${CMAKE_SOURCE_DIR}/fm_banks/GENMIDI.GS.wopl $<TARGET_FILE_DIR:zdoom-legacy>/fm_banks/GENMIDI.GS.wopl
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-	${CMAKE_SOURCE_DIR}/fm_banks/gs-by-papiezak-and-sneakernets.wopn $<TARGET_FILE_DIR:zdoom>/fm_banks/gs-by-papiezak-and-sneakernets.wopn
+	${CMAKE_SOURCE_DIR}/fm_banks/gs-by-papiezak-and-sneakernets.wopn $<TARGET_FILE_DIR:zdoom-legacy>/fm_banks/gs-by-papiezak-and-sneakernets.wopn
 )
 endif ()
 
 if (VCPKG_TOOLCHAIN)
-	x_vcpkg_install_local_dependencies(TARGETS zdoom DESTINATION ".")
+	x_vcpkg_install_local_dependencies(TARGETS zdoom-legacy DESTINATION ".")
 endif()
 
 if( WIN32 )
@@ -1506,7 +1510,7 @@ if( APPLE )
 		set( LINK_FRAMEWORKS "${LINK_FRAMEWORKS} -framework QuartzCore" )
 	endif()
 
-	set_target_properties(zdoom PROPERTIES
+	set_target_properties(zdoom-legacy PROPERTIES
 		LINK_FLAGS "${LINK_FRAMEWORKS}"
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/posix/osx/zdoom-info.plist"
 		XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.drdteam.gzdoom"
@@ -1522,7 +1526,7 @@ if( WIN32 )
 else()
 	set( INSTALL_PATH bin CACHE STRING "Directory where the executable will be placed during install." )
 endif()
-install(TARGETS zdoom
+install(TARGETS zdoom-legacy
 		DESTINATION ${INSTALL_PATH}
 		COMPONENT "Game executable")
 
