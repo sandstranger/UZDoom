@@ -239,20 +239,11 @@ endif()
 set_target_properties(zwidget PROPERTIES CXX_STANDARD 20)
 target_compile_options(zwidget PRIVATE ${CXX_WARNING_FLAGS})
 
-if(SDL2_FOUND)
-    if(TARGET SDL2::SDL2)
-        target_link_libraries(zwidget PRIVATE SDL2::SDL2)
-    else() # needed for gzdoom compat for now
-        target_include_directories(zwidget PRIVATE ${SDL2_INCLUDE_DIR} ${SDL2_INCLUDE_DIRS})
-        target_link_libraries(zwidget PRIVATE ${SDL2_LIBRARY})
-    endif()
-endif()
-
 if(MSVC)
 	set_property(TARGET zwidget PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-option(ZWIDGET_BUILD_EXAMPLE "Build the zwidget example application" ON)
+option(ZWIDGET_BUILD_EXAMPLE "Build the zwidget example application" OFF)
 
 if(ZWIDGET_BUILD_EXAMPLE)
 	add_executable(zwidget_example WIN32

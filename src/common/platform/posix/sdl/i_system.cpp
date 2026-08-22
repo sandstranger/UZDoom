@@ -108,6 +108,7 @@ void Mac_I_FatalError(const char* errortext);
 #ifdef __unix__
 void Unix_I_FatalError(const char* errortext)
 {
+#ifndef ANDROID
 	if (CVMAbortException::stacktrace.IsNotEmpty())
 	{
 		Printf("%s", CVMAbortException::stacktrace.GetChars());
@@ -130,7 +131,15 @@ void Unix_I_FatalError(const char* errortext)
 	{
 		printf("\n%s\n", errortext);
 	}
+#else
+    if (CVMAbortException::stacktrace.IsNotEmpty())
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s",
+                     CVMAbortException::stacktrace.GetChars());
+    }
 
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s", errortext);
+#endif
 	// Close window or exit fullscreen and release mouse capture
 	SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
