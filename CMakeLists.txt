@@ -465,11 +465,13 @@ else()
 endif()
 
 # ZMUSIC
+if (NOT ANDROID)
 set( BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE )
 add_subdirectory( libraries/ZMusic )
 set( ZMUSIC_ROOT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/libraries/zmusic" )
 set( ZMUSIC_INCLUDE_DIR ${ZMUSIC_ROOT_PATH}/include )
 set( ZMUSIC_LIBRARIES zmusic )
+endif ()
 
 set( LZMA_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libraries/lzma/C" )
 

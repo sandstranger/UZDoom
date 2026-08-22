@@ -1330,7 +1330,7 @@ endif()
 else()
 	option(USE_PCH "Enable Pre-compiled headers" OFF)
     add_library(zdoom SHARED ${GAME_SOURCES})
-endif()    
+endif()
 
 target_include_directories( zdoom PRIVATE ${CMAKE_BINARY_DIR} )
 
@@ -1487,7 +1487,7 @@ elseif (APPLE)
 	IF ("${INSTALL_RPATH}" STREQUAL "")
 		set_target_properties(zdoom PROPERTIES MACOSX_RPATH TRUE)
 	endif()
-elseif (NOT ANDROID)	
+elseif (NOT ANDROID)
 	FILE( WRITE ${CMAKE_CURRENT_BINARY_DIR}/link-make "if [ ! -e ${ZDOOM_OUTPUT_DIR}/${ZDOOM_EXE_NAME} ]; then ln -sf ${CMAKE_CURRENT_BINARY_DIR}/${ZDOOM_EXE_NAME} ${ZDOOM_OUTPUT_DIR}/${ZDOOM_EXE_NAME}; fi" )
 	add_custom_command( TARGET zdoom POST_BUILD
 		COMMAND chmod +x ${CMAKE_CURRENT_BINARY_DIR}/link-make
@@ -1607,7 +1607,7 @@ if( APPLE )
 	set( CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -rpath @executable_path" )
 endif()
 
-if ( NOT ZMUSIC_SYSTEM_INSTALL )
+if ( NOT ZMUSIC_SYSTEM_INSTALL AND NOT ANDROID)
 	if ( WIN32 OR APPLE )
 		# nothing to do
 	else()
