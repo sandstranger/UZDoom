@@ -54,7 +54,9 @@
 #include <array>
 #include <string_view>
 #include <vector>
-#include "SDL_log.h"
+#ifdef ANDROID
+#include "SDL2/SDL_log.h"
+#endif
 
 namespace Console::Defaults
 {

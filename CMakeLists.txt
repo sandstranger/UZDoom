@@ -61,10 +61,11 @@ endif()
 include( FindPackageHandleStandardArgs )
 
 
+option( FORCE_CROSSCOMPILE "Turn on cross compiling." NO )
+
 if (NOT ANDROID)
-    option( FORCE_CROSSCOMPILE "Turn on cross compiling." YES )
+    set( CMAKE_CROSSCOMPILING FALSE )
 else ()
-    option( FORCE_CROSSCOMPILE "Turn on cross compiling." NO )
     set( CMAKE_CROSSCOMPILING TRUE )
 endif ()
 
@@ -293,7 +294,7 @@ else ()
     endif ()
 endif ()
 
-option (HAVE_VULKAN "Enable Vulkan support" ON)
+option (HAVE_VULKAN "Enable Vulkan support" OFF)
 if( APPLE )
 	option (HAVE_GLES2 "Enable GLES2 support" OFF)
 else()
