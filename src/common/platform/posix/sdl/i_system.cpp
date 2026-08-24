@@ -137,8 +137,15 @@ void Unix_I_FatalError(const char* errortext)
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s",
                      CVMAbortException::stacktrace.GetChars());
     }
-
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s", errortext);
+    FString message;
+    if (CVMAbortException::stacktrace.IsNotEmpty())
+    {
+        message += CVMAbortException::stacktrace;
+        message += "\n\n";
+    }
+    message += errortext;
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Fatal Error",message.GetChars(),nullptr);
 #endif
 	// Close window or exit fullscreen and release mouse capture
 	SDL_QuitSubSystem(SDL_INIT_VIDEO);

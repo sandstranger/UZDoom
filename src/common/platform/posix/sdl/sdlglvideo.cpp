@@ -625,7 +625,7 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *hMonitor, bool fullscreen)
 		{
 #ifdef ANDROID
 			SDL_GL_MakeCurrent(Priv::window, GLContext);
-			angle_blobcache_install("uzdoom");
+			angle_blobcache_install("uzdoom_dev");
 #endif
 			break;
 		}
