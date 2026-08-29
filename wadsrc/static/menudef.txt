@@ -911,6 +911,14 @@ OptionValue PuffTypes
 	2.0, "$OPTVAL_SPRITESPARTICLES"
 }
 
+OptionValue CullTypes
+{
+	0, "$OPTVAL_OFF"
+	1, "$CULLVAL_ON_WITHOUT_FOG"
+	2, "$CULLVAL_ON_WITH_FOG"
+	3, "$CULLVAL_ON_WITH_FPS_MIN"
+}
+
 OptionValue Wipes
 {
 	0.0, "$OPTVAL_NONE"
@@ -953,6 +961,7 @@ OptionMenu "VideoOptions" protected
 	Submenu "$DSPLYMNU_VKOPT",                 VKOptions,             0, false, vid_preferbackend, 1, HideInv
 	Submenu "$GLMNU_TEXOPT",                   GLTextureGLOptions
 	Submenu "$GLMNU_DYNLIGHT",                 GLLightOptions
+	Submenu "$DSPLYMNU_CULLOPT",			   "CullingOptions"
 	StaticText " "
 	Slider "$DSPLYMNU_SCREENSIZE",             screenblocks,           3.0, 12.0, 1.0, 0
 	StaticText " "
@@ -1389,6 +1398,16 @@ OptionMenu "GLLightOptions" protected
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAP",        gl_light_shadowmap,   YesNo
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAPQUALITY", gl_shadowmap_quality, ShadowMapQuality
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAPFILTER",  gl_shadowmap_filter,  ShadowMapFilter
+}
+
+OptionMenu "CullingOptions" protected
+{
+	Title "$CULLMNU_TITLE"
+	Option "$DSPLYMNU_LINECULL",				"r_distance_cull_type", "CullTypes"
+	Slider "$DSPLYMNU_LINECULLDIST",			"r_line_distance_cull",	1000.0, 16000.0, 1000.0, 0, "r_cull_distance"
+	Slider "$DSPLYMNU_CULLFPSMIN",				"r_cull_fps_target", 60, 200, 10, 0, "r_cull_fps"
+	ColorPicker "$DSPLYMNU_CULLCOLOR",			"gl_cullcolor", "r_distance_cull_type"
+	Slider "$DSPLYMNU_CULLSKYFOG",				"gl_cull_skyfog", 1, 255, 1, 0, "r_distance_cull_type"
 }
 
 OptionMenu "OpenGLOptions" protected
@@ -2729,6 +2748,9 @@ OptionValue AdlVolumeModels
 	9,  "$ADLVLMODEL_WIN9XGENERIC"
 	10, "$ADLVLMODEL_HMI"
 	11, "$ADLVLMODEL_HMIOLD"
+	12, "$ADLVLMODEL_MS_ADLIB"
+	13, "$ADLVLMODEL_IMF_CREATOR"
+	14, "$ADLVLMODEL_OCONNEL"
 }
 
 OptionValue OpnVolumeModels
@@ -2752,7 +2774,7 @@ OptionValue AdlChanAllocs
 OptionValue ADLOplCores
 {
 	0,  "$OPTVAL_NUKEDOPL3"
-	1,  "$OPTVAL_NUKEDOPL3174"
+	1,  "$OPTVAL_NUKEDOPL3FAST"
 	2,  "$OPTVAL_DOSBOXOPL3"
 	3,  "$OPTVAL_OPALOPL3"
 	4,  "$OPTVAL_JAVAOPL3"
@@ -2762,6 +2784,9 @@ OptionValue ADLOplCores
 	8,  "$OPTVAL_YMFMOPL3"
 	9,  "$OPTVAL_LLENUKEDOPL2"
 	10, "$OPTVAL_LLENUKEDOPL3"
+	11, "$OPTVAL_NUKEDOPL2"
+	12, "$OPTVAL_NUKEDCQM"
+	13, "$OPTVAL_DOSBOXOPL2"
 }
 
 OptionValue OpnCores
