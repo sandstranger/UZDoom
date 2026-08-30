@@ -743,7 +743,7 @@ macro ( make_pkgconfig_pc_file name )
     string(REPLACE "%libdir%" "${CMAKE_INSTALL_LIBDIR}" FSTR ${FSTR})
   else ()
     string(REPLACE "%libdir%" "\${prefix}/${CMAKE_INSTALL_LIBDIR}" FSTR ${FSTR})
-  endif ()  
+  endif ()
 
   string(REPLACE "%VERSION%" "${HB_VERSION}" FSTR ${FSTR})
   string(REPLACE "%requires_private%" "${PC_REQUIRES_PRIV}" FSTR ${FSTR})
@@ -758,7 +758,7 @@ macro ( make_pkgconfig_pc_file name )
   )
 endmacro ( make_pkgconfig_pc_file )
 
-if (NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL)
+if (NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL AND NOT ANDROID)
   install(TARGETS harfbuzz
     EXPORT harfbuzzConfig
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
