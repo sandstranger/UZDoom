@@ -350,7 +350,7 @@ EColorRange V_ParseFontColor(const char32_t *&color_value, int normalcolor, int 
 void ParseIntoIntermediateDrawStrings(const std::u32string_view utf32SrcString, const FFont* font, int normalcolor, std::vector<IntermediateDrawString> &outStrings)
 {
 	outStrings.clear();
-	
+
 	auto* currentDrawString = &outStrings.emplace_back(IntermediateDrawString());
 	currentDrawString->Font = font;
 	bool insideEscapeSequence = false;
@@ -433,7 +433,7 @@ void ParseIntoIntermediateDrawStrings(const std::u32string_view utf32SrcString, 
 				currentcolor = V_LogColorFromColorRange(newcolor);
 				continue;
 			}
-			
+
 			continue;
 		}
 		else if (insideEscapeSequence && srcChar != TEXTCOLOR_ESCAPE && srcChar != '[')
@@ -657,30 +657,45 @@ void DrawStaticFontText(F2DDrawer *drawer, FFont *font, int normalcolor, double 
 template<class chartype>
 std::u32string ConvertStringToUTF32(const chartype *string)
 {
-	// convert string to utf32 for straightforward and debuggable string parsing.
-	std::u32string utf32String;
+    // convert string to utf32 for straightforward and debuggable string parsing.
+    std::u32string utf32String;
 
-	if constexpr (std::is_same_v<chartype, uint8_t> || std::is_same_v<chartype, char> ||
-	              std::is_same_v<chartype, char8_t>)
-	{
-		utf32String.resize(
-			simdutf::utf32_length_from_utf8((const char *)string, std::char_traits<chartype>::length(string)), '\0');
-		simdutf::convert_utf8_to_utf32((const char *)string, std::char_traits<chartype>::length(string),
-		                               utf32String.data());
-	}
-	else if constexpr (std::is_same_v<chartype, char16_t>)
-	{
-		utf32String.resize(
-			simdutf::utf32_length_from_utf16((const char16_t *)string, std::char_traits<chartype>::length(string)),
-			'\0');
-		simdutf::convert_utf16_to_utf32(string, std::char_traits<chartype>::length(string), utf32String);
-	}
-	else if constexpr (std::is_same_v<chartype, char32_t>)
-	{
-		utf32String = string;
-	}
-	assert(simdutf::validate_utf32(utf32String.c_str(), utf32String.length()));
-	return utf32String;
+    if constexpr (std::is_same_v<chartype, uint8_t> ||
+                  std::is_same_v<chartype, char> ||
+                  std::is_same_v<chartype, char8_t>)
+    {
+        const char *utf8String = reinterpret_cast<const char*>(string);
+        const size_t length = std::char_traits<char>::length(utf8String);
+
+        utf32String.resize(
+                simdutf::utf32_length_from_utf8(utf8String, length),
+                U'\0');
+
+        simdutf::convert_utf8_to_utf32(
+                utf8String,
+                length,
+                utf32String.data());
+    }
+    else if constexpr (std::is_same_v<chartype, char16_t>)
+    {
+        const size_t length = std::char_traits<char16_t>::length(string);
+
+        utf32String.resize(
+                simdutf::utf32_length_from_utf16(string, length),
+                U'\0');
+
+        simdutf::convert_utf16_to_utf32(
+                string,
+                length,
+                utf32String.data());
+    }
+    else if constexpr (std::is_same_v<chartype, char32_t>)
+    {
+        utf32String = string;
+    }
+
+    assert(simdutf::validate_utf32(utf32String.c_str(), utf32String.length()));
+    return utf32String;
 }
 
 template<class chartype>

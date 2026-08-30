@@ -141,10 +141,10 @@ void FFont::MakeFontChoiceCVARs()
 		if (id.name.IsValidName())
 		{
 			FString      langNameString = FString(id.name.GetChars());
-			FindOrCreateFontChoiceCVAR("fontfallback_" + langNameString);	
-			FindOrCreateFontChoiceCVAR("fontchoice_smalltext_" + langNameString);	
-			FindOrCreateFontChoiceCVAR("fontchoice_bigtext_" + langNameString);	
-			FindOrCreateFontChoiceCVAR("fontchoice_title_" + langNameString);	
+			FindOrCreateFontChoiceCVAR("fontfallback_" + langNameString);
+			FindOrCreateFontChoiceCVAR("fontchoice_smalltext_" + langNameString);
+			FindOrCreateFontChoiceCVAR("fontchoice_bigtext_" + langNameString);
+			FindOrCreateFontChoiceCVAR("fontchoice_title_" + langNameString);
 			FindOrCreateFontChoiceCVAR("fontchoice_description_" + langNameString);
 
 			auto staticFonts = FFont::GetRemappableFonts();
@@ -752,7 +752,7 @@ FFont *FFont::GetDynamicSubstitutionForStaticFont(FFont *const fontToSub)
 		{
 			foundDynamicRemap = V_GetFont(*cv);
 		}
-		
+
 		if (foundDynamicRemap)
 		{
 			return foundDynamicRemap;
@@ -1338,7 +1338,7 @@ bool FFont::CanPrint(const uint8_t *string) const
 				return false;
 			}
 		}
-		
+
 		return true;
 	}
 
@@ -1380,67 +1380,88 @@ bool FFont::CanPrint(const uint8_t *string) const
 // Find string width using this font
 //
 //==========================================================================
-
-int FFont::StringWidth(const uint8_t *string, int spacing) const
+int FFont::StringWidth(const uint8_t* string, int spacing) const
 {
-	if (IsValidDynamicFont())
-	{
-		std::vector<IntermediateDrawString> drawStrings;
-		drawStrings.reserve(4);
-		std::u32string utf32String;
-		utf32String.resize(
-			simdutf::utf32_length_from_utf8((const char *)string, std::char_traits<uint8_t>::length(string)), '\0');
-		simdutf::convert_utf8_to_utf32((const char *)string, std::char_traits<uint8_t>::length(string),
-		                               utf32String.data());
-		ParseIntoIntermediateDrawStrings(utf32String, this, 0, drawStrings);
+    if (IsValidDynamicFont())
+    {
+        std::vector<IntermediateDrawString> drawStrings;
+        drawStrings.reserve(4);
 
-		float totalWidth = 0.0f;
-		for (auto &s : drawStrings)
-		{
-			totalWidth += Trex::TextShaper::Measure(s.TrexGlyphs).width * (float)InvSupersampleFactor;
-		}
-		return std::ceil(totalWidth);
-	}
+        std::u32string utf32String;
 
-	int w = 0;
-	int maxw = 0;
+        const char* utf8String = reinterpret_cast<const char*>(string);
+        const size_t length = std::char_traits<char>::length(utf8String);
 
-	while (*string)
-	{
-		auto chr = GetCharFromString(string);
-		if (chr == TEXTCOLOR_ESCAPE)
-		{
-			// We do not need to check for UTF-8 in here.
-			if (*string == '[')
-			{
-				while (*string != '\0' && *string != ']')
-				{
-					++string;
-				}
-			}
-			if (*string != '\0')
-			{
-				++string;
-			}
-			continue;
-		}
-		else if (chr == '\n')
-		{
-			if (w > maxw)
-				maxw = w;
-			w = 0;
-		}
-		else if (spacing >= 0)
-		{
-			w += GetCharWidth(chr) + GlobalKerning + spacing;
-		}
-		else
-		{
-			w -= spacing;
-		}
-	}
+        utf32String.resize(
+                simdutf::utf32_length_from_utf8(utf8String, length),
+                U'\0');
 
-	return max(maxw, w);
+        simdutf::convert_utf8_to_utf32(
+                utf8String,
+                length,
+                utf32String.data());
+
+        ParseIntoIntermediateDrawStrings(
+                utf32String,
+                this,
+                0,
+                drawStrings);
+
+        float totalWidth = 0.0f;
+        for (auto& s : drawStrings)
+        {
+            totalWidth +=
+                    Trex::TextShaper::Measure(s.TrexGlyphs).width *
+                    (float)InvSupersampleFactor;
+        }
+
+        return std::ceil(totalWidth);
+    }
+
+    int w = 0;
+    int maxw = 0;
+
+    while (*string)
+    {
+        auto chr = GetCharFromString(string);
+
+        if (chr == TEXTCOLOR_ESCAPE)
+        {
+            if (*string == '[')
+            {
+                while (*string != '\0' && *string != ']')
+                {
+                    ++string;
+                }
+            }
+
+            if (*string != '\0')
+            {
+                ++string;
+            }
+
+            continue;
+        }
+        else if (chr == '\n')
+        {
+            if (w > maxw)
+            {
+                maxw = w;
+            }
+
+            w = 0;
+        }
+        else if (spacing >= 0)
+        {
+            w += GetCharWidth(chr) + GlobalKerning + spacing;
+        }
+        else
+        {
+            w -= spacing;
+        }
+    }
+
+    return max(maxw, w);
 }
 
 //only supports dynamic fonts.
@@ -1644,7 +1665,7 @@ FFont *FFont::GetDynamicFontFallbackForChar32(char32_t srcChar) const
 	{
 		return JPNFont;
 	}
-	else if (KRFont->CanPrint(srcChar)) 
+	else if (KRFont->CanPrint(srcChar))
 	{
 		return KRFont;
 	}
