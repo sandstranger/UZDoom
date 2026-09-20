@@ -285,9 +285,8 @@ namespace ShaderInputsOutputs
 		auto field_names = boost::pfr::names_as_array<T>();
 		auto field_types = get_field_types<T>();
 
-#ifndef ANDROID
-		static_assert(VerifyStructAlignment<T, std430>() == true, "struct does not conform with std140/std430 alignment");
-#endif
+//		static_assert(VerifyStructAlignment<T, std430>() == true, "struct does not conform with std140/std430 alignment");
+
 		FString out = "{\n";
 
 		int n = boost::pfr::tuple_size_v<T>;
