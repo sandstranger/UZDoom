@@ -508,15 +508,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 	assert(screen->mLights != NULL);
 	assert(screen->mBones != NULL);
 
-#ifdef ANDROID
-    bool lightbuffertype = screen->mLights->GetBufferType();
-    if (gEnableSpirvCross){
-        vp_comb.AppendFormat("#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n#define NUM_UBO_LIGHTS %d\n#define NUM_UBO_BONES %d\n", screen->mLights->GetBlockSize(), screen->mBones->GetBlockSize());
-    } else{
-        vp_comb.AppendFormat("#version 310 es\n#define NO_CLIPDISTANCE_SUPPORT\n#define NUM_UBO_LIGHTS %d\n#define NUM_UBO_BONES %d\n", screen->mLights->GetBlockSize(), screen->mBones->GetBlockSize());
-    }
-#else
-
 #ifdef ANDROID    
     if (gEnableSpirvCross){
 		pre_placeholder << "#version 410\n";
