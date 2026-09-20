@@ -232,6 +232,8 @@ namespace OpenGLESRenderer
 		}
 #endif
 
+		gles.nv_vram_ext = CheckExtension("GL_NVX_gpu_memory_info");
+		gles.ati_vram_ext = CheckExtension("GL_ATI_meminfo");
 
 		if (gles.glesMode == GLES_MODE_GLES)
 		{

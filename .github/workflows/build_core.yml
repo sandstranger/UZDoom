@@ -72,7 +72,7 @@ jobs:
 
     # https://github.com/actions/runner-images/issues/14083
     - name: Install Winget
-      if: inputs.os == 'windows-11-arm'
+      if: startsWith(inputs.os, 'windows-') && endsWith(inputs.os, '-arm')
       shell: pwsh
       run: |
         Install-Module -Name Microsoft.WinGet.Client -Repository PSGallery -Force
@@ -89,8 +89,8 @@ jobs:
       id: key
       shell: bash
       run: |
-        ref=${{ github.base_ref || github.ref }}
-        main=${{ github.event.repository.master_branch || 'trunk' }}
+        ref="${{ github.base_ref || github.ref }}"
+        main="${{ github.event.repository.master_branch || 'trunk' }}"
         suffix="${{ inputs.name }}/${{ inputs.build_type }}"
         echo "ref: $ref"
         if [[ -z "${ref}" || "${ref}" == refs/* ]]; then
@@ -153,7 +153,9 @@ jobs:
 
     - name: Setup MSVC
       if: runner.os == 'Windows' && !contains(inputs.name, 'MinGW')
-      uses: ilammy/msvc-dev-cmd@v1 # FIXME: update this
+      uses: TheMrMilchmann/setup-msvc-dev@v4
+      with:
+        arch: x64
 
     - name: Setup MSYS2
       if: runner.os == 'Windows' && contains(inputs.name, 'MinGW')
@@ -312,10 +314,10 @@ jobs:
         rm -rf soundfonts fm_banks
 
         mkdir -p package/soundfonts
-        cp -f ../soundfont/uzdoom.sf2 package/soundfonts
+        cp -f ../soundfont/* package/soundfonts
 
         mkdir -p package/fm_banks
-        cp -f ../fm_banks/GENMIDI.GS.wopl ../fm_banks/gs-by-papiezak-and-sneakernets.wopn package/fm_banks
+        cp -f ../fm_banks/* package/fm_banks
 
         shopt -s nullglob
         mv -f *.exe *.pk3 *.pdb package

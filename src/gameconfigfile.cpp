@@ -27,6 +27,7 @@
 #include "c_bind.h"
 #include "c_cvars.h"
 #include "c_dispatch.h"
+#include "colorspace.h"
 #include "cmdlib.h"
 #include "d_main.h"
 #include "doomstat.h"
@@ -41,6 +42,8 @@
 #include "v_video.h"
 #include "version.h"
 #include "zstring.h"
+
+using Color::str;
 
 #if !defined _MSC_VER && !defined __APPLE__
 #include "i_system.h"  // for SHARE_DIR
@@ -731,6 +734,16 @@ void FGameConfigFile::DoGlobalSetup ()
 				}
 			}
 		}
+
+		if(EngineLastRunVer < 234)
+		{
+			// Native fullscreen is now enabled by default, this is only used for MacOS.
+			var = FindCVar("vid_nativefullscreen", NULL);
+			if(var != NULL)
+			{
+				var->SetGenericRep(1, CVAR_Bool);
+			}
+		}
 	}
 
 	OkayToWrite = true;
@@ -1079,11 +1092,11 @@ void FGameConfigFile::SetRavenDefaults (bool isHexen)
 	val.Int = CR_YELLOW;
 	msgmidcolor2->SetGenericRepDefault (val, CVAR_Int);
 
-	val.Int = 0x543b17;
+	val.Int = str("#543b17");
 	am_wallcolor->SetGenericRepDefault (val, CVAR_Int);
-	val.Int = 0xd0b085;
+	val.Int = str("#d0b085");
 	am_fdwallcolor->SetGenericRepDefault (val, CVAR_Int);
-	val.Int = 0x734323;
+	val.Int = str("#734323");
 	am_cdwallcolor->SetGenericRepDefault (val, CVAR_Int);
 
 	val.Int = 0;
@@ -1091,7 +1104,7 @@ void FGameConfigFile::SetRavenDefaults (bool isHexen)
 
 	// Fix the Heretic/Hexen automap colors so they are correct.
 	// (They were wrong on older versions.)
-	if (*am_wallcolor == 0x2c1808 && *am_fdwallcolor == 0x887058 && *am_cdwallcolor == 0x4c3820)
+	if (*am_wallcolor == str("#2c1808") && *am_fdwallcolor == str("#887058") && *am_cdwallcolor == str("#4c3820"))
 	{
 		am_wallcolor->ResetToDefault ();
 		am_fdwallcolor->ResetToDefault ();
@@ -1100,7 +1113,7 @@ void FGameConfigFile::SetRavenDefaults (bool isHexen)
 
 	if (!isHexen)
 	{
-		val.Int = 0x3f6040;
+		val.Int = str("#3f6040");
 		color->SetGenericRepDefault (val, CVAR_Int);
 	}
 }

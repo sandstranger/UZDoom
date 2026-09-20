@@ -449,7 +449,6 @@ OptionMenu "NewPlayerMenu" protected
 	PlayerSkinItem "$PLYRMNU_PLAYERSKIN", "PlayerSkin"
 	PlayerGenderItem "$PLYRMNU_PLAYERGENDER", "Gender"
 	AutoaimSlider "$PLYRMNU_AUTOAIM"
-	Option "$PLYRMNU_VERTSPREAD", vertspread, "OnOff"
 	PlayerSwitchOnPickupItem "$PLYRMNU_SWITCHONPICKUP", "OffOn"
 	Option "$PLYRMNU_ALWAYSRUN", cl_run, "OnOff"
 	Class "NewPlayerMenu"
@@ -495,7 +494,6 @@ ListMenu "PlayerMenu"
 	ValueText "$PLYRMNU_PLAYERSKIN", "Skin"
 	ValueText "$PLYRMNU_PLAYERGENDER", "Gender", "Gender"
 	Slider "$PLYRMNU_AUTOAIM", "Autoaim", 0, 70, 1
-	ValueText "$PLYRMNU_VERTSPREAD", vertspread, "OnOff"
 	ValueText "$PLYRMNU_SWITCHONPICKUP", "Switch", "OffOn"
 	ValueText "$PLYRMNU_ALWAYSRUN", "AlwaysRun", "OnOff"
 	Class "PlayerMenu"
@@ -1763,6 +1761,7 @@ OptionValue AlwaysTally
 	0,	"$OPTVAL_MODDEFINED"
 	1,	"$OPTVAL_NOTHUBS"
 	2,	"$OPTVAL_WITHHUBS"
+	3,	"$OPTVAL_NEVER"
 }
 
 OptionValue SaveOrder
@@ -1911,48 +1910,55 @@ OptionMenu AutomapOptions protected
 {
 	Title "$AUTOMAPMNU_TITLE"
 
-	Option "$AUTOMAPMNU_COLORSET",				"am_colorset", "MapColorTypes"
-	Option "$AUTOMAPMNU_CUSTOMCOLORS",			"am_customcolors", "YesNo"
-	Submenu "$AUTOMAPMNU_SETCUSTOMCOLORS",		"MapColorMenu"
+	Option "$AUTOMAPMNU_COLORSET",         "am_colorset", "MapColorTypes"
+	Option "$AUTOMAPMNU_CUSTOMCOLORS",     "am_customcolors", "YesNo"
+	Submenu "$AUTOMAPMNU_SETCUSTOMCOLORS", "MapColorMenu"
 
 	StaticText ""
-	Submenu "$AUTOMAPMNU_CONTROLS",				"MapControlsMenu"
+	Submenu "$AUTOMAPMNU_CONTROLS", "MapControlsMenu"
 
 	StaticText ""
-	Option "$AUTOMAPMNU_ROTATE",				"am_rotate", "RotateTypes"
-	Option "$AUTOMAPMNU_FOLLOW",				"am_followplayer", "OnOff"
-	Option "$AUTOMAPMNU_OVERLAY",				"am_overlay", "OverlayTypes"
-	Option "$AUTOMAPMNU_TEXTURED",				"am_textured", "OnOff"
-	Slider "$AUTOMAPMNU_LINEALPHA",				"am_linealpha", 0.1, 1.0, 0.1, 1
-	Slider "$AUTOMAPMNU_LINETHICKNESS",			"am_linethickness", 1, 8, 1, 0
-	Option "$AUTOMAPMNU_LINEANTIALIASING",		"am_lineantialiasing", "OnOff"
+	Option "$AUTOMAPMNU_ROTATE",           "am_rotate", "RotateTypes"
+	Option "$AUTOMAPMNU_FOLLOW",           "am_followplayer", "OnOff"
+	Option "$AUTOMAPMNU_OVERLAY",          "am_overlay", "OverlayTypes"
+	Option "$AUTOMAPMNU_TEXTURED",         "am_textured", "OnOff"
+	Slider "$AUTOMAPMNU_LINEALPHA",        "am_linealpha", 0.1, 1.0, 0.1, 1
+	Slider "$AUTOMAPMNU_LINETHICKNESS",    "am_linethickness", 1, 8, 1, 0
+	Option "$AUTOMAPMNU_LINEANTIALIASING", "am_lineantialiasing", "OnOff"
 
 	StaticText ""
-	Option "$AUTOMAPMNU_SHOWITEMS",				"am_showitems", "OnOff"
-	Option "$AUTOMAPMNU_SHOWMONSTERS",			"am_showmonsters", "OnOff"
-	Option "$AUTOMAPMNU_SHOWSECRETS",			"am_showsecrets", "OnOff"
-	Option "$AUTOMAPMNU_SHOWTIME",				"am_showtime", "OnOff"
-	Option "$AUTOMAPMNU_SHOWTOTALTIME",			"am_showtotaltime", "OnOff"
-	Option "$AUTOMAPMNU_SHOWMAPLABEL",			"am_showmaplabel", "MaplabelTypes"
-	Option "$AUTOMAPMNU_SHOWLEVELNAME",			"am_showlevelname", "OnOff"
+	Option "$AUTOMAPMNU_SHOWITEMS",      "am_showitems", "OnOff"
+	Option "$AUTOMAPMNU_SHOWMONSTERS",   "am_showmonsters", "OnOff"
+	Option "$AUTOMAPMNU_SHOWSECRETS",    "am_showsecrets", "OnOff"
+	Option "$AUTOMAPMNU_SHOWTIME",       "am_showtime", "OnOff"
+	Option "$AUTOMAPMNU_SHOWTOTALTIME",  "am_showtotaltime", "OnOff"
+	Option "$AUTOMAPMNU_SHOWMAPLABEL",   "am_showmaplabel", "MaplabelTypes"
+	Option "$AUTOMAPMNU_SHOWLEVELNAME",  "am_showlevelname", "OnOff"
+	Option "$AUTOMAPMNU_MATCHSTATUSBAR", "am_match_statusbar", "OnOff"
 
 	StaticText ""
-	Option "$AUTOMAPMNU_SHOWKEYS",				"am_showkeys", "OnOff"
-	Option "$AUTOMAPMNU_SHOWKEYS_ALWAYS",			"am_showkeys_always", "OnOff"
+	Option "$AUTOMAPMNU_SHOWKEYS",        "am_showkeys", "OnOff"
+	Option "$AUTOMAPMNU_SHOWKEYS_ALWAYS", "am_showkeys_always", "OnOff"
 
 	StaticText ""
-	Option "$AUTOMAPMNU_MAPSECRETS",			"am_map_secrets", "SecretTypes"
-	Option "$AUTOMAPMNU_DRAWMAPBACK",			"am_drawmapback", "MapBackTypes"
-	Option "$AUTOMAPMNU_SHOWTRIGGERLINES",		"am_showtriggerlines", "MapTriggers"
-	Option "$AUTOMAPMNU_SHOWTHINGSPRITES",		"am_showthingsprites", "STSTypes"
+	Option "$AUTOMAPMNU_MAPSECRETS",              "am_map_secrets", "SecretTypes"
+	Option "$AUTOMAPMNU_DRAWMAPBACK",             "am_drawmapback", "MapBackTypes"
+	Option "$AUTOMAPMNU_SHOWTRIGGERLINES",        "am_showtriggerlines", "MapTriggers"
+	Option "$AUTOMAPMNU_SHOWTHINGSPRITES",        "am_showthingsprites", "STSTypes"
+	FlagOption "$AUTOMAPMNU_SHOWSEENITEMS",       "am_show_seen_things", "OnOff", 0
+	FlagOption "$AUTOMAPMNU_SHOWSEENMONSTERS",    "am_show_seen_things", "OnOff", 1
+	FlagOption "$AUTOMAPMNU_SHOWSEENCORPSES",     "am_show_seen_things", "OnOff", 2
+	FlagOption "$AUTOMAPMNU_SHOWSEENFRIENDLIES",  "am_show_seen_things", "OnOff", 3
+	FlagOption "$AUTOMAPMNU_SHOWSEENDECORATIONS", "am_show_seen_things", "OnOff", 4
+	Slider "$AUTOMAPMNU_THINGSPRITESSCALE",       "am_thingsspritescale", 0.1, 1.0, 0.1, 1
 
 	StaticText ""
-	Option "$AUTOMAPMNU_PTOVERLAY",				"am_portaloverlay", "OnOff"
-	Slider "$AUTOMAPMNU_EMPTYSPACEMARGIN",		"am_emptyspacemargin", 0, 90, 5, 0
+	Option "$AUTOMAPMNU_PTOVERLAY",        "am_portaloverlay", "OnOff"
+	Slider "$AUTOMAPMNU_EMPTYSPACEMARGIN", "am_emptyspacemargin", 0, 90, 5, 0
 
 	StaticText ""
-	Option "$AUTOMAPMNU_MARKFONT",				"am_markfont", "MapMarkFont"
-	Option "$AUTOMAPMNU_MARKCOLOR",				"am_markcolor", "TextColors"
+	Option "$AUTOMAPMNU_MARKFONT",  "am_markfont", "MapMarkFont"
+	Option "$AUTOMAPMNU_MARKCOLOR", "am_markcolor", "TextColors"
 }
 
 //-------------------------------------------------------------------------------------------
@@ -2408,7 +2414,6 @@ OptionMenu GameplayOptions protected
 	Option "$GMPLYMNU_INSTANTREACTION",			"sv_instantreaction", "YesNo"
 	Option "$GMPLYMNU_DEGENERATION",			"sv_degeneration", "YesNo"
 	Option "$GMPLYMNU_NOAUTOAIM",				"sv_noautoaim", "NoYes"
-	Option "$GMPLYMNU_NOVERTSPREAD",			"sv_novertspread", "NoYes"
 	Option "$GMPLYMNU_ALLOWSUICIDE",			"sv_disallowsuicide", "NoYes"
 	Option "$GMPLYMNU_ALLOWJUMP",				"sv_jump", "JumpCrouchFreeLook"
 	Option "$GMPLYMNU_ALLOWCROUCH",				"sv_crouch", "JumpCrouchFreeLook"
@@ -3136,7 +3141,7 @@ OptionMenu AccessibilityOptions protected
 	Tooltip "$ACCMNU_TOOLTIP_LIGHT_EXTRA"
 	Slider "$ACCMNU_LIGHT_RADIUS", "r_visibility", 0.0, 16.0, 1.0, 1
 	Tooltip "$ACCMNU_TOOLTIP_LIGHT_RADIUS"
-	
+
 	StaticText ""
 	Slider "$ACCMNU_DOUBLECLICK_THRESHOLD", "cl_doubleclickthreshold", 100, 600, 25, 0
 	Tooltip "$ACCMNU_TOOLTIP_DOUBLECLICK_THRESHOLD"
