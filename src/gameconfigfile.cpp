@@ -1026,6 +1026,10 @@ void FGameConfigFile::ArchiveGameData(FString section)
 
 	if(!bKeySetup) return;
 
+	Bindings.DoBindsBackup ();
+	DoubleBindings.DoBindsBackup ();
+	AutomapBindings.DoBindsBackup ();
+
 	M_SaveCustomKeys (this, section);
 
 	SetSection (section + ".Bindings", true);
@@ -1036,6 +1040,10 @@ void FGameConfigFile::ArchiveGameData(FString section)
 
 	SetSection (section + ".AutomapBindings", true);
 	AutomapBindings.ArchiveBindings (this);
+
+	Bindings.RestoreBindsBackup ();
+	DoubleBindings.RestoreBindsBackup ();
+	AutomapBindings.RestoreBindsBackup ();
 }
 
 void FGameConfigFile::ArchiveGlobalData ()
