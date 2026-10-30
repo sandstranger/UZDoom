@@ -112,7 +112,14 @@ void GLBuffer::Map()
 	if (!mPersistent && !nomap)
 	{
 		Bind();
+#ifdef ANDROID
+		// ANGLE's Vulkan backend skips its buffer-idle wait for UNSYNCHRONIZED maps.
+		// With gl_pipeline_depth == 0 this renderer reuses a single buffer without
+		// fence waits, so mapping must retain the normal GL synchronization.
+		map = (FFlatVertex*)glMapBufferRange(mUseType, 0, buffersize, GL_MAP_WRITE_BIT);
+#else
 		map = (FFlatVertex*)glMapBufferRange(mUseType, 0, buffersize, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+#endif
 		InvalidateBufferState();
 	}
 }
