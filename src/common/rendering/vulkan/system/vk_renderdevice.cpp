@@ -372,6 +372,16 @@ FTexture *VulkanRenderDevice::WipeEndScreen()
 
 void VulkanRenderDevice::CopyScreenToBuffer(int w, int h, uint8_t *data)
 {
+	// Savegame previews must use the same output transform as the displayed frame.
+	// The render target stores linear HDR values; copying it directly to UNORM
+	// produces a much darker image when the PNG is later loaded without gAMA handling.
+	IntRect bounds;
+	bounds.left = 0;
+	bounds.top = 0;
+	bounds.width = w;
+	bounds.height = h;
+	mPostprocess->DrawPresentTexture(bounds, true, true);
+
 	VkTextureImage image;
 
 	// Convert from rgba16f to rgba8 using the GPU:
@@ -431,13 +441,6 @@ TArray<uint8_t> VulkanRenderDevice::GetScreenshotBuffer(int &pitch, ESSType &col
 {
 	int w = SCREENWIDTH;
 	int h = SCREENHEIGHT;
-
-	IntRect box;
-	box.left = 0;
-	box.top = 0;
-	box.width = w;
-	box.height = h;
-	mPostprocess->DrawPresentTexture(box, true, true);
 
 	TArray<uint8_t> ScreenshotBuffer(w * h * 3, true);
 	CopyScreenToBuffer(w, h, ScreenshotBuffer.Data());

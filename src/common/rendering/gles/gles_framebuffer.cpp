@@ -176,7 +176,7 @@ void OpenGLFrameBuffer::CopyScreenToBuffer(int width, int height, uint8_t* scr)
 	bounds.top = 0;
 	bounds.width = width;
 	bounds.height = height;
-	GLRenderer->CopyToBackbuffer(&bounds, false);
+	GLRenderer->CopyToBackbuffer(&bounds, true);
 
 	// strictly speaking not needed as the glReadPixels should block until the scene is rendered, but this is to safeguard against shitty drivers
 #ifndef ANDROID	
