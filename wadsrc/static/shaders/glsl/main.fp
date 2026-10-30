@@ -36,6 +36,14 @@ void SetupMaterial(inout Material mat);
 vec4 ProcessLight(Material mat, vec4 color);
 vec3 ProcessMaterialLight(Material material, vec3 color);
 
+// The light list header holds the loop bounds for the light loops in the material shaders. With a uniform buffer
+// keep them inside the block, so a bad header can neither read past it nor keep the GPU looping until it hangs.
+#ifdef NUM_UBO_LIGHTS
+#define CLAMP_LIGHT_RANGE(range) clamp(range, ivec4(0), ivec4(NUM_UBO_LIGHTS - 3))
+#else
+#define CLAMP_LIGHT_RANGE(range) (range)
+#endif
+
 #ifdef USE_GETTEXCOORD
 vec2 GetTexCoord()
 {

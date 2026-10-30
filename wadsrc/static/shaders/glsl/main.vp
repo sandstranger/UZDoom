@@ -157,7 +157,12 @@ void AddWeightedBone(uint boneIndex, float weight, inout vec4 position, inout ve
 {
 	if (weight != 0.0)
 	{
+#ifdef NUM_UBO_BONES
+		// stay inside the uniform block even if a model references more bones than were uploaded
+		mat4 transform = bones[clamp(uBoneIndexBase + int(boneIndex), 0, NUM_UBO_BONES - 1)];
+#else
 		mat4 transform = bones[uBoneIndexBase + int(boneIndex)];
+#endif
 		mat3 rotation = mat3(transform);
 		position += (transform * aPosition) * weight;
 		normal += (rotation * aNormal.xyz) * weight;

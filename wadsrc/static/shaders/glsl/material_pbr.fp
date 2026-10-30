@@ -98,7 +98,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 
 	if (uLightIndex >= 0)
 	{
-		ivec4 lightRange = ivec4(lights[uLightIndex]) + ivec4(uLightIndex + 1);
+		ivec4 lightRange = CLAMP_LIGHT_RANGE(ivec4(lights[uLightIndex]) + ivec4(uLightIndex + 1));
 		if (lightRange.z > lightRange.x)
 		{
 			//

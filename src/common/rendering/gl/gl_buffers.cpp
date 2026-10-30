@@ -150,6 +150,7 @@ void GLBuffer::Resize(size_t newsize)
 	{
 		// reallocate the buffer with twice the size
 		unsigned int oldbuffer = mBufferId;
+		size_t oldsize = buffersize;
 
 		// first unmap the old buffer
 		Bind();
@@ -160,7 +161,8 @@ void GLBuffer::Resize(size_t newsize)
 		glBindBuffer(GL_COPY_READ_BUFFER, oldbuffer);
 
 		// copy contents and delete the old buffer.
-		glCopyBufferSubData(GL_COPY_READ_BUFFER, mUseType, 0, 0, buffersize);
+		// SetData already changed buffersize to the new size, which is more than the old buffer holds.
+		glCopyBufferSubData(GL_COPY_READ_BUFFER, mUseType, 0, 0, oldsize);
 		glBindBuffer(GL_COPY_READ_BUFFER, 0);
 		glDeleteBuffers(1, &oldbuffer);
 		buffersize = newsize;

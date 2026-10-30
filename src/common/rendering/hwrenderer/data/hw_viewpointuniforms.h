@@ -46,8 +46,9 @@ struct HWViewpointUniforms
 	float mClipHeightDirection = 0.f;
 	int mShadowmapFilter = 1;
 	int mLightBlendMode = 0;
-	FVector4 mPadding;
 
+	// The shaders see this struct as a std140 block (see GenerateStruct), so don't add members that std140
+	// would place at a different offset, like a vec4 right after these scalars.
 	float mThickFogDistance = -1.f;
 	float mThickFogMultiplier = 30.f;
 

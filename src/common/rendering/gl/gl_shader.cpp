@@ -312,14 +312,19 @@ FString ProcessShaderError(const char * shaderError, TArray<FString> &filenames_
 					cur++; // skip ":"
 				}
 
-				int64_t old_len = cur - line_start;
-				FString new_err = "File '" + filenames_for_error[lump_num - 1] + "', Line " + line_num_str + ": ";
+				// Only #include'd sources carry a lump number; errors in the main text report source string 0
+				// (Mali: "0:123: L0001: ..."), which must not be used to index filenames_for_error.
+				if (lump_num >= 1 && lump_num <= (int64_t)filenames_for_error.Size())
+				{
+					int64_t old_len = cur - line_start;
+					FString new_err = "File '" + filenames_for_error[lump_num - 1] + "', Line " + line_num_str + ": ";
 
-				int64_t diff = new_err.Len() - old_len;
+					int64_t diff = new_err.Len() - old_len;
 
-				err = err.Left(line_start) + new_err + err.Mid(line_start + old_len);
+					err = err.Left(line_start) + new_err + err.Mid(line_start + old_len);
 
-				cur += diff;
+					cur += diff;
+				}
 				state = SKIP_TO_NEWLINE;
 			}
 			else
@@ -513,7 +518,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		pre_placeholder << "#version 410\n";
 	}
 	else {
-		pre_placeholder << "#version 310 es\n";		
+		pre_placeholder << "#version 310 es\n";
+		// ES fragment shaders have no default float precision, and the ViewpointUBO block below is the first
+		// thing that needs one: without this Mali rejects every fragment shader
+		// ("S0032: no default precision defined for member 'ProjectionMatrix'").
+		pre_placeholder << "precision highp int;\nprecision highp float;\nprecision highp sampler2D;\nprecision highp sampler2DArray;\nprecision highp samplerCube;\n";
 	}
 
 	bool lightbuffertype = screen->mLights->GetBufferType();
