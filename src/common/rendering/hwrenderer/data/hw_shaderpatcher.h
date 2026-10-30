@@ -285,7 +285,7 @@ namespace ShaderInputsOutputs
 		auto field_names = boost::pfr::names_as_array<T>();
 		auto field_types = get_field_types<T>();
 
-//		static_assert(VerifyStructAlignment<T, std430>() == true, "struct does not conform with std140/std430 alignment");
+		static_assert(VerifyStructAlignment<T, std430>() == true, "struct does not conform with std140/std430 alignment");
 
 		FString out = "{\n";
 

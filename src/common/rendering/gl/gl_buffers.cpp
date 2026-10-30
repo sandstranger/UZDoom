@@ -150,6 +150,7 @@ void GLBuffer::Resize(size_t newsize)
 	{
 		// reallocate the buffer with twice the size
 		unsigned int oldbuffer = mBufferId;
+		size_t oldsize = buffersize;
 
 		// first unmap the old buffer
 		Bind();
@@ -160,7 +161,8 @@ void GLBuffer::Resize(size_t newsize)
 		glBindBuffer(GL_COPY_READ_BUFFER, oldbuffer);
 
 		// copy contents and delete the old buffer.
-		glCopyBufferSubData(GL_COPY_READ_BUFFER, mUseType, 0, 0, buffersize);
+		// SetData already changed buffersize to the new size, which is more than the old buffer holds.
+		glCopyBufferSubData(GL_COPY_READ_BUFFER, mUseType, 0, 0, oldsize);
 		glBindBuffer(GL_COPY_READ_BUFFER, 0);
 		glDeleteBuffers(1, &oldbuffer);
 		buffersize = newsize;
@@ -172,10 +174,13 @@ void GLBuffer::GPUWaitSync()
 {
 	if (mGLSync != nullptr)
 	{
-        const GLenum status = glClientWaitSync(mGLSync, 0, 1000 * 1000 * 16);
-        if (status == GL_TIMEOUT_EXPIRED) {
-            glClientWaitSync(mGLSync, 0, 1000 * 1000 * 50);
-        }
+		// Non-persistent buffers are mapped with GL_MAP_UNSYNCHRONIZED_BIT, so this fence is all that keeps the CPU
+		// from rewriting vertices and light lists of a frame the GPU is still drawing. Don't move on before it signals.
+		const GLenum status = glClientWaitSync(mGLSync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000 * 1000 * 1000);
+		if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
+		{
+			glFinish();
+		}
 		glDeleteSync(mGLSync);
 		mGLSync = nullptr;
 	}

@@ -122,8 +122,15 @@ void OpenGLFrameBuffer::InitializeState()
 
 	gl_LoadExtensions();
 
+#ifdef __ANDROID__
+	// Swap() doesn't glFinish() here, so the buffers must always be pipelined and guarded by fences.
+	// Otherwise a depth of 0 makes every frame rewrite the vertex and light data the GPU is still reading.
+	mPipelineNbr = gl_pipeline_depth < 1 ? HW_MAX_PIPELINE_BUFFERS : clamp(*gl_pipeline_depth, 1, HW_MAX_PIPELINE_BUFFERS);
+	mPipelineType = 1;
+#else
 	mPipelineNbr = clamp(*gl_pipeline_depth, 1, HW_MAX_PIPELINE_BUFFERS);
 	mPipelineType = gl_pipeline_depth > 0;
+#endif
 
 	// Move some state to the framebuffer object for easier access.
 	hwcaps = gl.flags;
@@ -279,7 +286,7 @@ void OpenGLFrameBuffer::Swap()
 	bool swapbefore = gl_finishbeforeswap && camtexcount == 0;
 	Finish.Reset();
 	Finish.Clock();
-	if (gl_pipeline_depth < 1)
+	if (!mPipelineType)	// not the live cvar: the buffers were set up for the value at startup
 	{
 #ifndef ANDROID		
 		if (swapbefore) glFinish();
