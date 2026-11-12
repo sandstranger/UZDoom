@@ -116,7 +116,7 @@ else()
 	endif()
 
 	# Non-Windows version also needs SDL except native OS X backend
-	if( NOT APPLE OR NOT OSX_COCOA_BACKEND )
+	if( NOT APPLE OR NOT OSX_COCOA_BACKEND AND NOT ANDROID )
 		find_package( SDL2 CONFIG REQUIRED )
 		list( APPEND PROJECT_LIBRARIES SDL2::SDL2 )
 	endif()
@@ -321,7 +321,7 @@ add_subdirectory("utility/trex")
 list( APPEND PROJECT_LIBRARIES "trex" )
 if (NOT ANDROID)
 	list( APPEND PROJECT_LIBRARIES "zmusic" )
-endif()	
+endif()
 list( APPEND PROJECT_LIBRARIES "zwidget" )
 list( APPEND PROJECT_LIBRARIES "${WEBP_TARGET}" )
 
