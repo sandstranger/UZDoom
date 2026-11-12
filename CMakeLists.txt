@@ -41,7 +41,7 @@ set( BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE )
 option( FORCE_NO_LTO "Turn off LTO even if it would be possible to use it." NO )
 
 if (ANDROID)
-    include_directories(PUBLIC ${SDL2_INCLUDE_DIR})
+    include_directories(SYSTEM ${SDL2_INCLUDE_DIR})
 endif ()
 
 if(NOT FORCE_NO_LTO)

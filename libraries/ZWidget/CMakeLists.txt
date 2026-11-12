@@ -8,6 +8,14 @@ if(NOT ${SDL2_FOUND})
     pkg_search_module(SDL2 sdl2)
 endif()
 
+# Android: SDL2 is sdl2-compat from the app build, handed in as SDL2_INCLUDE_DIR / SDL2_LIBRARY.
+# There is no SDL2Config.cmake or pkg-config for it, and upstream removed cmake/FindSDL2.cmake that
+# used to turn those two variables into SDL2_FOUND. Without SDL2_FOUND there is no USE_SDL2,
+# TryCreateSDL2() returns nullptr and GameMain() quits right after start.
+if(ANDROID AND NOT SDL2_FOUND AND SDL2_INCLUDE_DIR AND SDL2_LIBRARY)
+    set(SDL2_FOUND TRUE)
+endif()
+
 set(ZWIDGET_SOURCES
 	src/core/canvas.cpp
 	src/core/font.cpp

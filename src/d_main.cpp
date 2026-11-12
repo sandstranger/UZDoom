@@ -35,6 +35,10 @@
 #include <unistd.h>
 #endif
 
+#ifdef ANDROID
+#include "SDL2/SDL_log.h"
+#endif
+
 #include <math.h>
 #include <assert.h>
 
@@ -4394,6 +4398,10 @@ int GameMain()
 	if (!zwidget)
 	{
 		fprintf(stderr, "Unable to create init zwidget\n");
+#ifdef ANDROID
+		// stderr does not reach logcat, without this the engine exits without a word
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Unable to create init zwidget (ZWidget built without USE_SDL2?)");
+#endif
 		return -1;
 	}
 	DisplayBackend::Set(std::move(zwidget));
