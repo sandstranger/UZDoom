@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <utility>
 
 #include "basics.h"
@@ -58,7 +59,8 @@ struct TexPart
 	FBitmap::Transform Rotate = FBitmap::Transform::NONE;
 	uint8_t op = OP_COPY;
 };
-static_assert(sizeof(TexPart) == 32);
+// 32 bytes with 64 bit pointers only: two pointers + 16 bytes, 24 bytes on ARMv7.
+static_assert(sizeof(TexPart) == 2 * sizeof(void*) + 16);
 
 struct TexPartBuild
 {
@@ -71,6 +73,18 @@ struct TexPartBuild
 	uint8_t Rotate = 0;
 	uint8_t op = OP_COPY;
 };
+
+// What the size check really protects: FMultiPatchTexture copies TexPartBuild arrays into TexPart
+// arrays with memcpy, so both need the same layout, on every architecture.
+static_assert(sizeof(TexPart) == sizeof(TexPartBuild));
+static_assert(offsetof(TexPart, Translation) == offsetof(TexPartBuild, Translation));
+static_assert(offsetof(TexPart, Image) == offsetof(TexPartBuild, TexImage));
+static_assert(offsetof(TexPart, Blend) == offsetof(TexPartBuild, Blend));
+static_assert(offsetof(TexPart, Alpha) == offsetof(TexPartBuild, Alpha));
+static_assert(offsetof(TexPart, OriginX) == offsetof(TexPartBuild, OriginX));
+static_assert(offsetof(TexPart, OriginY) == offsetof(TexPartBuild, OriginY));
+static_assert(offsetof(TexPart, Rotate) == offsetof(TexPartBuild, Rotate));
+static_assert(offsetof(TexPart, op) == offsetof(TexPartBuild, op));
 
 
 //==========================================================================
