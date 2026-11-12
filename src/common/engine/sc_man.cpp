@@ -498,9 +498,14 @@ bool FScanner::GetToken (bool evaluate)
 		if (TokenType == TK_IntConst)
 		{
 			char *stopper;
-			// Check for unsigned
-			if (String[StringLen - 1] == 'u' || String[StringLen - 1] == 'U' ||
-				String[StringLen - 2] == 'u' || String[StringLen - 2] == 'U')
+			// Check for unsigned ('u' as the last or next to last char, "10u" / "10ul").
+			// String[StringLen - 2] must not be read for a one char token like "4": that is
+			// String[-1], the byte before StringBuffer, i.e. the top byte of ScriptEndPtr. On 32 bit
+			// ARM a heap address like 0x75xxxxxx makes that byte 'u', every single digit number
+			// turned into TK_UIntConst and MustGetValue failed with "Integer constant expected".
+			auto isU = [](char c) { return c == 'u' || c == 'U'; };
+			if ((StringLen >= 1 && isU(String[StringLen - 1])) ||
+				(StringLen >= 2 && isU(String[StringLen - 2])))
 			{
 				TokenType = TK_UIntConst;
 				BigNumber = (int64_t)strtoull(String, &stopper, 0);
