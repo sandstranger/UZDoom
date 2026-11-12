@@ -40,6 +40,10 @@ set( BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE )
 # make all targets use LTO - want to do this early in the cmake to ensure it applies to any targets
 option( FORCE_NO_LTO "Turn off LTO even if it would be possible to use it." NO )
 
+if (ANDROID)
+    include_directories(PUBLIC ${SDL2_INCLUDE_DIR})
+endif ()
+
 if(NOT FORCE_NO_LTO)
 	include(CheckIPOSupported)
 	check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)

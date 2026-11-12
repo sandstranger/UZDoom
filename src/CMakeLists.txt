@@ -119,7 +119,7 @@ else()
 	if( NOT APPLE OR NOT OSX_COCOA_BACKEND AND NOT ANDROID )
 		find_package( SDL2 CONFIG REQUIRED )
 		list( APPEND PROJECT_LIBRARIES SDL2::SDL2 )
-	endif()
+    endif()
 
 endif()
 
@@ -1374,7 +1374,7 @@ endif()
 if (NOT ANDROID)
 	target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} absl::base absl::flat_hash_map absl::strings absl::hash )
 else ()
-	target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} absl::base absl::flat_hash_map absl::strings absl::hash EGL AndroidGraphicsLayer)
+	target_link_libraries( zdoom ${PROJECT_LIBRARIES} ${SDL2_LIBRARY} lzma ${ZMUSIC_LIBRARIES} absl::base absl::flat_hash_map absl::strings absl::hash EGL AndroidGraphicsLayer)
 endif ()
 
 include_directories(
