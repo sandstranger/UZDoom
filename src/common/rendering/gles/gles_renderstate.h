@@ -69,7 +69,45 @@ class FGLRenderState final : public FRenderState
 
 	HWViewpointUniforms* mHwUniforms = nullptr;
 
+	// Depth function and culling are applied with the next draw, so that the models of a
+	// batch (BeginDrawModel/EndDrawModel toggle them per actor) don't end the batch.
+	int mDepthFunc = DF_Less;
+	int mCullMode = Cull_None;
+	bool mDepthFuncDirty = true;
+	bool mCullDirty = true;
+	void ApplyDepthAndCulling();
+
+	// Draw batching / instancing (hw_batching.cpp); GLES3 mode only.
+	struct StreamBuffer
+	{
+		unsigned int id = 0;
+		size_t capacity = 0;
+		size_t pos = 0;
+	};
+	StreamBuffer mInstanceStream, mIndexStream;
+	int mBatchCaps = -1;			// bit 0: merged draws, bit 1: instancing; -1 = not probed yet
+	int mInstancedVariant = 0;		// 1 quads, 2 models: selects the shader flavour in ApplyShader
+	TArray<uint32_t> mMergedIndices;
+	size_t UploadStream(StreamBuffer &buf, unsigned int target, size_t maxCapacity, const void *data, size_t bytes);
+	void FlushForImmediate()
+	{
+		if (mPendingBatches && !mFlushingBatch) FlushBatches(BB_Immediate);
+	}
+
+protected:
+	bool BatchingSupported(EBatchKind kind) override;
+	bool DrawInstancedBatch(FDrawBatch &batch) override;
+	bool DrawMergedBatch(FDrawBatch &batch) override;
+	uint32_t GetBackendState() const override { return uint32_t(mDepthFunc) | (uint32_t(mCullMode) << 4); }
+	void SetBackendState(uint32_t state) override
+	{
+		mDepthFunc = state & 15;
+		mCullMode = (state >> 4) & 15;
+		mDepthFuncDirty = mCullDirty = true;
+	}
+
 public:
+	void ReleaseBatchResources();
 
 	FGLRenderState()
 	{

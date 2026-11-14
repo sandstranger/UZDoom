@@ -74,19 +74,25 @@ extern string gPathToCacheFolder;
 
 const char* GetConfigPath()
 {
-    string configPath = g_pathToUserFolder + "/config";
+    // The returned pointer must outlive the call (it used to point into a destroyed local).
+    static string configPath;
+    configPath = g_pathToUserFolder + "/config";
     return configPath.c_str();
 }
 
 const char* GetCachePath()
 {
-    string cachePath = gPathToCacheFolder + "/uzdoom_cache";
+    // The returned pointer must outlive the call (it used to point into a destroyed local).
+    static string cachePath;
+    cachePath = gPathToCacheFolder + "/uzdoom_cache";
     return cachePath.c_str();
 }
 
 const char* GetDataPath()
 {
-    string sharePath = g_pathToUserFolder + "/share";
+    // The returned pointer must outlive the call (it used to point into a destroyed local).
+    static string sharePath;
+    sharePath = g_pathToUserFolder + "/share";
     return sharePath.c_str();
 }
 #endif

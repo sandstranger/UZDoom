@@ -23,6 +23,9 @@
 #include "version.h"
 #include "i_interface.h"
 
+#include <string.h>
+#include "tarray.h"
+
 struct FColormap;
 class IVertexBuffer;
 class IIndexBuffer;
@@ -221,6 +224,136 @@ struct StreamData
 	FVector4 padding1, padding2, padding3;
 };
 
+//==========================================================================
+//
+// Draw batching / GPU instancing (see hw_batching.cpp)
+//
+// Scene code submits batchable geometry through DrawQuad (sprites, particles),
+// DrawModel (model surfaces) and DrawMerged (walls, flats). Inside a batch scope the
+// render state groups submissions whose complete render state is identical apart from
+// the per-instance values (position/transform, vertex colour, light parameters, dynamic
+// sprite light, object/add/fog colour, desaturation). A batch is drawn with one instanced
+// draw (quads, models) or one indexed draw over the concatenated geometry (merged walls
+// and flats). Batches below the threshold, and every backend without instancing support,
+// replay the original individual draws with the original state, so the result is the
+// same as without batching.
+//
+//==========================================================================
+
+enum EBatchCategory
+{
+	BC_Sprite,
+	BC_Particle,
+	BC_Model,
+	BC_Wall,
+	BC_Flat,
+	BC_Count
+};
+
+enum EBatchKind
+{
+	BK_None,
+	BK_Quad,		// instanced: one shared 4-vertex strip, corners + uv per instance
+	BK_Model,		// instanced: one shared mesh range, model matrix per instance
+	BK_Merge,		// several fans/strips/indexed triangle ranges -> one indexed triangle list
+};
+
+enum EBatchScope
+{
+	BS_None,		// no batching: every submission is drawn immediately
+	BS_Ordered,		// only consecutive submissions are merged (translucent geometry, sorted lists)
+	BS_Unordered,	// any open batch may receive the submission (opaque, depth-tested geometry)
+};
+
+enum EBatchBreak
+{
+	BB_StateChange,		// next submission had a different render state
+	BB_Draw,			// a non-batchable draw followed
+	BB_Immediate,		// an immediate render state change (depth, stencil, viewport...)
+	BB_Capacity,		// the batch reached r_instancing_maxbatch / its index budget
+	BB_ScopeEnd,		// end of a draw list
+	BB_Evicted,			// unordered scope: too many open batches
+	BB_Count
+};
+
+// One instance as uploaded to the GPU. The layout is mirrored by the instance vertex
+// attributes (locations VATTR_INSTANCE0..) of both GL backends; keep them in sync.
+struct FInstanceGPU
+{
+	float xform[4][4];		// quads: corner i = xyz, w = ul/ur/vt/vb; models: model matrix columns
+	float color[4];			// uVertexColor (fed to aColor)
+	float lightAttr[4];		// uLightAttr
+	float dynLight[4];		// uDynLightColor
+	uint32_t objectColor;	// uObjectColor as RGBA8 (r in the low byte)
+	uint32_t addColor;		// uAddColor
+	uint32_t fogColor;		// uFogColor
+	float desaturation;		// uDesaturationFactor
+};
+static_assert(sizeof(FInstanceGPU) == 128, "instance record layout is mirrored by the shaders");
+
+struct FBatchItem
+{
+	int drawType;
+	int index;
+	int count;
+	int8_t indexed;
+	int8_t category;
+};
+
+// Everything Apply() reads from FRenderState, in a flat layout without implicit padding,
+// so that two snapshots can be compared with memcmp.
+struct FRenderStateSnapshot
+{
+	FMaterial *material;
+	IVertexBuffer *vertexBuffer;
+	IIndexBuffer *indexBuffer;
+	void *pointerPad;			// keeps the pointer block a multiple of 8 bytes on 32-bit targets
+	StreamData streamData;
+	float modelMatrix[16];
+	float textureMatrix[16];
+	float lightParms[4];
+	float clipSplit[2];
+	float alphaThreshold;
+	float colorMapFlash;
+	float biasFactor;
+	float biasUnits;
+	int32_t lightIndex;
+	int32_t boneIndexBase;
+	int32_t specialEffect;
+	int32_t textureMode;
+	int32_t textureClamp;
+	int32_t textureModeFlags;
+	int32_t softLight;
+	int32_t colorMapSpecial;
+	int32_t passType;
+	int32_t clampMode;
+	int32_t translation;
+	int32_t overrideShader;
+	int32_t vertexOffsets[2];
+	uint32_t fogColor;
+	uint32_t renderStyle;
+	uint32_t flags;				// fog mode + enable bits
+	uint32_t backendState;		// lazily applied backend state (depth func, culling)
+	uint32_t derived;			// key only: shader-path selectors derived from per-instance values
+	uint32_t kind;				// key only
+	int32_t drawType;			// key only (quads, models)
+	int32_t first;				// key only (quads, models)
+	int32_t count;				// key only (quads, models)
+	int32_t indexed;			// key only (quads, models)
+	int32_t pad[2];				// explicit tail padding (the struct is compared with memcmp)
+};
+
+struct FDrawBatch
+{
+	EBatchKind kind = BK_None;
+	uint64_t serial = 0;
+	FRenderStateSnapshot state;		// the full state of the first submission
+	FRenderStateSnapshot key;		// state with per-instance values cleared
+	TArray<FInstanceGPU> instances;	// quads, models
+	TArray<FBatchItem> items;		// one per submission (replay and merged geometry)
+	unsigned mergedIndices = 0;		// merged batches: index count after triangulation
+};
+
 class FRenderState
 {
 protected:
@@ -262,6 +395,48 @@ protected:
 	IIndexBuffer *mIndexBuffer;
 
 	EPassType mPassType = NORMAL_PASS;
+
+	// Draw batching (hw_batching.cpp)
+	static constexpr int MAX_OPEN_BATCHES = 8;
+	EBatchScope mBatchScope = BS_None;
+	bool mFlushingBatch = false;
+	int mPendingBatches = 0;
+	uint64_t mBatchSerial = 0;
+	FDrawBatch mBatches[MAX_OPEN_BATCHES];
+
+	// Backend hooks. The defaults disable batching entirely, so a backend that does not
+	// implement them (Vulkan, desktop GL unless enabled, GLES2) draws exactly as before.
+	virtual bool BatchingSupported(EBatchKind kind) { return false; }
+	// Draw the batch with the batch's state already restored. Returning false makes the
+	// caller replay the individual submissions instead (e.g. a shader variant failed to build).
+	virtual bool DrawInstancedBatch(FDrawBatch &batch) { return false; }
+	virtual bool DrawMergedBatch(FDrawBatch &batch) { return false; }
+	virtual uint32_t GetBackendState() const { return 0; }
+	virtual void SetBackendState(uint32_t state) {}
+
+	void FlushBatch(FDrawBatch &batch, EBatchBreak reason);
+	void ApplyInstanceValues(const FInstanceGPU &inst);
+	FDrawBatch *FindBatch(const FRenderStateSnapshot &key, EBatchKind kind);
+	void MakeKey(FRenderStateSnapshot &key, EBatchKind kind, int dt, int first, int count, bool indexed) const;
+	void FillInstanceValues(FInstanceGPU &inst) const;
+
+public:
+	void SaveState(FRenderStateSnapshot &s) const;
+	void RestoreState(const FRenderStateSnapshot &s);
+
+	void BeginBatchScope(EBatchScope scope);
+	void EndBatchScope();
+	void FlushBatches(EBatchBreak reason);
+	bool HasPendingBatches() const { return mPendingBatches > 0; }
+
+	// Batchable submissions. Without an active scope or backend support they draw immediately.
+	void DrawQuad(int vertexindex, const FVector3 *corners, float ul, float ur, float vt, float vb, EBatchCategory category);
+	void DrawModel(int dt, int index, int count, bool indexed);
+	void DrawMerged(int dt, int index, int count, bool indexed, EBatchCategory category);
+
+	// Triangulates the items of a merged batch into 'out' (batch.mergedIndices entries).
+	// 'sourceIndices' is the CPU copy of the index buffer used by indexed items.
+	static void BuildMergedIndices(const FDrawBatch &batch, const uint32_t *sourceIndices, unsigned sourceCount, uint32_t *out);
 
 public:
 

@@ -169,7 +169,15 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 	}
 	else
 	{
+#ifdef ANDROID
+		// A full clear tells a tile-based GPU that nothing of the previous frame is needed
+		// (no tile loads); the present pass then covers the letterbox.
+		glDisable(GL_SCISSOR_TEST);
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+#else
 		ClearBorders();
+#endif
 		box = screen->mOutputLetterbox;
 	}
 

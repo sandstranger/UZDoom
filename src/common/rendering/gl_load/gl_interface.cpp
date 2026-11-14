@@ -107,6 +107,16 @@ void gl_LoadExtensions()
 
 	const char *glversion = (const char*)glGetString(GL_VERSION);
 
+	// The real ES version decides which ES-only features (multisample textures, GLSL ES 3.10)
+	// may be used; on Android the version below is replaced by "3.3" for the capability logic.
+	gl.esversion = 0;
+	if (glversion && strncmp(glversion, "OpenGL ES ", 10) == 0)
+	{
+		int major = 0, minor = 0;
+		if (sscanf(glversion + 10, "%d.%d", &major, &minor) >= 1)
+			gl.esversion = major * 100 + minor * 10;
+	}
+
 #ifdef ANDROID
 	glversion = "3.3";
 	gl.flags |= RFL_NO_CLIP_PLANES;
@@ -149,6 +159,8 @@ void gl_LoadExtensions()
 	gl.modelstring = (char*)glGetString(GL_RENDERER);
 
 	// first test for optional features
+	// GLES 3.0: R32F/RG32F/RGBA32F are not filterable without OES_texture_float_linear (desktop: always).
+	gl.floatlinear = gl.esversion == 0 || CheckExtension("GL_OES_texture_float_linear");
 	if (CheckExtension("GL_ARB_texture_compression")) gl.flags |= RFL_TEXTURE_COMPRESSION;
 	if (CheckExtension("GL_EXT_texture_compression_s3tc")) gl.flags |= RFL_TEXTURE_COMPRESSION_S3TC;
 

@@ -65,6 +65,8 @@ int HWViewpointBuffer::Bind(FRenderState &di, unsigned int index)
 {
 	if (index != mLastMappedIndex)
 	{
+		// Pending batches were recorded for the current viewpoint.
+		if (di.HasPendingBatches()) di.FlushBatches(BB_Immediate);
 		mLastMappedIndex = index;
 		size_t start = index * mBlockAlign;
 		size_t size = sizeof(HWViewpointUniforms);

@@ -37,6 +37,7 @@ FString GetGLSLPrecision();
 bool IsShaderCacheActive();
 TArray<uint8_t> LoadCachedProgramBinary(const FString &vertex, const FString &fragment, uint32_t &binaryFormat);
 void SaveCachedProgramBinary(const FString &vertex, const FString &fragment, const TArray<uint8_t> &binary, uint32_t binaryFormat);
+void RejectCachedProgramBinary(const FString &vertex, const FString &fragment);
 
 FShaderProgram::FShaderProgram()
 {
@@ -152,6 +153,8 @@ void FShaderProgram::Link(const char *name)
 		GLint status = 0;
 		glGetProgramiv(mProgram, GL_LINK_STATUS, &status);
 		loadedFromBinary = (status == GL_TRUE);
+		if (!loadedFromBinary)
+			RejectCachedProgramBinary(mShaderSources[Vertex], mShaderSources[Fragment]);
 	}
 
 	if (!loadedFromBinary)
@@ -159,6 +162,8 @@ void FShaderProgram::Link(const char *name)
 		CompileShader(Vertex);
 		CompileShader(Fragment);
 
+		if (IsShaderCacheActive() && glProgramParameteri)
+			glProgramParameteri(mProgram, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 		glLinkProgram(mProgram);
 
 		GLint status = 0;
@@ -172,9 +177,13 @@ void FShaderProgram::Link(const char *name)
 			int binaryLength = 0;
 			glGetProgramiv(mProgram, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
 			binary.Resize(binaryLength);
-			glGetProgramBinary(mProgram, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
-			binary.Resize(binaryLength);
-			SaveCachedProgramBinary(mShaderSources[Vertex], mShaderSources[Fragment], binary, binaryFormat);
+			if (binaryLength > 0)
+			{
+				binaryLength = 0;
+				glGetProgramBinary(mProgram, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
+				binary.Resize(binaryLength > 0 ? binaryLength : 0);
+				SaveCachedProgramBinary(mShaderSources[Vertex], mShaderSources[Fragment], binary, binaryFormat);
+			}
 		}
 	}
 
@@ -268,7 +277,7 @@ FString FShaderProgram::PatchShader(ShaderType type, const FString &code, const 
 
 	patchedCode << "#line 1\n";
 #ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
-	if(gles.glesMode == GLES_MODE_OGL32)
+	if(gles.essl300)
 	{
 		FString newcode = RemoveLayoutLocationDecl(code, type == Vertex ? "out" : "in");
 		FString patch300 = GenGLSL300PatchCode((int)type);

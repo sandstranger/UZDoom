@@ -49,6 +49,7 @@
 
 #include "flatvertices.h"
 #include "hw_cvars.h"
+#include "hw_batching.h"
 
 EXTERN_CVAR (Bool, vid_vsync)
 EXTERN_CVAR(Int, gl_tonemap)
@@ -87,6 +88,7 @@ OpenGLFrameBuffer::OpenGLFrameBuffer(void *hMonitor, bool fullscreen) :
 OpenGLFrameBuffer::~OpenGLFrameBuffer()
 {
 	PPResource::ResetAll();
+	gl_RenderState.ReleaseBatchResources();
 
 	if (mVertexData != nullptr) delete mVertexData;
 	if (mSkyData != nullptr) delete mSkyData;
@@ -283,6 +285,16 @@ CVAR(Bool, gl_finishbeforeswap, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 
 void OpenGLFrameBuffer::Swap()
 {
+	BatchStatsEndFrame();
+#ifdef ANDROID
+	if (gl.flags & RFL_INVALIDATE_BUFFER)
+	{
+		// The window's depth/stencil are never read: don't let a tiler write them back.
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		static const GLenum attachments[] = { GL_DEPTH, GL_STENCIL };
+		glInvalidateFramebuffer(GL_FRAMEBUFFER, 2, attachments);
+	}
+#endif
 	bool swapbefore = gl_finishbeforeswap && camtexcount == 0;
 	Finish.Reset();
 	Finish.Clock();

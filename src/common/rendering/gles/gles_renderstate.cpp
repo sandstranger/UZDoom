@@ -34,6 +34,13 @@
 
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 
+#include "hw_batching.h"
+#include "engineerrors.h"
+#include "flatvertices.h"
+#include "printf.h"
+#include <stddef.h>
+#include <algorithm>
+
 namespace OpenGLESRenderer
 {
 
@@ -74,6 +81,14 @@ void FGLRenderState::Reset()
 	mCurrentVertexOffsets[0] = mVertexOffsets[0] = 0;
 	mCurrentIndexBuffer = nullptr;
 
+	mDepthFunc = DF_Less;
+	mCullMode = Cull_None;
+	mDepthFuncDirty = mCullDirty = true;
+	mInstancedVariant = 0;
+	// Called for a new context: whatever the old one owned is gone with it.
+	mInstanceStream = {};
+	mIndexStream = {};
+	mBatchCaps = -1;
 }
 
 //==========================================================================
@@ -196,6 +211,9 @@ bool FGLRenderState::ApplyShader()
 	flavour.npotEmulation = (mStreamData.uNpotEmulation.Y != 0);
 #endif
 
+	flavour.instancing = mInstancedVariant;
+
+	auto previous = activeShader ? activeShader->cur : nullptr;
 	if (mSpecialEffect > EFF_NONE)
 	{
 		activeShader = GLRenderer->mShaderManager->BindEffect(mSpecialEffect, mPassType, flavour);
@@ -206,6 +224,7 @@ bool FGLRenderState::ApplyShader()
 
 		activeShader->Bind(flavour);
 	}
+	if (activeShader && activeShader->cur != previous) batchStats.shaderSwitches++;
 
 
 	if (mHwUniforms)
@@ -403,13 +422,18 @@ void FGLRenderState::ApplyBuffers()
 	{
 		assert(mVertexBuffer != nullptr);
 		static_cast<GLVertexBuffer*>(mVertexBuffer)->Bind(mVertexOffsets);
+		batchStats.bufferBinds++;
 		mCurrentVertexBuffer = mVertexBuffer;
 		mCurrentVertexOffsets[0] = mVertexOffsets[0];
 		mCurrentVertexOffsets[1] = mVertexOffsets[1];
 	}
 	if (mIndexBuffer != mCurrentIndexBuffer)
 	{
-		if (mIndexBuffer) static_cast<GLIndexBuffer*>(mIndexBuffer)->Bind();
+		if (mIndexBuffer)
+		{
+			static_cast<GLIndexBuffer*>(mIndexBuffer)->Bind();
+			batchStats.bufferBinds++;
+		}
 		mCurrentIndexBuffer = mIndexBuffer;
 	}
 }
@@ -417,6 +441,7 @@ void FGLRenderState::ApplyBuffers()
 void FGLRenderState::Apply()
 {
 	ApplyState();
+	ApplyDepthAndCulling();
 	ApplyBuffers();
 	ApplyShader();
 }
@@ -536,6 +561,12 @@ static int dt2gl[] = { GL_POINTS, GL_LINES, GL_TRIANGLES, GL_TRIANGLE_FAN, GL_TR
 
 void FGLRenderState::Draw(int dt, int index, int count, bool apply)
 {
+	if (mPendingBatches && !mFlushingBatch)
+	{
+		FlushBatches(BB_Draw);
+		apply = true;	// the flush changed the GL state
+	}
+	batchStats.draws++;
 		if (apply)
 		{
 			Apply();
@@ -547,6 +578,12 @@ void FGLRenderState::Draw(int dt, int index, int count, bool apply)
 
 void FGLRenderState::DrawIndexed(int dt, int index, int count, bool apply)
 {
+	if (mPendingBatches && !mFlushingBatch)
+	{
+		FlushBatches(BB_Draw);
+		apply = true;
+	}
+	batchStats.draws++;
 	if (apply)
 	{
 		Apply();
@@ -558,27 +595,32 @@ void FGLRenderState::DrawIndexed(int dt, int index, int count, bool apply)
 
 void FGLRenderState::SetDepthMask(bool on)
 {
+	FlushForImmediate();
 	glDepthMask(on);
 }
 
 void FGLRenderState::SetDepthFunc(int func)
 {
-	static int df2gl[] = { GL_LESS, GL_LEQUAL, GL_ALWAYS };
-	glDepthFunc(df2gl[func]);
+	// applied by the next draw (ApplyDepthAndCulling); part of the batch key meanwhile
+	mDepthFunc = func;
+	mDepthFuncDirty = true;
 }
 
 void FGLRenderState::SetDepthRange(float min, float max)
 {
+	FlushForImmediate();
 	glDepthRangef(min, max);
 }
 
 void FGLRenderState::SetColorMask(bool r, bool g, bool b, bool a)
 {
+	FlushForImmediate();
 	glColorMask(r, g, b, a);
 }
 
 void FGLRenderState::SetStencil(int offs, int op, int flags = -1)
 {
+	FlushForImmediate();
 	static int op2gl[] = { GL_KEEP, GL_INCR, GL_DECR };
 
 	glStencilFunc(GL_EQUAL, screen->stencilValue + offs, ~0);		// draw sky into stencil
@@ -606,15 +648,9 @@ void FGLRenderState::ToggleState(int state, bool on)
 
 void FGLRenderState::SetCulling(int mode)
 {
-	if (mode != Cull_None)
-	{
-		glEnable(GL_CULL_FACE);
-		glFrontFace(mode == Cull_CCW ? GL_CCW : GL_CW);
-	}
-	else
-	{
-		glDisable(GL_CULL_FACE);
-	}
+	// applied by the next draw (ApplyDepthAndCulling); part of the batch key meanwhile
+	mCullMode = mode;
+	mCullDirty = true;
 }
 
 void FGLRenderState::EnableClipDistance(int num, bool state)
@@ -624,6 +660,7 @@ void FGLRenderState::EnableClipDistance(int num, bool state)
 
 void FGLRenderState::Clear(int targets)
 {
+	FlushForImmediate();
 	// This always clears to default values.
 	int gltarget = 0;
 	if (targets & CT_Depth)
@@ -647,11 +684,13 @@ void FGLRenderState::Clear(int targets)
 
 void FGLRenderState::EnableStencil(bool on)
 {
+	FlushForImmediate();
 	ToggleState(GL_STENCIL_TEST, on);
 }
 
 void FGLRenderState::SetScissor(int x, int y, int w, int h)
 {
+	FlushForImmediate();
 	if (w > -1)
 	{
 		glEnable(GL_SCISSOR_TEST);
@@ -665,11 +704,13 @@ void FGLRenderState::SetScissor(int x, int y, int w, int h)
 
 void FGLRenderState::SetViewport(int x, int y, int w, int h)
 {
+	FlushForImmediate();
 	glViewport(x, y, w, h);
 }
 
 void FGLRenderState::EnableDepthTest(bool on)
 {
+	FlushForImmediate();
 	ToggleState(GL_DEPTH_TEST, on);
 }
 
@@ -691,6 +732,7 @@ void FGLRenderState::EnableLineSmooth(bool on)
 //==========================================================================
 void FGLRenderState::ClearScreen()
 {
+	FlushForImmediate();
 
 	screen->mViewpoints->Set2D(*this, SCREENWIDTH, SCREENHEIGHT);
 	SetColor(0, 0, 0);
@@ -715,6 +757,7 @@ void FGLRenderState::ClearScreen()
 
 bool FGLRenderState::SetDepthClamp(bool on)
 {
+	FlushForImmediate();
 	bool res = mLastDepthClamp;
 
 	if (gles.depthClampAvailable)
@@ -726,8 +769,227 @@ bool FGLRenderState::SetDepthClamp(bool on)
 	mLastDepthClamp = on;
 	return res;
 }
+
+//==========================================================================
+//
+// Draw batching / GPU instancing (hw_batching.cpp). Only in GLES3 mode: the instanced
+// shader flavours need GLSL ES 3.00 and the draws need GLES 3.0 entry points.
+//
+//==========================================================================
+
+bool FGLRenderState::BatchingSupported(EBatchKind kind)
+{
+	if (mBatchCaps < 0)
+	{
+		mBatchCaps = 0;
+		const char *version = (const char *)glGetString(GL_VERSION);
+		int major = 0;
+		bool es = version && strncmp(version, "OpenGL ES", 9) == 0;
+		if (version) sscanf(es ? version + 9 : version, "%*[^0-9]%d", &major);
+		if (version && !es) sscanf(version, "%d", &major);
+		// The entry points are looked up by name; the context version decides whether they exist.
+		bool core = es ? major >= 3 : gles.glesMode == GLES_MODE_OGL3;
+		if (core && gles.essl300)
+		{
+			GLint maxAttribs = 0;
+			glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &maxAttribs);
+			bool instancing = glDrawArraysInstanced && glDrawElementsInstanced && glVertexAttribDivisor && glVertexAttribIPointer &&
+				maxAttribs >= BATCH_MIN_VERTEX_ATTRIBS;
+			mBatchCaps = 1 | (instancing ? 2 : 0);
+			DPrintf(DMSG_NOTIFY, "Draw batching: merged draws available, instancing %s (GL_MAX_VERTEX_ATTRIBS %d)\n",
+				instancing ? "available" : "unavailable", maxAttribs);
+		}
+	}
+	return (mBatchCaps & (kind == BK_Merge ? 1 : 2)) != 0;
+}
+
+// Streams data into a buffer that is only ever appended to; when it is full the storage is
+// orphaned (glBufferData with no data), so no region the GPU may still read is overwritten
+// and no CPU/GPU synchronisation is needed. Returns the byte offset or SIZE_MAX.
+size_t FGLRenderState::UploadStream(StreamBuffer &buf, unsigned int target, size_t maxCapacity, const void *data, size_t bytes)
+{
+	if (bytes == 0 || bytes > maxCapacity) return SIZE_MAX;
+	double t0 = BatchStatsTiming() ? BatchTimeMs() : 0;
+
+	bool allocate = false;
+	if (buf.id == 0)
+	{
+		glGenBuffers(1, &buf.id);
+		buf.capacity = std::min(maxCapacity, std::max<size_t>(bytes * 4, 64 * 1024));
+		allocate = true;
+	}
+	glBindBuffer(target, buf.id);
+	if (bytes > buf.capacity)
+	{
+		buf.capacity = std::min(maxCapacity, std::max(bytes, buf.capacity * 2));
+		allocate = true;
+	}
+	else if (buf.pos + bytes > buf.capacity)
+	{
+		allocate = true;	// orphan
+	}
+	if (allocate)
+	{
+		while (glGetError() != GL_NO_ERROR) {}
+		glBufferData(target, buf.capacity, nullptr, GL_STREAM_DRAW);
+		buf.pos = 0;
+		if (glGetError() == GL_OUT_OF_MEMORY)
+		{
+			glBindBuffer(target, 0);
+			glDeleteBuffers(1, &buf.id);
+			buf = {};
+			mBatchCaps = 0;
+			Printf("Draw batching disabled: out of GPU memory for the stream buffer\n");
+			return SIZE_MAX;
+		}
+	}
+	size_t offset = buf.pos;
+	glBufferSubData(target, offset, bytes, data);
+	buf.pos = (offset + bytes + 15) & ~size_t(15);
+
+	batchStats.instanceUploads++;
+	batchStats.uploadBytes += bytes;
+	if (t0 != 0) batchStats.uploadMs += BatchTimeMs() - t0;
+	return offset;
+}
+
+bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
+{
+	unsigned count = batch.instances.Size();
+	if (mSpecialEffect > EFF_NONE) return false;
+
+#if defined(__arm__) || defined(__i386__)
+	const size_t maxStream = 512 * 1024;
+#else
+	const size_t maxStream = 2048 * 1024;
+#endif
+	size_t offset = UploadStream(mInstanceStream, GL_ARRAY_BUFFER, maxStream, batch.instances.Data(), count * sizeof(FInstanceGPU));
+	if (offset == SIZE_MAX) return false;
+
+	// The instanced flavour of the shader the regular draw would use. It is compiled on first
+	// use; if the driver rejects it, instancing is switched off and the batch is replayed.
+	mInstancedVariant = batch.kind == BK_Quad ? 1 : 2;
+	try
+	{
+		Apply();
+	}
+	catch (CRecoverableError &err)
+	{
+		mInstancedVariant = 0;
+		mBatchCaps &= ~2;
+		Printf("Instanced shader flavour unavailable, drawing without instancing:\n%s\n", err.GetMessage());
+		return false;
+	}
+	mInstancedVariant = 0;
+	if (!activeShader || !activeShader->cur || activeShader->cur->hShader == 0) return false;
+
+	glBindBuffer(GL_ARRAY_BUFFER, mInstanceStream.id);
+	const GLsizei stride = sizeof(FInstanceGPU);
+	auto attrib = [&](GLuint loc, size_t field)
+	{
+		glEnableVertexAttribArray(loc);
+		glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, stride, (void *)(intptr_t)(offset + field));
+		glVertexAttribDivisor(loc, 1);
+	};
+	for (int i = 0; i < 4; i++) attrib(VATTR_INSTANCE0 + i, offsetof(FInstanceGPU, xform) + i * 4 * sizeof(float));
+	attrib(VATTR_COLOR, offsetof(FInstanceGPU, color));
+	attrib(VATTR_INSTANCE_LIGHT, offsetof(FInstanceGPU, lightAttr));
+	attrib(VATTR_INSTANCE_DYNLIGHT, offsetof(FInstanceGPU, dynLight));
+	glEnableVertexAttribArray(VATTR_INSTANCE_COLORS);
+	glVertexAttribIPointer(VATTR_INSTANCE_COLORS, 4, GL_UNSIGNED_INT, stride, (void *)(intptr_t)(offset + offsetof(FInstanceGPU, objectColor)));
+	glVertexAttribDivisor(VATTR_INSTANCE_COLORS, 1);
+
+	drawcalls.Clock();
+	if (batch.kind == BK_Quad)
+	{
+		// The reserved quad of the flat vertex buffer supplies the corner index in aPosition.x.
+		glDrawArraysInstanced(GL_TRIANGLE_STRIP, FFlatVertexBuffer::QUAD_INDEX, 4, count);
+	}
+	else if (batch.key.indexed)
+	{
+		glDrawElementsInstanced(dt2gl[batch.key.drawType], batch.key.count, GL_UNSIGNED_INT, (void *)(intptr_t)(batch.key.first * sizeof(uint32_t)), count);
+	}
+	else
+	{
+		glDrawArraysInstanced(dt2gl[batch.key.drawType], batch.key.first, batch.key.count, count);
+	}
+	drawcalls.Unclock();
+	batchStats.instancedDraws++;
+
+	static const GLuint locs[] = { VATTR_INSTANCE0, VATTR_INSTANCE0 + 1, VATTR_INSTANCE0 + 2, VATTR_INSTANCE0 + 3, VATTR_COLOR,
+		VATTR_INSTANCE_LIGHT, VATTR_INSTANCE_DYNLIGHT, VATTR_INSTANCE_COLORS };
+	for (GLuint loc : locs)
+	{
+		glVertexAttribDivisor(loc, 0);
+		glDisableVertexAttribArray(loc);
+	}
+	mCurrentVertexBuffer = nullptr;	// re-establish the per-vertex layout with the next draw
+	return true;
+}
+
+bool FGLRenderState::DrawMergedBatch(FDrawBatch &batch)
+{
+	auto vd = screen->mVertexData;
+	mMergedIndices.Resize(batch.mergedIndices);
+	BuildMergedIndices(batch, vd->ibo_data.Data(), vd->ibo_data.Size(), mMergedIndices.Data());
+
+	Apply();
+#if defined(__arm__) || defined(__i386__)
+	const size_t maxStream = 1024 * 1024;
+#else
+	const size_t maxStream = 4096 * 1024;
+#endif
+	size_t offset = UploadStream(mIndexStream, GL_ELEMENT_ARRAY_BUFFER, maxStream, mMergedIndices.Data(), batch.mergedIndices * sizeof(uint32_t));
+	if (offset == SIZE_MAX)
+	{
+		mCurrentIndexBuffer = nullptr;
+		return false;
+	}
+	drawcalls.Clock();
+	glDrawElements(GL_TRIANGLES, batch.mergedIndices, GL_UNSIGNED_INT, (void *)(intptr_t)offset);
+	drawcalls.Unclock();
+	batchStats.mergedDraws++;
+	mCurrentIndexBuffer = nullptr;	// the stream buffer is bound as element array buffer now
+	return true;
+}
+
+void FGLRenderState::ReleaseBatchResources()
+{
+	if (mInstanceStream.id) glDeleteBuffers(1, &mInstanceStream.id);
+	if (mIndexStream.id) glDeleteBuffers(1, &mIndexStream.id);
+	mInstanceStream = {};
+	mIndexStream = {};
+	mMergedIndices.Reset();
+	mBatchCaps = -1;
+}
+
+void FGLRenderState::ApplyDepthAndCulling()
+{
+	if (mDepthFuncDirty)
+	{
+		static int df2gl[] = { GL_LESS, GL_LEQUAL, GL_ALWAYS };
+		glDepthFunc(df2gl[mDepthFunc]);
+		mDepthFuncDirty = false;
+	}
+	if (mCullDirty)
+	{
+		if (mCullMode != Cull_None)
+		{
+			glEnable(GL_CULL_FACE);
+			glFrontFace(mCullMode == Cull_CCW ? GL_CCW : GL_CW);
+		}
+		else
+		{
+			glDisable(GL_CULL_FACE);
+		}
+		mCullDirty = false;
+	}
+}
+
 void FGLRenderState::ApplyViewport(void* data)
 {
+	// The viewpoint uniforms are read from this pointer by every draw, pending batches included.
+	FlushForImmediate();
 	mHwUniforms = reinterpret_cast<HWViewpointUniforms*>(static_cast<uint8_t*>(data));
 
 }

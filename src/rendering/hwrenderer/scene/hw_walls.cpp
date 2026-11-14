@@ -92,7 +92,8 @@ void HWWall::RenderWall(FRenderState &state, int textured)
 	}
 	assert(vertcount > 0);
 	state.SetLightIndex(dynlightindex);
-	state.Draw(DT_TriangleFan, vertindex, vertcount);
+	// Consecutive walls with identical state are merged into one indexed draw.
+	state.DrawMerged(DT_TriangleFan, vertindex, vertcount, false, BC_Wall);
 	vertexcount += vertcount;
 	if (ditherT)
 	{

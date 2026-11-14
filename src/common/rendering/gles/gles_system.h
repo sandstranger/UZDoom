@@ -108,9 +108,6 @@ namespace OpenGLESRenderer
 		GLES_MODE_GLES = 0,
 		GLES_MODE_OGL2 = 1,
 		GLES_MODE_OGL3 = 2,
-#ifdef ANDROID //karin: GLES3.2 + GLSL 300es shader
-		GLES_MODE_OGL32 = 4,
-#endif
 	};
 
 	struct RenderContextGLES
@@ -131,6 +128,7 @@ namespace OpenGLESRenderer
 		char* modelstring;
 		bool nv_vram_ext;
 		bool ati_vram_ext;
+		bool essl300;	// shaders are converted to GLSL ES 3.00 (GLES 3.0 contexts on Android)
 	};
 
 	extern RenderContextGLES gles;
@@ -153,11 +151,10 @@ extern int harm_gl_es;
 #define HARM_GL_ES_DEFAULT 0
 #define HARM_GL_ES_GLES2 2
 #define HARM_GL_ES_GLES3 3
-#define HARM_GL_ES_GLES32 4
+// 4 used to select a GLES 3.2 context with its own shader path; it is mapped to HARM_GL_ES_GLES3.
 #define USING_GLES_AUTO (harm_gl_es == HARM_GL_ES_DEFAULT)
 #define USING_GLES_2 (harm_gl_es == HARM_GL_ES_GLES2)
 #define USING_GLES_3 (harm_gl_es == HARM_GL_ES_GLES3)
-#define USING_GLES_32 (harm_gl_es == HARM_GL_ES_GLES32)
 #endif
 
 #endif //__GL_PCH_H

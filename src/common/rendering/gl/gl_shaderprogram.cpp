@@ -41,6 +41,7 @@ namespace OpenGLRenderer
 bool IsShaderCacheActive();
 TArray<uint8_t> LoadCachedProgramBinary(const FString &vertex, const FString &fragment, uint32_t &binaryFormat);
 void SaveCachedProgramBinary(const FString &vertex, const FString &fragment, const TArray<uint8_t> &binary, uint32_t binaryFormat);
+void RejectCachedProgramBinary(const FString &vertex, const FString &fragment);
 
 FShaderProgram::FShaderProgram()
 {
@@ -170,6 +171,8 @@ void FShaderProgram::Link(const char *name)
 		GLint status = 0;
 		glGetProgramiv(mProgram, GL_LINK_STATUS, &status);
 		loadedFromBinary = (status == GL_TRUE);
+		if (!loadedFromBinary)
+			RejectCachedProgramBinary(mShaderSources[Vertex], mShaderSources[Fragment]);
 	}
 
 	if (!loadedFromBinary)
@@ -177,6 +180,8 @@ void FShaderProgram::Link(const char *name)
 		CompileShader(Vertex);
 		CompileShader(Fragment);
 
+		if (glProgramParameteri && IsShaderCacheActive())
+			glProgramParameteri(mProgram, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 		glLinkProgram(mProgram);
 
 		GLint status = 0;
@@ -190,9 +195,13 @@ void FShaderProgram::Link(const char *name)
 			int binaryLength = 0;
 			glGetProgramiv(mProgram, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
 			binary.Resize(binaryLength);
-			glGetProgramBinary(mProgram, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
-			binary.Resize(binaryLength);
-			SaveCachedProgramBinary(mShaderSources[Vertex], mShaderSources[Fragment], binary, binaryFormat);
+			if (binaryLength > 0)
+			{
+				binaryLength = 0;
+				glGetProgramBinary(mProgram, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
+				binary.Resize(binaryLength > 0 ? binaryLength : 0);
+				SaveCachedProgramBinary(mShaderSources[Vertex], mShaderSources[Fragment], binary, binaryFormat);
+			}
 		}
 	}
 
@@ -288,7 +297,7 @@ FString FShaderProgram::PatchShader(ShaderType type, const FString &code, const 
 	if (gEnableSpirvCross) {
 		patchedCode.AppendFormat("#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n");
 	} else{
-		patchedCode.AppendFormat("#version 310 es\n#define NO_CLIPDISTANCE_SUPPORT\n");
+		patchedCode.AppendFormat("#version %s\n#define NO_CLIPDISTANCE_SUPPORT\n", gl.esversion >= 310 ? "310 es" : "300 es");
 	}
 #else
 	patchedCode.AppendFormat("#version %d\n", shaderVersion);
@@ -306,7 +315,7 @@ if (!gEnableSpirvCross) {
 	patchedCode << "precision highp sampler2D;\n";
 	patchedCode << "precision highp sampler2DArray;\n";
 	patchedCode << "precision highp samplerCube;\n";
-	patchedCode << "precision highp sampler2DMS;\n";
+	if (gl.esversion >= 310) patchedCode << "precision highp sampler2DMS;\n";	// the type does not exist in GLSL ES 3.00
 }
 #endif
 

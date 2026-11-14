@@ -143,6 +143,15 @@ void FGLRenderBuffers::Setup(int width, int height, int sceneWidth, int sceneHei
 
 	int samples = clamp((int)gl_multisample, 0, mMaxSamples);
 	bool needsSceneTextures = (gl_ssao != 0);
+	// SSAO with MSAA samples multisample textures (glTexImage2DMultisample, sampler2DMS), which
+	// GLES 3.0 does not have: there the scene is rendered single-sampled while SSAO is on.
+	if (needsSceneTextures && samples > 1 && gl.esversion > 0 && gl.esversion < 310)
+	{
+		static bool warned = false;
+		if (!warned) Printf("Multisampling is not combined with SSAO on OpenGL ES 3.0 (no multisample textures); rendering without MSAA.\n");
+		warned = true;
+		samples = 0;
+	}
 
 	GLint activeTex;
 	GLint textureBinding;
@@ -320,30 +329,39 @@ PPGLTexture FGLRenderBuffers::Create2DTexture(const char *name, GLuint format, i
 		datatype = GL_UNSIGNED_BYTE;
 	}
 
-	// Mobile does not have GL_RGBA16_SNORM so convert to GL_RGBA8_SNORM
-	// Used for SSAO random texture
-    if (format == GL_RGBA16_SNORM)
+	// GLES has no GL_RGBA16_SNORM: use GL_RGBA8_SNORM (SSAO random texture). Every one of the
+	// 4 * width * height components is converted, into a copy (the source belongs to the caller).
+	TArray<int8_t> snorm8;
+	if (format == GL_RGBA16_SNORM)
 	{
 		format = GL_RGBA8_SNORM;
 		dataformat = GL_RGBA;
 		datatype = GL_BYTE;
-		for(int n = 0; n < width * height; n++)
+		if (data)
 		{
-			((int8_t*)data)[n] = ((int16_t*)data)[n] / 256;
+			const size_t n = size_t(width) * size_t(height) * 4;
+			snorm8.Resize((unsigned)n);
+			for (size_t i = 0; i < n; i++)
+				snorm8[(unsigned)i] = int8_t(((const int16_t*)data)[i] / 256);
+			data = snorm8.Data();
 		}
 	}
 #endif
 
+	// Depth formats (GLES 3.0) and 32-bit float formats without OES_texture_float_linear are not
+	// filterable: with linear filtering the texture would be incomplete and sample as black.
+	// (This used to be done for every render texture on Android, which also took linear
+	// filtering away from bloom, scaling and the other post-process passes.)
+	bool depthFormat = format == GL_DEPTH24_STENCIL8 || format == GL_DEPTH_COMPONENT24 || format == GL_STENCIL_INDEX8;
+	bool float32 = format == GL_R32F || format == GL_RG32F || format == GL_RGBA32F;
+	tex.nearestOnly = (depthFormat && gl.esversion > 0) || (float32 && !gl.floatlinear);
+	const GLint filter = tex.nearestOnly ? GL_NEAREST : GL_LINEAR;
+
 	glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, dataformat, datatype, data);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-#ifdef ANDROID // This is to fix AO on some devices (P20)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-#endif
 	return tex;
 }
 

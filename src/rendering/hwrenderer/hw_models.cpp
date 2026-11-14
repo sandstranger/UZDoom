@@ -114,12 +114,13 @@ void FHWModelRenderer::SetMaterial(FGameTexture *skin, bool clampNoFilter, FTran
 
 void FHWModelRenderer::DrawArrays(int start, int count)
 {
-	state.Draw(DT_Triangles, start, count);
+	// Instanced with other actors using the same mesh, frame and state when the draw list allows it.
+	state.DrawModel(DT_Triangles, start, count, false);
 }
 
 void FHWModelRenderer::DrawElements(int numIndices, size_t offset)
 {
-	state.DrawIndexed(DT_Triangles, int(offset / sizeof(unsigned int)), numIndices);
+	state.DrawModel(DT_Triangles, int(offset / sizeof(unsigned int)), numIndices, true);
 }
 
 //===========================================================================

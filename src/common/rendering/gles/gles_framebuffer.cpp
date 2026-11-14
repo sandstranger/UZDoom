@@ -47,6 +47,7 @@
 
 #include "flatvertices.h"
 #include "hw_cvars.h"
+#include "hw_batching.h"
 
 EXTERN_CVAR (Bool, vid_vsync)
 EXTERN_CVAR(Int, gl_tonemap)
@@ -84,6 +85,7 @@ OpenGLFrameBuffer::OpenGLFrameBuffer(void *hMonitor, bool fullscreen) :
 OpenGLFrameBuffer::~OpenGLFrameBuffer()
 {
 	PPResource::ResetAll();
+	gl_RenderState.ReleaseBatchResources();
 
 	if (mVertexData != nullptr) delete mVertexData;
 	if (mSkyData != nullptr) delete mSkyData;
@@ -246,6 +248,7 @@ const char* OpenGLFrameBuffer::DeviceName() const
 
 void OpenGLFrameBuffer::Swap()
 {
+	BatchStatsEndFrame();
 
 	Finish.Reset();
 	Finish.Clock();

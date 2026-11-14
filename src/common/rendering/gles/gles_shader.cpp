@@ -33,6 +33,8 @@
 
 #include "matrix.h"
 #include "gles_renderer.h"
+#include "hw_programcache.h"
+#include "hw_batching.h"
 #include <map>
 #include <memory>
 
@@ -54,21 +56,24 @@ FString GetGLSLPrecision()
 	return str;
 }
 
-struct ProgramBinary
-{
-	uint32_t format;
-	TArray<uint8_t> data;
-};
-
-static const char *ShaderMagic = "ZDSC";
-
-static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a TMap because it doesn't support unique_ptr move semantics
-
 bool IsShaderCacheActive()
 {
-#if ANDROID
-	return !USING_GLES_2;
-#endif
+	if (!glProgramBinary || !glGetProgramBinary)
+		return false;
+#ifdef ANDROID
+	// GLES2 contexts: glProgramBinary is ES 3.0 core; the OES entry points are not loaded.
+	if (gles.glesMode == GLES_MODE_GLES || USING_GLES_2)
+		return false;
+	// ES 3.0 core, but a driver may expose zero binary formats (then every binary is refused).
+	static int numFormats = -1;
+	if (numFormats < 0)
+	{
+		GLint n = 0;
+		glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &n);
+		numFormats = n > 0 ? n : 0;
+	}
+	return numFormats > 0;
+#else
 	static bool active = true;
 	static bool firstcall = true;
 
@@ -79,138 +84,84 @@ bool IsShaderCacheActive()
 		firstcall = false;
 	}
 	return active;
+#endif
 }
 
-static FString CalcProgramBinaryChecksum(const FString &vertex, const FString &fragment)
+// Program binaries live in the shared per-driver cache (hw_programcache.cpp); GLES2-style and
+// GLES3-style sources of the same shader get separate namespaces.
+static FString ProgramCacheNamespace()
 {
-	const GLubyte *vendor = glGetString(GL_VENDOR);
-	const GLubyte *renderer = glGetString(GL_RENDERER);
-	const GLubyte *version = glGetString(GL_VERSION);
-
-	uint8_t digest[16];
-	MD5Context md5;
-	md5.Update(vendor, (unsigned int)strlen((const char*)vendor));
-	md5.Update(renderer, (unsigned int)strlen((const char*)renderer));
-	md5.Update(version, (unsigned int)strlen((const char*)version));
-	md5.Update((const uint8_t *)vertex.GetChars(), (unsigned int)vertex.Len());
-	md5.Update((const uint8_t *)fragment.GetChars(), (unsigned int)fragment.Len());
-	md5.Final(digest);
-
-	char hexdigest[33];
-	for (int i = 0; i < 16; i++)
-	{
-		int v = digest[i] >> 4;
-		hexdigest[i * 2] = v < 10 ? ('0' + v) : ('a' + v - 10);
-		v = digest[i] & 15;
-		hexdigest[i * 2 + 1] = v < 10 ? ('0' + v) : ('a' + v - 10);
-	}
-	hexdigest[32] = 0;
-	return hexdigest;
+	FString ns;
+	ns.Format("gles-mode%d", (int)gles.glesMode);
+	return ns;
 }
 
-static FString CreateProgramCacheName(bool create)
+static FString ProgramCacheDriver()
 {
-	FString path = M_GetCachePath(create);
-	if (create) CreatePath(path.GetChars());
-	path << "/glesshadercache";
-	return path;
+	auto str = [](GLenum e) { const char *s = (const char *)glGetString(e); return s ? s : ""; };
+	FString driver;
+	driver.Format("%s|%s|%s|%s", str(GL_VENDOR), str(GL_RENDERER), str(GL_VERSION), str(GL_SHADING_LANGUAGE_VERSION));
+	return driver;
 }
 
-static void LoadShaders()
+static FString ProgramCacheKey(const FString &vertex, const FString &fragment)
 {
-	static bool loaded = false;
-	if (loaded)
-		return;
-	loaded = true;
-
-	try
-	{
-		FString path = CreateProgramCacheName(false);
-		FileReader fr;
-		if (!fr.OpenFile(path.GetChars()))
-			I_Error("Could not open shader file");
-
-		char magic[4];
-		fr.Read(magic, 4);
-		if (memcmp(magic, ShaderMagic, 4) != 0)
-			I_Error("Not a shader cache file");
-
-		uint32_t count = fr.ReadUInt32();
-		if (count > 512)
-			I_Error("Too many shaders cached");
-
-		for (uint32_t i = 0; i < count; i++)
-		{
-			char hexdigest[33];
-			if (fr.Read(hexdigest, 32) != 32)
-				I_Error("Read error");
-			hexdigest[32] = 0;
-
-			std::unique_ptr<ProgramBinary> binary(new ProgramBinary());
-			binary->format = fr.ReadUInt32();
-			uint32_t size = fr.ReadUInt32();
-			if (size > 1024 * 1024)
-				I_Error("Shader too big, probably file corruption");
-
-			binary->data.Resize(size);
-			if (fr.Read(binary->data.Data(), binary->data.Size()) != binary->data.Size())
-				I_Error("Read error");
-
-			ShaderCache[hexdigest] = std::move(binary);
-		}
-	}
-	catch (...)
-	{
-		ShaderCache.clear();
-	}
-}
-
-static void SaveShaders()
-{
-	FString path = CreateProgramCacheName(true);
-	std::unique_ptr<FileWriter> fw(FileWriter::Open(path.GetChars()));
-	if (fw)
-	{
-		uint32_t count = (uint32_t)ShaderCache.size();
-		fw->Write(ShaderMagic, 4);
-		fw->Write(&count, sizeof(uint32_t));
-		for (const auto &it : ShaderCache)
-		{
-			uint32_t size = it.second->data.Size();
-			fw->Write(it.first.GetChars(), 32);
-			fw->Write(&it.second->format, sizeof(uint32_t));
-			fw->Write(&size, sizeof(uint32_t));
-			fw->Write(it.second->data.Data(), it.second->data.Size());
-		}
-	}
+	return ProgramBinaryCache::MakeKey(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars(), GetGitHash(), vertex, fragment);
 }
 
 TArray<uint8_t> LoadCachedProgramBinary(const FString &vertex, const FString &fragment, uint32_t &binaryFormat)
 {
-	LoadShaders();
-
-	auto it = ShaderCache.find(CalcProgramBinaryChecksum(vertex, fragment));
-	if (it != ShaderCache.end())
-	{
-		binaryFormat = it->second->format;
-		return it->second->data;
-	}
-	else
-	{
+	TArray<uint8_t> data;
+	if (!ProgramBinaryCache::Load(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars(), ProgramCacheKey(vertex, fragment), binaryFormat, data))
 		binaryFormat = 0;
-		return {};
-	}
+	return data;
 }
 
 void SaveCachedProgramBinary(const FString &vertex, const FString &fragment, const TArray<uint8_t> &binary, uint32_t binaryFormat)
 {
-	auto &entry = ShaderCache[CalcProgramBinaryChecksum(vertex, fragment)];
-	entry.reset(new ProgramBinary());
-	entry->format = binaryFormat;
-	entry->data = binary;
-
-	SaveShaders();
+	ProgramBinaryCache::Store(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars(), ProgramCacheKey(vertex, fragment), binaryFormat, binary);
 }
+
+void RejectCachedProgramBinary(const FString &vertex, const FString &fragment)
+{
+	ProgramBinaryCache::Reject(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars(), ProgramCacheKey(vertex, fragment));
+}
+
+// GPU instancing (hw_batching.h): GLSL ES 3.00 only, emitted when the flavour asks for it.
+static const char *InstancingVertexDecl = R"(
+#ifdef INSTANCING
+in vec4 aInstXform0;
+in vec4 aInstXform1;
+in vec4 aInstXform2;
+in vec4 aInstXform3;
+in vec4 aInstLightAttr;
+in vec4 aInstDynLight;
+in highp uvec4 aInstColors;
+flat out vec4 vInstLightAttr;
+flat out vec4 vInstDynLight;
+flat out vec4 vInstObjectColor;
+flat out vec4 vInstAddColor;
+flat out vec4 vInstFogColor;
+flat out float vInstDesaturation;
+#endif
+)";
+
+static const char *InstancingFragmentDecl = R"(
+#ifdef INSTANCING
+flat in vec4 vInstLightAttr;
+flat in vec4 vInstDynLight;
+flat in vec4 vInstObjectColor;
+flat in vec4 vInstAddColor;
+flat in vec4 vInstFogColor;
+flat in float vInstDesaturation;
+#define uLightAttr vInstLightAttr
+#define uDynLightColor vInstDynLight
+#define uObjectColor vInstObjectColor
+#define uAddColor vInstAddColor
+#define uFogColor vInstFogColor
+#define uDesaturationFactor vInstDesaturation
+#endif
+)";
 
 bool FShader::Configure(const char* name, const char* vert_prog_lump, const char* fragprog, const char* fragprog2, const char* light_fragprog, const char* defines)
 {
@@ -397,14 +348,14 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 	vp_comb.Format("#version %s\n\n#define NO_CLIPDISTANCE_SUPPORT\n", gles.shaderVersionString);
 
 	FString fp_comb = vp_comb;
-	vp_comb << defines << i_data.GetChars();
-	fp_comb << "$placeholder$\n" << defines << i_data.GetChars();
+	vp_comb << defines << i_data.GetChars() << InstancingVertexDecl;
+	fp_comb << "$placeholder$\n" << defines << i_data.GetChars() << InstancingFragmentDecl;
 
 	vp_comb << "#line 1\n";
 	fp_comb << "#line 1\n";
 
 #ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
-	if(gles.glesMode == GLES_MODE_OGL32)
+	if(gles.essl300)
 	{
 		FString vpcode = GetStringFromLump(vp_lump);
 		FString newvpcode = RemoveLayoutLocationDecl(vpcode, "out");
@@ -449,7 +400,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 					int pl_lump = fileSystem.CheckNumForFullName("shaders_gles/glsl/func_defaultmat2.fp", 0);
 					if (pl_lump == -1) I_Error("Unable to load '%s'", "shaders_gles/glsl/func_defaultmat2.fp");
 #ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
-					if(gles.glesMode == GLES_MODE_OGL32)
+					if(gles.essl300)
 					{
 						fp_comb << "\n" << GLSL100_to_GLSL300(GetStringFromLump(pl_lump), 1);
 					}
@@ -462,7 +413,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 					int pl_lump = fileSystem.CheckNumForFullName("shaders_gles/glsl/func_defaultmat.fp", 0);
 					if (pl_lump == -1) I_Error("Unable to load '%s'", "shaders_gles/glsl/func_defaultmat.fp");
 #ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
-					if(gles.glesMode == GLES_MODE_OGL32)
+					if(gles.essl300)
 					{
 						fp_comb << "\n" << GLSL100_to_GLSL300(GetStringFromLump(pl_lump), 1);
 					}
@@ -488,7 +439,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 			}
 
 #ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
-			if(gles.glesMode == GLES_MODE_OGL32)
+			if(gles.essl300)
 			{
 				fp_comb << GLSL100_to_GLSL300(RemoveLegacyUserUniforms(pp_data).GetChars(), 1);
 			}
@@ -502,7 +453,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 				int pl_lump = fileSystem.CheckNumForFullName("shaders_gles/glsl/func_defaultlight.fp", 0);
 				if (pl_lump == -1) I_Error("Unable to load '%s'", "shaders_gles/glsl/func_defaultlight.fp");
 #ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
-				if(gles.glesMode == GLES_MODE_OGL32)
+				if(gles.essl300)
 				{
 					fp_comb << "\n" << GLSL100_to_GLSL300(GetStringFromLump(pl_lump), 1);
 				}
@@ -522,7 +473,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		{
 			// Proc_prog_lump is not a lump name but the source itself (from generated shaders)
 #ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
-			if(gles.glesMode == GLES_MODE_OGL32)
+			if(gles.essl300)
 			{
 				fp_comb << GLSL100_to_GLSL300(proc_prog_lump.GetChars() + 1, 1);
 			}
@@ -532,7 +483,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		}
 	}
 #ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
-	if(gles.glesMode == GLES_MODE_OGL32)
+	if(gles.essl300)
 	{
 		fp_comb << GLSL100_to_GLSL300(placeholder, 1);
 	}
@@ -568,6 +519,8 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		GLint status = 0;
 		glGetProgramiv(shaderData->hShader, GL_LINK_STATUS, &status);
 		linked = (status == GL_TRUE);
+		if (!linked)
+			RejectCachedProgramBinary(vp_comb, fp_comb);
 	}
 
 	if (!linked)
@@ -599,8 +552,18 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		glBindAttribLocation(shaderData->hShader, VATTR_NORMAL2, "aNormal2");
 		glBindAttribLocation(shaderData->hShader, VATTR_BONEWEIGHT, "aBoneWeight");
 		glBindAttribLocation(shaderData->hShader, VATTR_BONESELECTOR, "aBoneSelector");
+		// instance attributes (only present in the instanced flavours)
+		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE0 + 0, "aInstXform0");
+		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE0 + 1, "aInstXform1");
+		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE0 + 2, "aInstXform2");
+		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE0 + 3, "aInstXform3");
+		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE_LIGHT, "aInstLightAttr");
+		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE_DYNLIGHT, "aInstDynLight");
+		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE_COLORS, "aInstColors");
 
 
+		if (IsShaderCacheActive() && glProgramParameteri)
+			glProgramParameteri(shaderData->hShader, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 		glLinkProgram(shaderData->hShader);
 
 		glGetShaderInfoLog(shaderData->hVertProg, 10000, NULL, buffer);
@@ -633,9 +596,13 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 			int binaryLength = 0;
 			glGetProgramiv(shaderData->hShader, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
 			binary.Resize(binaryLength);
-			glGetProgramBinary(shaderData->hShader, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
-			binary.Resize(binaryLength);
-			SaveCachedProgramBinary(vp_comb, fp_comb, binary, binaryFormat);
+			if (binaryLength > 0)
+			{
+				binaryLength = 0;
+				glGetProgramBinary(shaderData->hShader, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
+				binary.Resize(binaryLength > 0 ? binaryLength : 0);
+				SaveCachedProgramBinary(vp_comb, fp_comb, binary, binaryFormat);
+			}
 		}
 	}
 	else
@@ -794,6 +761,8 @@ bool FShader::Bind(ShaderFlavourData& flavour)
 
 		variantConfig.AppendFormat("#define DEF_HAS_SPOTLIGHT %d\n", flavour.hasSpotLight);
 		variantConfig.AppendFormat("#define DEF_PALETTE_INTERPOLATE %d\n", flavour.paletteInterpolate);
+		if (flavour.instancing && gles.essl300)
+			variantConfig << "#define INSTANCING\n" << (flavour.instancing == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
 
 		//Printf("Shader: %s, %08x %s", mFragProg2.GetChars(), tag, variantConfig.GetChars());
 

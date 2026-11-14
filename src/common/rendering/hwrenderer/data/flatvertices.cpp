@@ -137,8 +137,10 @@ void FFlatVertexBuffer::OutputResized(int width, int height)
 
 std::pair<FFlatVertex *, unsigned int> FFlatVertexBuffer::AllocVertices(unsigned int count)
 {
-	FFlatVertex *p = GetBuffer();
+	// Reserve first, then address the reserved range: reading mCurIndex separately would hand
+	// two threads allocating at the same time the same memory.
 	auto index = mCurIndex.fetch_add(count);
+	FFlatVertex *p = GetBuffer(index);
 	if (index + count >= BUFFER_SIZE_TO_USE)
 	{
 		// If a single scene needs 2'000'000 vertices there must be something very wrong.

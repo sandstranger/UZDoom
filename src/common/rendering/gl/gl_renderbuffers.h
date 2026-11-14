@@ -34,6 +34,8 @@ class PPGLTexture
 public:
 	void Bind(int index, int filter = GL_NEAREST, int wrap = GL_CLAMP_TO_EDGE)
 	{
+		// A format that cannot be filtered would make the texture incomplete (it samples as black).
+		if (nearestOnly) filter = GL_NEAREST;
 		glActiveTexture(GL_TEXTURE0 + index);
 		glBindTexture(GL_TEXTURE_2D, handle);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
@@ -44,6 +46,7 @@ public:
 
 	int Width = -1;
 	int Height = -1;
+	bool nearestOnly = false;
 
 	explicit operator bool() const { return handle != 0; }
 

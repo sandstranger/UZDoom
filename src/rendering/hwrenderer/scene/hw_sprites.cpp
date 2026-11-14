@@ -286,7 +286,10 @@ void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 				state.SetDepthBias(-1, -128);
 			}
 			state.SetLightIndex(-1);
-			state.Draw(DT_TriangleStrip, vertexindex, 4);
+			// Consecutive sprites with the same render state are drawn as one instanced draw
+			// when the draw list allows it; otherwise this is the plain 4-vertex strip.
+			const EBatchCategory category = particle ? BC_Particle : BC_Sprite;
+			state.DrawQuad(vertexindex, quadCorners, ul, ur, vt, vb, category);
 
 			if (foglayer)
 			{
@@ -294,7 +297,7 @@ void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 				SetFog(state, di->Level, di->lightmode, foglevel, rel, false, &Colormap, additivefog);
 				state.SetTextureMode(TM_FOGLAYER);
 				state.SetRenderStyle(STYLE_Translucent);
-				state.Draw(DT_TriangleStrip, vertexindex, 4);
+				state.DrawQuad(vertexindex, quadCorners, ul, ur, vt, vb, category);
 				state.SetTextureMode(TM_NORMAL);
 			}
 		}
@@ -632,6 +635,7 @@ void HWSprite::CreateVertices(HWDrawInfo *di)
 		auto vp = vert.first;
 		vertexindex = vert.second;
 
+		for (int i = 0; i < 4; i++) quadCorners[i] = v[i];
 		vp[0].Set(v[0][0], v[0][1], v[0][2], ul, vt);
 		vp[1].Set(v[1][0], v[1][1], v[1][2], ur, vt);
 		vp[2].Set(v[2][0], v[2][1], v[2][2], ul, vb);

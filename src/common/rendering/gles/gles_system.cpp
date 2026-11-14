@@ -163,9 +163,14 @@ namespace OpenGLESRenderer
 				//I_FatalError("Failed to load OpenGL functions.");
 			}
 		}
-		GLuint vao;
-		glGenVertexArrays(1, &vao);
-		glBindVertexArray(vao);
+		// Vertex array objects are GLES 3.0 core; a GLES 2.0 context only has them through
+		// OES_vertex_array_object, which this loader does not resolve. Default VAO there.
+		if (GLimp_GetGLVersion() >= 3.0f && glGenVertexArrays && glBindVertexArray)
+		{
+			GLuint vao;
+			glGenVertexArrays(1, &vao);
+			glBindVertexArray(vao);
+		}
 #endif
 		CollectExtensions();
 
@@ -187,6 +192,7 @@ namespace OpenGLESRenderer
 		Printf("GL Version parsed = %f\n", glVersion);
 
 		gles.flags = RFL_NO_CLIP_PLANES;
+		gles.essl300 = false;
 
 		gles.useMappedBuffers = gles_use_mapped_buffer;
 		gles.forceGLSLv100 = gles_force_glsl_v100;
@@ -224,11 +230,9 @@ namespace OpenGLESRenderer
 #ifdef ANDROID //karin: custom GL version
 		} else {
 			if(USING_GLES_2)
-				gles.glesMode = GLES_MODE_OGL2; // Below 3.3
-			else if(USING_GLES_32)
-				gles.glesMode = GLES_MODE_OGL32; // 3.3 or above
+				gles.glesMode = GLES_MODE_OGL2; // GLES 2.0 context, GLSL ES 1.00
 			else
-				gles.glesMode = GLES_MODE_OGL3; // 3.3 or above
+				gles.glesMode = GLES_MODE_OGL3; // GLES 3.0 context, GLSL ES 3.00
 		}
 #endif
 
@@ -267,10 +271,14 @@ namespace OpenGLESRenderer
 		{
 			Printf("GLES choosing mode: GLES_MODE_OGL3\n");
 
-#ifdef ANDROID //karin: using #version 100 on OpenGLES
-			gles.shaderVersionString = "100";
-			gles.depthStencilAvailable = CheckExtension("GL_OES_packed_depth_stencil");
-			gles.npotAvailable = CheckExtension("GL_OES_texture_npot");
+#ifdef ANDROID
+			// GLES 3.0 context: the GLSL ES 1.00 sources are converted to GLSL ES 3.00 (needed by
+			// the instanced shader flavours). Packed depth/stencil and NPOT textures with mipmaps
+			// and repeat are core in GLES 3.0, independent of the OES extension strings.
+			gles.shaderVersionString = "300 es";
+			gles.essl300 = true;
+			gles.depthStencilAvailable = true;
+			gles.npotAvailable = true;
 			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
 			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
 #else
@@ -283,18 +291,6 @@ namespace OpenGLESRenderer
 #endif
 		}
 
-#ifdef ANDROID //karin: add extras configs
-		else if (gles.glesMode == GLES_MODE_OGL32) //karin: using GLES3.2 + GLSL 320 es shader
-		{
-			Printf("GLES choosing mode: GLES_MODE_OGL32\n");
-
-			gles.shaderVersionString = "300 es"; // for 320 es need make attribute/varying/gl_FragColor -> in/out
-			gles.depthStencilAvailable = CheckExtension("GL_OES_packed_depth_stencil");
-			gles.npotAvailable = CheckExtension("GL_OES_texture_npot");
-			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
-			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
-		}
-#endif		
 		setGlVersion(glVersion);
 	}
 }

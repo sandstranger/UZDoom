@@ -276,6 +276,13 @@ class FShader
 	bool currentTextureMatrixState = true;// by setting the matrix state to 'true' it is guaranteed to be set the first time the render state gets applied.
 	bool currentModelMatrixState = true;
 
+	// What Load() was called with, so that instanced variants can be built on first use.
+	FString mVertLump, mFragLump, mProcLump, mLightLump, mDefines;
+	bool mHasProc = false, mHasLight = false, mIsGBuffer = false, mParamsStored = false;
+	AllShaderIndex mType = MATSHADER_Default;
+	FShader *mInstanced[2] = {};		// INSTANCED_QUADS, INSTANCED_MODELS
+	bool mInstancedFailed[2] = {};
+
 public:
 	FShader(const char *name)
 		: mName(name)
@@ -286,6 +293,10 @@ public:
 	~FShader();
 
 	bool Load(const char * name, const char * vert_prog_lump, const char * fragprog, const char * fragprog2, const char * light_fragprog, const char *defines, bool isGBuffer, AllShaderIndex type);
+
+	// variant 1: instanced sprite quads, 2: instanced models. Built on first use; nullptr if it
+	// cannot be built (the caller then draws without instancing).
+	FShader *GetInstancedVariant(int variant);
 
 	bool Bind();
 	unsigned int GetHandle() const { return hShader; }
@@ -304,6 +315,11 @@ public:
 
 	FShader *BindEffect(int effect, EPassType passType);
 	FShader *Get(unsigned int eff, bool alphateston, EPassType passType);
+	FShader *GetInstanced(unsigned int eff, bool alphateston, EPassType passType, int variant)
+	{
+		FShader *base = Get(eff, alphateston, passType);
+		return base ? base->GetInstancedVariant(variant) : nullptr;
+	}
 
 	void SetActiveShader(FShader *sh);
 	bool CompileNextShader();

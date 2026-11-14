@@ -826,10 +826,14 @@ void HWDrawList::DoDraw(HWDrawInfo *di, FRenderState &state, bool translucent, i
 //==========================================================================
 void HWDrawList::Draw(HWDrawInfo *di, FRenderState &state, bool translucent)
 {
+	// Opaque sprites and models are depth tested without blending, so their draws may be
+	// regrouped freely; translucent ones keep their order.
+	state.BeginBatchScope(translucent ? BS_Ordered : BS_Unordered);
 	for (unsigned i = 0; i < drawitems.Size(); i++)
 	{
 		DoDraw(di, state, translucent, i);
 	}
+	state.EndBatchScope();
 }
 
 //==========================================================================
@@ -841,10 +845,12 @@ void HWDrawList::DrawWalls(HWDrawInfo *di, FRenderState &state, bool translucent
 {
 	HWWallDispatcher dis(di);
 	RenderWall.Clock();
+	state.BeginBatchScope(BS_Ordered);
 	for (auto &item : drawitems)
 	{
 		walls[item.index]->DrawWall(&dis, state, translucent);
 	}
+	state.EndBatchScope();
 	RenderWall.Unclock();
 }
 
@@ -856,10 +862,12 @@ void HWDrawList::DrawWalls(HWDrawInfo *di, FRenderState &state, bool translucent
 void HWDrawList::DrawFlats(HWDrawInfo *di, FRenderState &state, bool translucent)
 {
 	RenderFlat.Clock();
+	state.BeginBatchScope(BS_Ordered);
 	for (unsigned i = 0; i<drawitems.Size(); i++)
 	{
 		flats[drawitems[i].index]->DrawFlat(di, state, translucent);
 	}
+	state.EndBatchScope();
 	RenderFlat.Unclock();
 }
 
@@ -941,7 +949,10 @@ void HWDrawList::DrawSorted(HWDrawInfo *di, FRenderState &state)
 	state.ClearClipSplit();
 	state.EnableClipDistance(1, true);
 	state.EnableClipDistance(2, true);
+	// Sorted translucent geometry: only consecutive items with identical state are combined.
+	state.BeginBatchScope(BS_Ordered);
 	DrawSorted(di, state, sorted);
+	state.EndBatchScope();
 	state.EnableClipDistance(1, false);
 	state.EnableClipDistance(2, false);
 	state.ClearClipSplit();

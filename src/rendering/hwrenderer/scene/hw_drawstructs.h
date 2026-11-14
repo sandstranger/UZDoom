@@ -393,6 +393,7 @@ public:
 
 	float ul,ur;
 	float vt,vb;
+	FVector3 quadCorners[4];	// the vertices written by CreateVertices, for instanced drawing
 	float x1,y1,z1;
 	float x2,y2,z2;
 	float offx, offy;

@@ -188,7 +188,8 @@ void HWFlat::DrawSubsectors(HWDrawInfo *di, FRenderState &state)
 	state.SetLightIndex(dynlightindex);
 
 
-	state.DrawIndexed(DT_Triangles, iboindex + section->vertexindex, section->vertexcount);
+	// Consecutive flats with identical state are merged into one indexed draw.
+	state.DrawMerged(DT_Triangles, iboindex + section->vertexindex, section->vertexcount, true, BC_Flat);
 	flatvertices += section->vertexcount;
 	flatprimitives++;
 }

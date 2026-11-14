@@ -37,6 +37,7 @@
 #include "gl_debug.h"
 #include "matrix.h"
 #include "gl_renderer.h"
+#include "hw_programcache.h"
 #include <map>
 #include <memory>
 #if ANDROID
@@ -60,17 +61,15 @@ void setSpirvCrossState(const bool enableSpirvCross) {
 namespace OpenGLRenderer
 {
 
-struct ProgramBinary
-{
-	uint32_t format;
-	TArray<uint8_t> data;
-};
-
-static const char *ShaderMagic = "ZDSC";
-
-static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a TMap because it doesn't support unique_ptr move semantics
-
 #if ANDROID
+    // Desktop GLSL fed to NG-GL4ES and the GLSL ES version SPIRV-Cross emits (part of the program cache key).
+    // GLSL ES 3.10 only where the context has it: GLES 3.0 devices (and an ES 3.0 context) get 3.00.
+    constexpr int NGGL4ES_SOURCE_GLSL = 410;
+    int NGGL4ESTargetESSL()
+    {
+        return gl.esversion >= 310 ? 310 : 300;
+    }
+
     typedef char* (*GLSLtoGLSLES_t)(const char*, GLenum, unsigned int, unsigned int, int*);
 	static void* ngGL4ESPTR = nullptr;
 
@@ -82,8 +81,8 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
 			ngGL4ESPTR = SDL_LoadObject("libng_gl4es.so");
 			GLSLtoGLSLES_c =(GLSLtoGLSLES_t) SDL_LoadFunction(ngGL4ESPTR, "GLSLtoGLSLES_c");
         }
-        const int glesVersion = 310;
-        const unsigned int sourceGLVersion = 410;
+        const int glesVersion = NGGL4ESTargetESSL();
+        const unsigned int sourceGLVersion = NGGL4ES_SOURCE_GLSL;
         const auto stage = isVertexShader ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER;
         int returnCode = 0;
         auto glesShader  = GLSLtoGLSLES_c(shaderSource, stage,glesVersion,sourceGLVersion,&returnCode);
@@ -106,7 +105,15 @@ static std::map<FString, std::unique_ptr<ProgramBinary>> ShaderCache; // Not a T
 bool IsShaderCacheActive()
 {
 #ifdef ANDROID
-	return true;
+	// ES 3.0 core, but a driver may expose zero binary formats (then every binary is refused).
+	static int numFormats = -1;
+	if (numFormats < 0)
+	{
+		GLint n = 0;
+		glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &n);
+		numFormats = n > 0 ? n : 0;
+	}
+	return numFormats > 0;
 #endif
 	static bool active = true;
 	static bool firstcall = true;
@@ -120,139 +127,52 @@ bool IsShaderCacheActive()
 	return active;
 }
 
-static FString CalcProgramBinaryChecksum(const FString &vertex, const FString &fragment)
+// Program binaries live in the shared per-driver cache (hw_programcache.cpp). The namespace keeps
+// binaries built from differently converted sources apart; the pipeline tag changes whenever the
+// conversion of the sources changes without the sources themselves changing.
+static const char *ProgramCacheNamespace()
 {
-	const GLubyte *vendor = glGetString(GL_VENDOR);
-	const GLubyte *renderer = glGetString(GL_RENDERER);
-	const GLubyte *version = glGetString(GL_VERSION);
-
-	uint8_t digest[16];
-	MD5Context md5;
-	md5.Update(vendor, (unsigned int)strlen((const char*)vendor));
-	md5.Update(renderer, (unsigned int)strlen((const char*)renderer));
-	md5.Update(version, (unsigned int)strlen((const char*)version));
-	md5.Update((const uint8_t *)vertex.GetChars(), (unsigned int)vertex.Len());
-	md5.Update((const uint8_t *)fragment.GetChars(), (unsigned int)fragment.Len());
-	md5.Final(digest);
-
-	char hexdigest[33];
-	for (int i = 0; i < 16; i++)
-	{
-		int v = digest[i] >> 4;
-		hexdigest[i * 2] = v < 10 ? ('0' + v) : ('a' + v - 10);
-		v = digest[i] & 15;
-		hexdigest[i * 2 + 1] = v < 10 ? ('0' + v) : ('a' + v - 10);
-	}
-	hexdigest[32] = 0;
-	return hexdigest;
-}
-
-static FString CreateProgramCacheName(bool create)
-{
-	FString path = M_GetCachePath(create);
-	if (create) CreatePath(path.GetChars());
 #ifdef ANDROID
-	path << (gEnableSpirvCross ? "/spirv_glshadercache" : "/glshadercache");
+	return gEnableSpirvCross ? "gl-spirv" : "gl-essl";
 #else
-	path << "/glshadercache";
+	return "gl";
 #endif
-	return path;
 }
 
-static void LoadShaders()
+static FString ProgramCacheDriver()
 {
-	static bool loaded = false;
-	if (loaded)
-		return;
-	loaded = true;
-
-	try
-	{
-		FString path = CreateProgramCacheName(false);
-		FileReader fr;
-		if (!fr.OpenFile(path.GetChars()))
-			I_Error("Could not open shader file");
-
-		char magic[4];
-		fr.Read(magic, 4);
-		if (memcmp(magic, ShaderMagic, 4) != 0)
-			I_Error("Not a shader cache file");
-
-		uint32_t count = fr.ReadUInt32();
-		if (count > 512)
-			I_Error("Too many shaders cached");
-
-		for (uint32_t i = 0; i < count; i++)
-		{
-			char hexdigest[33];
-			if (fr.Read(hexdigest, 32) != 32)
-				I_Error("Read error");
-			hexdigest[32] = 0;
-
-			std::unique_ptr<ProgramBinary> binary(new ProgramBinary());
-			binary->format = fr.ReadUInt32();
-			uint32_t size = fr.ReadUInt32();
-			if (size > 1024 * 1024)
-				I_Error("Shader too big, probably file corruption");
-
-			binary->data.Resize(size);
-			if (fr.Read(binary->data.Data(), binary->data.Size()) != binary->data.Size())
-				I_Error("Read error");
-
-			ShaderCache[hexdigest] = std::move(binary);
-		}
-	}
-	catch (...)
-	{
-		ShaderCache.clear();
-	}
+	auto str = [](GLenum e) { const char *s = (const char *)glGetString(e); return s ? s : ""; };
+	FString driver;
+	driver.Format("%s|%s|%s|%s", str(GL_VENDOR), str(GL_RENDERER), str(GL_VERSION), str(GL_SHADING_LANGUAGE_VERSION));
+	return driver;
 }
 
-static void SaveShaders()
+static FString ProgramCacheKey(const FString &vertex, const FString &fragment)
 {
-	FString path = CreateProgramCacheName(true);
-	std::unique_ptr<FileWriter> fw(FileWriter::Open(path.GetChars()));
-	if (fw)
-	{
-		uint32_t count = (uint32_t)ShaderCache.size();
-		fw->Write(ShaderMagic, 4);
-		fw->Write(&count, sizeof(uint32_t));
-		for (const auto &it : ShaderCache)
-		{
-			uint32_t size = it.second->data.Size();
-			fw->Write(it.first.GetChars(), 32);
-			fw->Write(&it.second->format, sizeof(uint32_t));
-			fw->Write(&size, sizeof(uint32_t));
-			fw->Write(it.second->data.Data(), it.second->data.Size());
-		}
-	}
+	FString pipeline = GetGitHash();
+#ifdef ANDROID
+	if (gEnableSpirvCross)
+		pipeline.AppendFormat("|ngl4es essl%d from glsl%d", NGGL4ESTargetESSL(), NGGL4ES_SOURCE_GLSL);
+#endif
+	return ProgramBinaryCache::MakeKey(ProgramCacheNamespace(), ProgramCacheDriver().GetChars(), pipeline.GetChars(), vertex, fragment);
 }
 
 TArray<uint8_t> LoadCachedProgramBinary(const FString &vertex, const FString &fragment, uint32_t &binaryFormat)
 {
-	LoadShaders();
-
-	auto it = ShaderCache.find(CalcProgramBinaryChecksum(vertex, fragment));
-	if (it != ShaderCache.end())
-	{
-		binaryFormat = it->second->format;
-		return it->second->data;
-	}
-	else
-	{
+	TArray<uint8_t> data;
+	if (!ProgramBinaryCache::Load(ProgramCacheNamespace(), ProgramCacheDriver().GetChars(), ProgramCacheKey(vertex, fragment), binaryFormat, data))
 		binaryFormat = 0;
-		return {};
-	}
+	return data;
 }
 
 void SaveCachedProgramBinary(const FString &vertex, const FString &fragment, const TArray<uint8_t> &binary, uint32_t binaryFormat)
 {
-	auto &entry = ShaderCache[CalcProgramBinaryChecksum(vertex, fragment)];
-	entry.reset(new ProgramBinary());
-	entry->format = binaryFormat;
-	entry->data = binary;
+	ProgramBinaryCache::Store(ProgramCacheNamespace(), ProgramCacheDriver().GetChars(), ProgramCacheKey(vertex, fragment), binaryFormat, binary);
+}
 
-	SaveShaders();
+void RejectCachedProgramBinary(const FString &vertex, const FString &fragment)
+{
+	ProgramBinaryCache::Reject(ProgramCacheNamespace(), ProgramCacheDriver().GetChars(), ProgramCacheKey(vertex, fragment));
 }
 
 FString ProcessShaderError(const char * shaderError, TArray<FString> &filenames_for_error)
@@ -353,9 +273,60 @@ FString ProcessShaderError(const char * shaderError, TArray<FString> &filenames_
 	return err;
 }
 
+
+// GPU instancing (hw_batching.h): per-instance attributes and the values handed to the fragment shader.
+static const char *InstancingVertexDecl = R"(
+#ifdef INSTANCING
+layout(location = 9) in vec4 aInstXform0;
+layout(location = 10) in vec4 aInstXform1;
+layout(location = 11) in vec4 aInstXform2;
+layout(location = 12) in vec4 aInstXform3;
+layout(location = 13) in vec4 aInstLightAttr;
+layout(location = 14) in vec4 aInstDynLight;
+layout(location = 15) in uvec4 aInstColors;
+flat out vec4 vInstLightAttr;
+flat out vec4 vInstDynLight;
+flat out vec4 vInstObjectColor;
+flat out vec4 vInstAddColor;
+flat out vec4 vInstFogColor;
+flat out float vInstDesaturation;
+#endif
+)";
+
+static const char *InstancingFragmentDecl = R"(
+#ifdef INSTANCING
+flat in vec4 vInstLightAttr;
+flat in vec4 vInstDynLight;
+flat in vec4 vInstObjectColor;
+flat in vec4 vInstAddColor;
+flat in vec4 vInstFogColor;
+flat in float vInstDesaturation;
+#define uLightAttr vInstLightAttr
+#define uDynLightColor vInstDynLight
+#define uObjectColor vInstObjectColor
+#define uAddColor vInstAddColor
+#define uFogColor vInstFogColor
+#define uDesaturationFactor vInstDesaturation
+#endif
+)";
+
 bool FShader::Load(const char * name, const char * vert_prog_lump, const char * frag_prog_lump, const char * proc_prog_lump, const char * light_fragprog, const char * defines, bool isGBuffer, AllShaderIndex type)
 {
 	FString error;
+
+	if (!mParamsStored)
+	{
+		mVertLump = vert_prog_lump;
+		mFragLump = frag_prog_lump;
+		mHasProc = proc_prog_lump != nullptr;
+		if (mHasProc) mProcLump = proc_prog_lump;
+		mHasLight = light_fragprog != nullptr;
+		if (mHasLight) mLightLump = light_fragprog;
+		mDefines = defines;
+		mIsGBuffer = isGBuffer;
+		mType = type;
+		mParamsStored = true;
+	}
 
 	FString i_data = R"(
 		// these settings are actually pointless but there seem to be some old ATI drivers that fail to compile the shader without setting the precision here.
@@ -518,7 +489,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		pre_placeholder << "#version 410\n";
 	}
 	else {
-		pre_placeholder << "#version 310 es\n";
+		pre_placeholder << (gl.esversion >= 310 ? "#version 310 es\n" : "#version 300 es\n");
 		// ES fragment shaders have no default float precision, and the ViewpointUBO block below is the first
 		// thing that needs one: without this Mali rejects every fragment shader
 		// ("S0032: no default precision defined for member 'ProjectionMatrix'").
@@ -553,9 +524,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 	FString vp_comb = defines;
 	vp_comb << i_data.GetChars();
 	vp_comb << ShaderInputsOutputs::GenerateInputsOutputs(false, false, type, false, true);
+	vp_comb << InstancingVertexDecl;
 	FString fp_comb = defines;
 	fp_comb << i_data.GetChars();
 	fp_comb << ShaderInputsOutputs::GenerateInputsOutputs(false, true, type, isGBuffer, true);
+	fp_comb << InstancingFragmentDecl;
 
 	vp_comb << "#line 1\n";
 	fp_comb << "#line 1\n";
@@ -688,6 +661,8 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		GLint status = 0;
 		glGetProgramiv(hShader, GL_LINK_STATUS, &status);
 		linked = (status == GL_TRUE);
+		if (!linked)
+			RejectCachedProgramBinary(vp_comb, fp_comb);
 	}
 
 	if (!linked)
@@ -770,6 +745,8 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		glAttachShader(hShader, hVertProg);
 		glAttachShader(hShader, hFragProg);
 
+		if (glProgramParameteri && IsShaderCacheActive())
+			glProgramParameteri(hShader, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 		glLinkProgram(hShader);
 
 		if (glGetProgramiv(hShader, GL_LINK_STATUS, &status); status == GL_FALSE)
@@ -792,9 +769,13 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 			int binaryLength = 0;
 			glGetProgramiv(hShader, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
 			binary.Resize(binaryLength);
-			glGetProgramBinary(hShader, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
-			binary.Resize(binaryLength);
-			SaveCachedProgramBinary(vp_comb, fp_comb, binary, binaryFormat);
+			if (binaryLength > 0)
+			{
+				binaryLength = 0;
+				glGetProgramBinary(hShader, binary.Size(), &binaryLength, &binaryFormat, binary.Data());
+				binary.Resize(binaryLength > 0 ? binaryLength : 0);
+				SaveCachedProgramBinary(vp_comb, fp_comb, binary, binaryFormat);
+			}
 		}
 	}
 	else
@@ -880,6 +861,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 
 FShader::~FShader()
 {
+	for (auto variant : mInstanced) delete variant;
 	glDeleteProgram(hShader);
 	if (hVertProg != 0)
 		glDeleteShader(hVertProg);
@@ -893,6 +875,37 @@ FShader::~FShader()
 //
 //
 //==========================================================================
+
+FShader *FShader::GetInstancedVariant(int variant)
+{
+	if (variant < 1 || variant > 2 || !mParamsStored) return nullptr;
+	int slot = variant - 1;
+	if (mInstanced[slot] || mInstancedFailed[slot]) return mInstanced[slot];
+
+	FString defines = mDefines;
+	defines << "#define INSTANCING\n" << (variant == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
+	auto shader = new FShader(mName.GetChars());
+	try
+	{
+		if (!shader->Load(mName.GetChars(), mVertLump.GetChars(), mFragLump.GetChars(), mHasProc ? mProcLump.GetChars() : nullptr,
+			mHasLight ? mLightLump.GetChars() : nullptr, defines.GetChars(), mIsGBuffer, mType))
+		{
+			delete shader;
+			shader = nullptr;
+		}
+	}
+	catch (CRecoverableError &err)
+	{
+		Printf("Instanced variant of shader %s unavailable, drawing without instancing:\n%s\n", mName.GetChars(), err.GetMessage());
+		delete shader;
+		shader = nullptr;
+	}
+	// Load() leaves no program bound; make the next Bind() rebind for real.
+	GLRenderer->mShaderManager->SetActiveShader(nullptr);
+	mInstanced[slot] = shader;
+	mInstancedFailed[slot] = shader == nullptr;
+	return shader;
+}
 
 bool FShader::Bind()
 {

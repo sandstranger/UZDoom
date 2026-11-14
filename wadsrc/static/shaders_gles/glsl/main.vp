@@ -51,9 +51,53 @@ struct BonesResult
 
 BonesResult ApplyBones();
 
+// GPU instancing (hw_batching.cpp); GLSL ES 3.00 flavours only. Sprite quads take corner i
+// (0..3, from the shared strip's aPosition.x) and its texture coordinate from the instance;
+// instanced models take their model matrix from the instance. Everything else is computed
+// exactly as without instancing.
+#if defined(INSTANCED_QUADS)
+int InstanceCornerIndex()
+{
+	return int(aPosition.x + 0.5);
+}
+vec4 InstanceCorner()
+{
+	int c = InstanceCornerIndex();
+	return c == 0 ? aInstXform0 : (c == 1 ? aInstXform1 : (c == 2 ? aInstXform2 : aInstXform3));
+}
+#define VERTEX_POSITION vec4(InstanceCorner().xyz, 1.0)
+#define VERTEX_TEXCOORD vec2((InstanceCornerIndex() & 1) == 0 ? aInstXform0.w : aInstXform1.w, (InstanceCornerIndex() & 2) == 0 ? aInstXform2.w : aInstXform3.w)
+#else
+#define VERTEX_POSITION aPosition
+#define VERTEX_TEXCOORD aTexCoord
+#endif
+
+#if defined(INSTANCED_MODELS)
+#define OBJECT_MATRIX mat4(aInstXform0, aInstXform1, aInstXform2, aInstXform3)
+#define OBJECT_NORMAL_MATRIX mat4(transpose(inverse(mat3(OBJECT_MATRIX))))
+#else
+#define OBJECT_MATRIX ModelMatrix
+#define OBJECT_NORMAL_MATRIX NormalModelMatrix
+#endif
+
+#ifdef INSTANCING
+vec4 UnpackInstanceColor(uint c)
+{
+	return vec4(float(c & 255u), float((c >> 8u) & 255u), float((c >> 16u) & 255u), float(c >> 24u)) * (1.0 / 255.0);
+}
+#endif
+
 
 void main()
 {
+#ifdef INSTANCING
+	vInstLightAttr = aInstLightAttr;
+	vInstDynLight = aInstDynLight;
+	vInstObjectColor = UnpackInstanceColor(aInstColors.x);
+	vInstAddColor = UnpackInstanceColor(aInstColors.y);
+	vInstFogColor = UnpackInstanceColor(aInstColors.z);
+	vInstDesaturation = uintBitsToFloat(aInstColors.w);
+#endif
 	float ClipDistance0, ClipDistance1, ClipDistance2, ClipDistance3, ClipDistance4;
 
 	vec2 parmTexCoord;
@@ -61,13 +105,13 @@ void main()
 
 	BonesResult bones = ApplyBones();
 
-	parmTexCoord = aTexCoord;
+	parmTexCoord = VERTEX_TEXCOORD;
 	parmPosition = bones.Position;
 
 	#ifndef SIMPLE
-		vec4 worldcoord = ModelMatrix * mix(parmPosition, aVertex2, uInterpolationFactor);
+		vec4 worldcoord = OBJECT_MATRIX * mix(parmPosition, aVertex2, uInterpolationFactor);
 	#else
-		vec4 worldcoord = ModelMatrix * parmPosition;
+		vec4 worldcoord = OBJECT_MATRIX * parmPosition;
 	#endif
 
 	vec4 eyeCoordPos = ViewMatrix * worldcoord;
@@ -109,7 +153,7 @@ void main()
 			ClipDistance4 = worldcoord.y - ((uSplitBottomPlane.w + uSplitBottomPlane.x * worldcoord.x + uSplitBottomPlane.y * worldcoord.z) * uSplitBottomPlane.z);
 		}
 
-		vWorldNormal = NormalModelMatrix * vec4(normalize(bones.Normal), 1.0);
+		vWorldNormal = OBJECT_NORMAL_MATRIX * vec4(normalize(bones.Normal), 1.0);
 
 		vEyeNormal = NormalViewMatrix * vWorldNormal;
 	#endif
@@ -204,7 +248,7 @@ BonesResult ApplyBones()
 	}
 	else
 	{
-		result.Position = aPosition;
+		result.Position = VERTEX_POSITION;
 		result.Normal = GetAttrNormal();
 	}
 	return result;
@@ -216,7 +260,7 @@ BonesResult ApplyBones()
 {
 	BonesResult result;
 
-	result.Position = aPosition;
+	result.Position = VERTEX_POSITION;
 	result.Normal = GetAttrNormal();
 
 	return result;
@@ -228,7 +272,7 @@ BonesResult ApplyBones()
 BonesResult ApplyBones()
 {
 	BonesResult result;
-	result.Position = aPosition;
+	result.Position = VERTEX_POSITION;
 	return result;
 }
 

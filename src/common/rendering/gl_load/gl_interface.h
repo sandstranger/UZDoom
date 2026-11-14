@@ -32,6 +32,8 @@ struct RenderContext
 	unsigned int maxuniformblock;
 	unsigned int uniformblockalignment;
 	float glslversion;
+	int esversion;		// 300, 310, 320 for the OpenGL ES context actually created, 0 on desktop GL
+	bool floatlinear;	// 32-bit float textures can be sampled with linear filtering
 	int max_texturesize;
 	char * vendorstring;
 	char * modelstring;

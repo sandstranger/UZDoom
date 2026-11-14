@@ -256,8 +256,11 @@ namespace Priv
                 SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
             }
         } else {
+            // GL renderer: a GLES 3.0 request; EGL returns the highest compatible version
+            // (3.1/3.2 where available), and devices limited to GLES 3.0 get a context at all.
+            // Features beyond 3.0 are enabled from the version actually created (gl.esversion).
             SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
         }
 #endif
 	}
@@ -769,16 +772,16 @@ float GLimp_GetGLVersion(void)
         return 2.0f;
     else if(USING_GLES_3)
         return 3.0f;
-    else if(USING_GLES_32)
-        return 3.2f;
     else
         return 3.0f;
 
 }
 
 extern "C" {
+__attribute__((used)) __attribute__((visibility("default")))
 void UpdateHarmGLESVersion(int targetHarmGLESVersion) {
-    harm_gl_es = targetHarmGLESVersion;
+    // 4 selected the removed GLES 3.2 path; the GLES renderer now targets GLES 3.0.
+    harm_gl_es = targetHarmGLESVersion == 4 ? HARM_GL_ES_GLES3 : targetHarmGLESVersion;
 }
 
 void UpdateUseOpenGLESState(bool useOpenGLES) {
