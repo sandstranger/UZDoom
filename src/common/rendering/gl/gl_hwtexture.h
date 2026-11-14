@@ -64,15 +64,12 @@ private:
 	bool forcenofilter;
 
 	unsigned int glTexID = 0;
-	unsigned int glDepthID = 0;	// only used by camera textures
 	unsigned int glBufferID = 0;
 	int glTextureBytes;
 	bool mipmapped = false;
 #ifdef ANDROID
     int size;
 #endif
-
-	int GetDepthBuffer(int w, int h);
 
 public:
 	FHardwareTexture(int numchannels = 4, bool disablefilter = false)

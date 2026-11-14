@@ -64,13 +64,10 @@ private:
 	bool forcenofilter;
 
 	unsigned int glTexID = 0;
-	unsigned int glDepthID = 0;	// only used by camera textures
 	uint8_t* texBuffer;
 
 	int glTextureBytes;
 	bool mipmapped = false;
-
-	int GetDepthBuffer(int w, int h);
 
 public:
 	FHardwareTexture(int numchannels = 4, bool disablefilter = false)

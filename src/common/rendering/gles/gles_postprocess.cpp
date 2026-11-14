@@ -90,6 +90,10 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 	FGLPostProcessState savedState;
 	savedState.SaveTextureBindings(2);
 
+	// Multisampled renderbuffers: resolve now, while the scene frame buffer is current. Resolving
+	// after the window pass has started (BindCurrentTexture below) would interrupt it: the blit
+	// rebinds frame buffers, so a tiler would write out the window's clear and load it back.
+	mBuffers->ResolveScene();
 	// The 2D pass was the last one into the scene frame buffer: drop its depth/stencil while it
 	// is still the bound one, before a tiler writes them out on the switch to the window.
 	if (!bounds) mBuffers->InvalidateSceneDepth();

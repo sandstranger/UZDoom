@@ -114,7 +114,47 @@ bool FGLRenderer::StartOffscreen()
 
 void FGLRenderer::EndOffscreen()
 {
+	if (mOffscreenDepth)
+	{
+		glBindFramebuffer(GL_FRAMEBUFFER, mFBID);
+		ReleaseOffscreenDepth();
+	}
 	glBindFramebuffer(GL_FRAMEBUFFER, mOldFBID);
+}
+
+//===========================================================================
+//
+// Camera views: one depth/stencil buffer per size from the render target
+// pool, shared by all camera textures of that size (they render one after
+// another and each view clears it first). After the view it is discarded -
+// a tiler does not write it back - and returned.
+//
+//===========================================================================
+
+void FGLRenderer::AttachOffscreenDepth(int width, int height)
+{
+	ReleaseOffscreenDepth();
+	const bool packed = gles.depthStencilAvailable;
+	mOffscreenDepth = GLESRenderTargetPool::AcquireRenderbuffer(packed ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT16, width, height, 0, false);
+	mOffscreenStencil = packed ? 0 : GLESRenderTargetPool::AcquireRenderbuffer(GL_STENCIL_INDEX8, width, height, 0, false);
+	mOffscreenDepthWidth = width;
+	mOffscreenDepthHeight = height;
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, mOffscreenDepth);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, packed ? mOffscreenDepth : mOffscreenStencil);
+}
+
+void FGLRenderer::ReleaseOffscreenDepth()
+{
+	if (!mOffscreenDepth) return;
+	static const GLenum attachments[] = { GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT };
+	FGLRenderBuffers::DiscardAttachments(2, attachments);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+	const bool packed = mOffscreenStencil == 0;
+	GLESRenderTargetPool::ReleaseRenderbuffer(mOffscreenDepth, packed ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT16, mOffscreenDepthWidth, mOffscreenDepthHeight, 0, false);
+	if (mOffscreenStencil)
+		GLESRenderTargetPool::ReleaseRenderbuffer(mOffscreenStencil, GL_STENCIL_INDEX8, mOffscreenDepthWidth, mOffscreenDepthHeight, 0, false);
+	mOffscreenDepth = mOffscreenStencil = 0;
 }
 
 //===========================================================================
@@ -131,6 +171,7 @@ void FGLRenderer::BindToFrameBuffer(FTexture *tex)
 	FHardwareTexture::Unbind(0);
 	gl_RenderState.ClearLastMaterial();
 	BaseLayer->BindToFrameBuffer(tex->GetWidth(), tex->GetHeight());
+	AttachOffscreenDepth(FHardwareTexture::GetTexDimension(tex->GetWidth()), FHardwareTexture::GetTexDimension(tex->GetHeight()));
 }
 
 //===========================================================================

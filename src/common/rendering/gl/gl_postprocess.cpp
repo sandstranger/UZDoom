@@ -162,6 +162,9 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 	FGLDebug::PushGroup("CopyToBackbuffer");
 	FGLPostProcessState savedState;
 	savedState.SaveTextureBindings(2);
+	// The 2D was the last thing drawn into the scene/pipeline frame buffer: drop its depth/stencil
+	// while it is still bound, before a tiler writes them out on the switch to the window.
+	if (!bounds) mBuffers->InvalidateBoundDepth();
 	mBuffers->BindOutputFB();
 
 	IntRect box;

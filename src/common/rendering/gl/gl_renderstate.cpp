@@ -576,6 +576,9 @@ void FGLRenderState::EnableClipDistance(int num, bool state)
 void FGLRenderState::Clear(int targets)
 {
 	FlushForImmediate();
+	// GLES: a pipeline frame buffer gets its depth/stencil buffer when one is first cleared.
+	if ((targets & (CT_Depth | CT_Stencil)) && gl.esversion > 0 && GLRenderer && GLRenderer->mBuffers)
+		GLRenderer->mBuffers->EnsurePipelineDepth();
 	// This always clears to default values.
 	int gltarget = 0;
 	if (targets & CT_Depth)

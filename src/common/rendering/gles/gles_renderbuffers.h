@@ -49,6 +49,7 @@ public:
 
 private:
 	GLuint handle = 0;
+	bool pooled = false;	// a render target from GLESRenderTargetPool
 
 	friend class FGLRenderBuffers;
 	friend class PPGLTextureBackend;
@@ -75,10 +76,28 @@ class PPGLRenderBuffer
 {
 private:
 	GLuint handle = 0;
+	// what it was created as, to hand it back to GLESRenderTargetPool
+	GLenum format = 0;
+	int width = 0, height = 0, samples = 0;
+	bool renderToTexture = false;
 
 	explicit operator bool() const { return handle != 0; }
 
 	friend class FGLRenderBuffers;
+};
+
+// Pool of render targets - textures without initial data (RGBA8) and renderbuffers. A released
+// one is handed out again for the same size/format/sample count; unused ones are freed after
+// gl_rtpool_maxage frames, or oldest first while the pool holds more than gl_rtpool_budget_mb.
+class GLESRenderTargetPool
+{
+public:
+	static GLuint AcquireTexture(int width, int height);
+	static void ReleaseTexture(GLuint handle, int width, int height);
+	static GLuint AcquireRenderbuffer(GLenum format, int width, int height, int samples, bool renderToTexture);
+	static void ReleaseRenderbuffer(GLuint handle, GLenum format, int width, int height, int samples, bool renderToTexture);
+	static void FrameEnd();
+	static void Trim(bool all);
 };
 
 class PPGLTextureBackend : public PPTextureBackend
@@ -136,6 +155,9 @@ public:
 
 	int GetWidth() const { return mWidth; }
 	int GetHeight() const { return mHeight; }
+
+	// glInvalidateFramebuffer (GLES 3.0) or glDiscardFramebufferEXT on the bound frame buffer.
+	static void DiscardAttachments(int count, const GLenum *attachments);
 
 	int GetSceneWidth() const { return mSceneWidth; }
 	int GetSceneHeight() const { return mSceneHeight; }

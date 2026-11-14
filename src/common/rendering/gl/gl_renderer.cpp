@@ -138,7 +138,45 @@ bool FGLRenderer::StartOffscreen()
 
 void FGLRenderer::EndOffscreen()
 {
+	if (mOffscreenDepth)
+	{
+		glBindFramebuffer(GL_FRAMEBUFFER, mFBID);
+		ReleaseOffscreenDepth();
+	}
 	glBindFramebuffer(GL_FRAMEBUFFER, mOldFBID);
+}
+
+//===========================================================================
+//
+// Camera views: one depth/stencil buffer per size from the render target
+// pool, shared by all camera textures of that size (they render one after
+// another and each view clears it first). After the view it is invalidated -
+// a tiler does not write it back - and returned.
+//
+//===========================================================================
+
+void FGLRenderer::AttachOffscreenDepth(int width, int height)
+{
+	ReleaseOffscreenDepth();
+	mOffscreenDepth = GLRenderTargetPool::AcquireRenderbuffer(GL_DEPTH24_STENCIL8, width, height);
+	mOffscreenDepthWidth = width;
+	mOffscreenDepthHeight = height;
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, mOffscreenDepth);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mOffscreenDepth);
+}
+
+void FGLRenderer::ReleaseOffscreenDepth()
+{
+	if (!mOffscreenDepth) return;
+	if (gl.flags & RFL_INVALIDATE_BUFFER)
+	{
+		static const GLenum attachments[] = { GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT };
+		glInvalidateFramebuffer(GL_FRAMEBUFFER, 2, attachments);
+	}
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+	GLRenderTargetPool::ReleaseRenderbuffer(mOffscreenDepth, GL_DEPTH24_STENCIL8, mOffscreenDepthWidth, mOffscreenDepthHeight);
+	mOffscreenDepth = 0;
 }
 
 //===========================================================================
@@ -155,6 +193,7 @@ void FGLRenderer::BindToFrameBuffer(FTexture *tex)
 	FHardwareTexture::Unbind(0);
 	gl_RenderState.ClearLastMaterial();
 	BaseLayer->BindToFrameBuffer(tex->GetWidth(), tex->GetHeight());
+	AttachOffscreenDepth(FHardwareTexture::GetTexDimension(tex->GetWidth()), FHardwareTexture::GetTexDimension(tex->GetHeight()));
 }
 
 //===========================================================================

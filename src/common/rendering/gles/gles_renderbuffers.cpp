@@ -38,8 +38,156 @@ EXTERN_CVAR(Int, gl_debug_level)
 #include <algorithm>
 EXTERN_CVAR(Int, gl_multisample)
 
+namespace OpenGLRenderer
+{
+	// the render target pool settings are shared with the GL renderer (gl_renderbuffers.cpp)
+	EXTERN_CVAR(Int, gl_rtpool_budget_mb)
+	EXTERN_CVAR(Int, gl_rtpool_maxage)
+}
+
 namespace OpenGLESRenderer
 {
+
+	//==========================================================================
+	//
+	// Render target pool
+	//
+	//==========================================================================
+
+	namespace
+	{
+		struct PoolEntry
+		{
+			GLuint handle;
+			bool renderbuffer;
+			GLenum format;
+			int width, height, samples;
+			bool renderToTexture;
+			size_t bytes;
+			uint64_t released;	// frame of release
+		};
+		TArray<PoolEntry> FreeTargets;
+		size_t FreeBytes = 0;
+		uint64_t PoolFrame = 0;
+
+		size_t TargetBytes(GLenum format, int width, int height, int samples, bool renderToTexture)
+		{
+			size_t bpp = 4;
+			switch (format)
+			{
+			case GL_DEPTH_COMPONENT16:	bpp = 2; break;
+			case GL_STENCIL_INDEX8:		bpp = 1; break;
+			default: break;
+			}
+			// render-to-texture samples only exist in tile memory
+			const size_t count = (samples > 1 && !renderToTexture) ? size_t(samples) : 1;
+			if (width <= 0 || height <= 0) return 0;
+			return size_t(width) * size_t(height) * bpp * count;
+		}
+
+		void TrackBytes(int64_t delta)
+		{
+			int64_t now = int64_t(rtStatsGLES.bytes) + delta;
+			rtStatsGLES.bytes = now > 0 ? size_t(now) : 0;
+			if (rtStatsGLES.bytes > rtStatsGLES.peakBytes) rtStatsGLES.peakBytes = rtStatsGLES.bytes;
+		}
+
+		bool TakeFromPool(bool renderbuffer, GLenum format, int width, int height, int samples, bool renderToTexture, GLuint &handle)
+		{
+			for (unsigned i = 0; i < FreeTargets.Size(); i++)
+			{
+				auto &e = FreeTargets[i];
+				if (e.renderbuffer == renderbuffer && e.format == format && e.width == width && e.height == height &&
+					e.samples == samples && e.renderToTexture == renderToTexture)
+				{
+					handle = e.handle;
+					FreeBytes -= e.bytes;
+					FreeTargets.Delete(i);
+					rtStatsGLES.poolHits++;
+					return true;
+				}
+			}
+			rtStatsGLES.poolMisses++;
+			return false;
+		}
+
+		void PutInPool(bool renderbuffer, GLuint handle, GLenum format, int width, int height, int samples, bool renderToTexture)
+		{
+			if (!handle) return;
+			size_t bytes = TargetBytes(format, width, height, samples, renderToTexture);
+			FreeTargets.Push({ handle, renderbuffer, format, width, height, samples, renderToTexture, bytes, PoolFrame });
+			FreeBytes += bytes;
+			GLESRenderTargetPool::Trim(false);
+		}
+	}
+
+	GLuint GLESRenderTargetPool::AcquireTexture(int width, int height)
+	{
+		GLuint handle = 0;
+		if (TakeFromPool(false, GL_RGBA, width, height, 0, false, handle)) return handle;
+		glGenTextures(1, &handle);
+		glBindTexture(GL_TEXTURE_2D, handle);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		TrackBytes((int64_t)TargetBytes(GL_RGBA, width, height, 0, false));
+		rtStatsGLES.created++;
+		return handle;
+	}
+
+	void GLESRenderTargetPool::ReleaseTexture(GLuint handle, int width, int height)
+	{
+		PutInPool(false, handle, GL_RGBA, width, height, 0, false);
+	}
+
+	GLuint GLESRenderTargetPool::AcquireRenderbuffer(GLenum format, int width, int height, int samples, bool renderToTexture)
+	{
+		typedef void (APIENTRY *RBSMS)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+		GLuint handle = 0;
+		if (TakeFromPool(true, format, width, height, samples, renderToTexture, handle)) return handle;
+		glGenRenderbuffers(1, &handle);
+		glBindRenderbuffer(GL_RENDERBUFFER, handle);
+		if (samples > 1 && renderToTexture)
+			((RBSMS)gles.pRenderbufferStorageMultisampleRTT)(GL_RENDERBUFFER, samples, format, width, height);	// the extension's own entry point
+		else if (samples > 1)
+			glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, format, width, height);
+		else
+			glRenderbufferStorage(GL_RENDERBUFFER, format, width, height);
+		TrackBytes((int64_t)TargetBytes(format, width, height, samples, renderToTexture));
+		rtStatsGLES.created++;
+		return handle;
+	}
+
+	void GLESRenderTargetPool::ReleaseRenderbuffer(GLuint handle, GLenum format, int width, int height, int samples, bool renderToTexture)
+	{
+		PutInPool(true, handle, format, width, height, samples, renderToTexture);
+	}
+
+	void GLESRenderTargetPool::Trim(bool all)
+	{
+		const size_t budget = size_t(std::max(0, (int)OpenGLRenderer::gl_rtpool_budget_mb)) << 20;
+		const uint64_t maxAge = (uint64_t)std::max(1, (int)OpenGLRenderer::gl_rtpool_maxage);
+		// oldest releases first
+		for (unsigned i = 0; i < FreeTargets.Size();)
+		{
+			auto &e = FreeTargets[i];
+			if (all || FreeBytes > budget || PoolFrame - e.released > maxAge)
+			{
+				if (e.renderbuffer) glDeleteRenderbuffers(1, &e.handle);
+				else glDeleteTextures(1, &e.handle);
+				FreeBytes -= e.bytes;
+				TrackBytes(-(int64_t)e.bytes);
+				rtStatsGLES.deleted++;
+				FreeTargets.Delete(i);
+			}
+			else i++;
+		}
+	}
+
+	void GLESRenderTargetPool::FrameEnd()
+	{
+		PoolFrame++;
+		if (FreeTargets.Size()) Trim(false);
+		rtStatsGLES.pooledFreeBytes = FreeBytes;
+	}
 
 	//==========================================================================
 	//
@@ -62,6 +210,7 @@ namespace OpenGLESRenderer
 	{
 		ClearScene();
 
+		DeleteTexture(mSceneTex);
 		DeleteTexture(mDitherTexture);
 	}
 
@@ -108,21 +257,25 @@ namespace OpenGLESRenderer
 	{
 		if (tex.handle != 0)
 		{
-			glDeleteTextures(1, &tex.handle);
-			rtStatsGLES.deleted++;
-			int64_t now = int64_t(rtStatsGLES.bytes) - int64_t(size_t(tex.Width) * size_t(tex.Height) * 4);
-			rtStatsGLES.bytes = now > 0 ? size_t(now) : 0;
+			if (tex.pooled)
+			{
+				GLESRenderTargetPool::ReleaseTexture(tex.handle, tex.Width, tex.Height);
+			}
+			else
+			{
+				glDeleteTextures(1, &tex.handle);
+				rtStatsGLES.deleted++;
+				TrackBytes(-(int64_t)TargetBytes(GL_RGBA, tex.Width, tex.Height, 0, false));
+			}
 		}
 		tex.handle = 0;
+		tex.pooled = false;
 	}
 
 	void FGLRenderBuffers::DeleteRenderBuffer(PPGLRenderBuffer& buf)
 	{
 		if (buf.handle != 0)
-		{
-			glDeleteRenderbuffers(1, &buf.handle);
-			rtStatsGLES.deleted++;
-		}
+			GLESRenderTargetPool::ReleaseRenderbuffer(buf.handle, buf.format, buf.width, buf.height, buf.samples, buf.renderToTexture);
 		buf.handle = 0;
 	}
 
@@ -161,6 +314,8 @@ namespace OpenGLESRenderer
 			// the frame buffer references the old texture: release both before creating the new set
 			ClearScene();
 			CreatePipeline(width, height);
+			// targets of the old size are not coming back: free them now instead of keeping two sets
+			GLESRenderTargetPool::Trim(true);
 		}
 
 		if (resized || samples != mSamples)
@@ -312,6 +467,11 @@ namespace OpenGLESRenderer
 
 	void FGLRenderBuffers::Discard(int count, const GLenum *attachments)
 	{
+		DiscardAttachments(count, attachments);
+	}
+
+	void FGLRenderBuffers::DiscardAttachments(int count, const GLenum *attachments)
+	{
 		typedef void (APIENTRY *DISCARDFB)(GLenum, GLsizei, const GLenum *);
 		if (gles.invalidateFramebuffer)
 			glInvalidateFramebuffer(GL_FRAMEBUFFER, count, attachments);
@@ -343,9 +503,20 @@ namespace OpenGLESRenderer
 		PPGLTexture tex;
 		tex.Width = width;
 		tex.Height = height;
+		if (!data)
+		{
+			// a render target: from the pool (its contents are cleared by the frame buffer setup)
+			tex.handle = GLESRenderTargetPool::AcquireTexture(width, height);
+			tex.pooled = true;
+			glBindTexture(GL_TEXTURE_2D, tex.handle);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			return tex;
+		}
 		rtStatsGLES.created++;
-		rtStatsGLES.bytes += size_t(width) * size_t(height) * 4;
-		if (rtStatsGLES.bytes > rtStatsGLES.peakBytes) rtStatsGLES.peakBytes = rtStatsGLES.bytes;
+		TrackBytes((int64_t)TargetBytes(GL_RGBA, width, height, 0, false));
 		glGenTextures(1, &tex.handle);
 		glBindTexture(GL_TEXTURE_2D, tex.handle);
 
@@ -391,26 +562,18 @@ namespace OpenGLESRenderer
 
 	PPGLRenderBuffer FGLRenderBuffers::CreateRenderBuffer(const char* name, GLuint format, int width, int height)
 	{
-		PPGLRenderBuffer buf;
-		glGenRenderbuffers(1, &buf.handle);
-		glBindRenderbuffer(GL_RENDERBUFFER, buf.handle);
-
-		glRenderbufferStorage(GL_RENDERBUFFER, format, width, height);
-		rtStatsGLES.created++;
-		return buf;
+		return CreateRenderBuffer(name, format, width, height, 0, false);
 	}
 
 	PPGLRenderBuffer FGLRenderBuffers::CreateRenderBuffer(const char* name, GLuint format, int width, int height, int samples, bool renderToTexture)
 	{
-		typedef void (APIENTRY *RBSMS)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
 		PPGLRenderBuffer buf;
-		glGenRenderbuffers(1, &buf.handle);
-		glBindRenderbuffer(GL_RENDERBUFFER, buf.handle);
-		if (renderToTexture)
-			((RBSMS)gles.pRenderbufferStorageMultisampleRTT)(GL_RENDERBUFFER, samples, format, width, height);	// the extension's own entry point
-		else
-			glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, format, width, height);
-		rtStatsGLES.created++;
+		buf.handle = GLESRenderTargetPool::AcquireRenderbuffer(format, width, height, samples, renderToTexture);
+		buf.format = format;
+		buf.width = width;
+		buf.height = height;
+		buf.samples = samples;
+		buf.renderToTexture = renderToTexture;
 		return buf;
 	}
 

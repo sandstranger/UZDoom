@@ -103,6 +103,12 @@ public:
 	void BindToFrameBuffer(FTexture* tex);
 
 private:
+	// Camera views: depth/stencil from the render target pool while one renders.
+	void AttachOffscreenDepth(int width, int height);
+	void ReleaseOffscreenDepth();
+	unsigned int mOffscreenDepth = 0;
+	unsigned int mOffscreenStencil = 0;	// separate stencil without packed depth/stencil
+	int mOffscreenDepthWidth = 0, mOffscreenDepthHeight = 0;
 
 	bool QuadStereoCheckInitialRenderContextState();
 	void PresentAnaglyph(bool r, bool g, bool b);

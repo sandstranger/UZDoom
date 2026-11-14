@@ -292,25 +292,6 @@ void FHardwareTexture::UnbindAll()
 	}
 }
 
-//===========================================================================
-//
-//	Creates a depth buffer for this texture
-//
-//===========================================================================
-
-int FHardwareTexture::GetDepthBuffer(int width, int height)
-{
-	if (glDepthID == 0)
-	{
-		glGenRenderbuffers(1, &glDepthID);
-		glBindRenderbuffer(GL_RENDERBUFFER, glDepthID);
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
-			GetTexDimension(width), GetTexDimension(height));
-		glBindRenderbuffer(GL_RENDERBUFFER, 0);
-	}
-	return glDepthID;
-}
-
 
 //===========================================================================
 //
@@ -320,11 +301,10 @@ int FHardwareTexture::GetDepthBuffer(int width, int height)
 
 void FHardwareTexture::BindToFrameBuffer(int width, int height)
 {
-	width = GetTexDimension(width);
-	height = GetTexDimension(height);
+	// Color only. The depth/stencil buffer of a camera view comes from the render target pool
+	// (FGLRenderer::BindToFrameBuffer) and goes back after the view: one per size, shared by all
+	// camera textures, instead of one kept per texture (which was never freed).
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glTexID, 0);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, GetDepthBuffer(width, height));
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, GetDepthBuffer(width, height));
 }
 
 

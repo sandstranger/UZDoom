@@ -297,6 +297,16 @@ public:
 			cur->ResetBackend();
 	}
 
+	// Frees the backend objects their backend reports idle (render targets of effects that were
+	// turned off); they are created again when next used.
+	static void ReleaseIdleBackends()
+	{
+		for (PPResource *cur = First; cur; cur = cur->Next)
+			if (cur->BackendIdle()) cur->ResetBackend();
+	}
+
+	virtual bool BackendIdle() const { return false; }
+
 	virtual void ResetBackend() = 0;
 
 private:
@@ -309,6 +319,8 @@ class PPTextureBackend
 {
 public:
 	virtual ~PPTextureBackend() = default;
+	// Not used for a while: may be released (PPResource::ReleaseIdleBackends).
+	virtual bool Idle() const { return false; }
 };
 
 class PPTexture : public PPResource
@@ -318,6 +330,7 @@ public:
 	PPTexture(int width, int height, PixelFormat format, std::shared_ptr<void> data = {}) : Width(width), Height(height), Format(format), Data(data) { }
 
 	void ResetBackend() override { Backend.reset(); }
+	bool BackendIdle() const override { return !KeepBackend && Backend && Backend->Idle(); }
 
 	int Width;
 	int Height;
@@ -325,6 +338,7 @@ public:
 	std::shared_ptr<void> Data;
 
 	std::unique_ptr<PPTextureBackend> Backend;
+	bool KeepBackend = false;	// contents carried from frame to frame: never released while idle
 };
 
 class PPShaderBackend

@@ -69,6 +69,10 @@ class GLRenderTargetPool
 public:
 	static bool Acquire(PPGLTexture &tex, int width, int height, GLuint format);
 	static void Release(PPGLTexture &tex);
+	// Renderbuffers (camera view depth/stencil): created on a miss, kept for reuse on release.
+	static GLuint AcquireRenderbuffer(GLenum format, int width, int height);
+	static void ReleaseRenderbuffer(GLuint handle, GLenum format, int width, int height);
+	static uint64_t Frame();
 	static void FrameEnd();
 	static void Trim(bool all);
 	static void TrackAllocation(int64_t bytes);
@@ -129,8 +133,12 @@ public:
 		}
 	}
 
+	// Released to the pool once no pass has used it for gl_rtpool_maxage frames.
+	bool Idle() const override;
+
 	PPGLTexture Tex;
 	PPGLFrameBuffer FB;
+	uint64_t LastUse = 0;
 };
 
 class FShaderProgram;
@@ -177,6 +185,12 @@ public:
 	static const char *MultisamplePath();
 	// After the last use of the pipeline depth buffer in a frame.
 	void InvalidatePipelineDepth();
+	// GLES: attaches the pipeline depth/stencil buffer, created on the first depth/stencil clear
+	// into a pipeline frame buffer (HUD models); before that the pipeline has none.
+	void EnsurePipelineDepth();
+	// Before leaving the frame's last render pass: the bound scene/pipeline frame buffer's
+	// depth/stencil need not be written back.
+	void InvalidateBoundDepth();
 
 	void BindCurrentTexture(int index, int filter = GL_NEAREST, int wrap = GL_CLAMP_TO_EDGE);
 	void BindCurrentFB();
@@ -258,6 +272,9 @@ private:
 	PPGLFrameBuffer mSceneFB;
 	PPGLFrameBuffer mSceneDataFB;
 	bool mSceneUsesTextures = false;
+	// GLES without MSAA: the scene frame buffer draws into pipeline texture 0 itself and is used
+	// for everything drawn into that texture afterwards (BindCurrentFB).
+	bool mSceneSharesPipeline = false;
 
 	// GLES: how the scene is multisampled
 	enum EMSAAMode { MSAA_None, MSAA_RenderToTexture, MSAA_Renderbuffers };

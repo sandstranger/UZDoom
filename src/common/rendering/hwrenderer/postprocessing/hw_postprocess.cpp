@@ -431,6 +431,7 @@ FString PPFXAA::GetDefines()
 
 void PPCameraExposure::Render(PPRenderState *renderstate, int sceneWidth, int sceneHeight)
 {
+	CameraTexture.KeepBackend = true;	// the exposure adapts from the previous frame's value
 	if (!gl_bloom)
 	{
 		return;

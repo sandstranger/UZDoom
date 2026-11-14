@@ -114,6 +114,7 @@ void FGLRenderBuffers::ClearScene()
 	mMSAAMode = MSAA_None;
 	mResolveSceneData = false;
 	mSceneSamples = 0;
+	mSceneSharesPipeline = false;
 }
 
 void FGLRenderBuffers::ClearPipeline()
@@ -291,6 +292,7 @@ void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool need
 			mSceneFB = CreateFrameBuffer("SceneFB", mPipelineTexture[0], mSceneDepthStencilBuf);
 			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mPipelineTexture[0], mSceneDepthStencilBuf);
 		}
+		mSceneSharesPipeline = gl.esversion > 0;
 	}
 }
 
@@ -307,7 +309,10 @@ void FGLRenderBuffers::CreatePipeline(int width, int height)
 
 	mWidth = width;
 	mHeight = height;
-	mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, width, height);
+	// GLES: 2D and the post-process passes never use depth/stencil, only HUD models do (they
+	// clear it first): the buffer is created when that happens (EnsurePipelineDepth).
+	if (gl.esversion == 0)
+		mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, width, height);
 	// The second texture is only needed by post-process passes that ping-pong; created on first use.
 	CreatePipelineTexture(0);
 }
@@ -720,12 +725,13 @@ void FGLRenderBuffers::BlitSceneToTexture()
 		// The scene depth is not read after the scene pass (single-sampled: the pipeline continues
 		// on its own depth buffer; render-to-texture: the color was resolved inline and the
 		// multisampled depth is undefined anyway). Don't let a tiler write it back.
+		// The scene frame buffer stays bound: without MSAA the HUD and 2D continue in the same
+		// render pass (BindCurrentFB), binding another frame buffer here would end it.
 		if ((gl.flags & RFL_INVALIDATE_BUFFER) && mSceneFB)
 		{
 			glBindFramebuffer(GL_FRAMEBUFFER, mSceneFB.handle);
 			GLenum attachments[1] = { GL_DEPTH_STENCIL_ATTACHMENT };
 			glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, attachments);
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 		return;
 	}
@@ -775,6 +781,29 @@ void FGLRenderBuffers::ResolveSceneData()
 
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+}
+
+void FGLRenderBuffers::EnsurePipelineDepth()
+{
+	if (mPipelineDepthStencilBuf || mWidth <= 0) return;
+	GLint fb = 0;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+	bool pipelineBound = false;
+	for (auto &pfb : mPipelineFB)
+		if (pfb && (GLint)pfb.handle == fb) pipelineBound = true;
+	if (!pipelineBound) return;
+
+	GLint rb = 0;
+	glGetIntegerv(GL_RENDERBUFFER_BINDING, &rb);
+	mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, mWidth, mHeight);
+	for (auto &pfb : mPipelineFB)
+	{
+		if (!pfb) continue;
+		glBindFramebuffer(GL_FRAMEBUFFER, pfb.handle);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mPipelineDepthStencilBuf.handle);
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, fb);
+	glBindRenderbuffer(GL_RENDERBUFFER, rb);
 }
 
 void FGLRenderBuffers::InvalidatePipelineDepth()
@@ -1009,7 +1038,28 @@ void FGLRenderBuffers::BindCurrentTexture(int index, int filter, int wrap)
 void FGLRenderBuffers::BindCurrentFB()
 {
 	rtStatsGL.fboBinds++;
-	mPipelineFB[mCurrentPipelineTexture].Bind();
+	// Without MSAA the scene frame buffer renders into pipeline texture 0 itself. While that
+	// texture is current, drawing on through the scene frame buffer keeps the scene, the HUD and
+	// the 2D in one render pass on a tiler; another frame buffer object with the same texture ends
+	// the pass (the whole image stored, then loaded back for the 2D).
+	if (mCurrentPipelineTexture == 0 && mSceneSharesPipeline && mSceneFB)
+		glBindFramebuffer(GL_FRAMEBUFFER, mSceneFB.handle);
+	else
+		mPipelineFB[mCurrentPipelineTexture].Bind();
+}
+
+void FGLRenderBuffers::InvalidateBoundDepth()
+{
+	if (!(gl.flags & RFL_INVALIDATE_BUFFER)) return;
+	GLint fb = 0;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+	if (fb == 0) return;
+	bool ours = mSceneFB && (GLint)mSceneFB.handle == fb;
+	for (auto &pfb : mPipelineFB)
+		if (pfb && (GLint)pfb.handle == fb) ours = true;
+	if (!ours) return;
+	static const GLenum attachments[] = { GL_DEPTH_STENCIL_ATTACHMENT };
+	glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, attachments);
 }
 
 //==========================================================================
@@ -1099,7 +1149,9 @@ PPGLTextureBackend *GLPPRenderState::GetGLTexture(PPTexture *texture)
 
 		texture->Backend = std::move(backend);
 	}
-	return static_cast<PPGLTextureBackend*>(texture->Backend.get());
+	auto glbackend = static_cast<PPGLTextureBackend*>(texture->Backend.get());
+	glbackend->LastUse = GLRenderTargetPool::Frame();
+	return glbackend;
 }
 
 //==========================================================================
@@ -1212,7 +1264,8 @@ void GLPPRenderState::Draw()
 	}
 
 	// Set blend mode
-	if (BlendMode.BlendOp == STYLEOP_Add && BlendMode.SrcAlpha == STYLEALPHA_One && BlendMode.DestAlpha == STYLEALPHA_Zero && BlendMode.Flags == 0)
+	const bool opaque = BlendMode.BlendOp == STYLEOP_Add && BlendMode.SrcAlpha == STYLEALPHA_One && BlendMode.DestAlpha == STYLEALPHA_Zero && BlendMode.Flags == 0;
+	if (opaque)
 	{
 		glDisable(GL_BLEND);
 	}
@@ -1225,6 +1278,40 @@ void GLPPRenderState::Draw()
 			glBlendFunc(GL_ONE, GL_ONE);
 		else
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	}
+
+	// Tile-based GPUs: a pass that writes every pixel of its target without blending needs none of
+	// the old contents loaded into tile memory - nor the pipeline depth/stencil, which no
+	// post-process pass uses (HUD models clear it before drawing).
+	if (opaque && (gl.flags & RFL_INVALIDATE_BUFFER) && Viewport.left == 0 && Viewport.top == 0)
+	{
+		int width = 0, height = 0;
+		bool pipeline = false, readsOutput = false;
+		switch (Output.Type)
+		{
+		case PPTextureType::CurrentPipelineTexture:
+		case PPTextureType::NextPipelineTexture:
+			width = buffers->GetWidth();
+			height = buffers->GetHeight();
+			pipeline = true;
+			break;
+		case PPTextureType::PPTexture:
+			width = Output.Texture->Width;
+			height = Output.Texture->Height;
+			break;
+		default:
+			break;
+		}
+		for (auto &input : Textures)
+		{
+			if (Output.Type == PPTextureType::CurrentPipelineTexture && input.Type == PPTextureType::CurrentPipelineTexture) readsOutput = true;
+			if (Output.Type == PPTextureType::PPTexture && input.Type == PPTextureType::PPTexture && input.Texture == Output.Texture) readsOutput = true;
+		}
+		if (width > 0 && Viewport.width == width && Viewport.height == height && !readsOutput)
+		{
+			static const GLenum attachments[] = { GL_COLOR_ATTACHMENT0, GL_DEPTH_STENCIL_ATTACHMENT };
+			glInvalidateFramebuffer(GL_FRAMEBUFFER, pipeline ? 2 : 1, attachments);
+		}
 	}
 
 	// Setup viewport
@@ -1384,6 +1471,7 @@ namespace
 		bool nearestOnly;
 		size_t bytes;
 		uint64_t released;	// frame of release
+		bool renderbuffer = false;
 	};
 	TArray<PoolEntry> FreeTargets;
 	size_t FreeBytes = 0;
@@ -1425,7 +1513,7 @@ bool GLRenderTargetPool::Acquire(PPGLTexture &tex, int width, int height, GLuint
 	for (unsigned i = 0; i < FreeTargets.Size(); i++)
 	{
 		auto &e = FreeTargets[i];
-		if (e.width == width && e.height == height && e.format == format)
+		if (!e.renderbuffer && e.width == width && e.height == height && e.format == format)
 		{
 			tex.handle = e.handle;
 			tex.nearestOnly = e.nearestOnly;
@@ -1461,7 +1549,8 @@ void GLRenderTargetPool::Trim(bool all)
 		auto &e = FreeTargets[i];
 		if (all || FreeBytes > budget || PoolFrame - e.released > maxAge)
 		{
-			glDeleteTextures(1, &e.handle);
+			if (e.renderbuffer) glDeleteRenderbuffers(1, &e.handle);
+			else glDeleteTextures(1, &e.handle);
 			FreeBytes -= e.bytes;
 			TrackAllocation(-(int64_t)e.bytes);
 			rtStatsGL.deleted++;
@@ -1471,11 +1560,59 @@ void GLRenderTargetPool::Trim(bool all)
 	}
 }
 
+GLuint GLRenderTargetPool::AcquireRenderbuffer(GLenum format, int width, int height)
+{
+	for (unsigned i = 0; i < FreeTargets.Size(); i++)
+	{
+		auto &e = FreeTargets[i];
+		if (e.renderbuffer && e.width == width && e.height == height && e.format == format)
+		{
+			GLuint handle = e.handle;
+			FreeBytes -= e.bytes;
+			FreeTargets.Delete(i);
+			rtStatsGL.poolHits++;
+			return handle;
+		}
+	}
+	rtStatsGL.poolMisses++;
+	GLuint handle = 0;
+	GLint binding = 0;
+	glGetIntegerv(GL_RENDERBUFFER_BINDING, &binding);
+	glGenRenderbuffers(1, &handle);
+	glBindRenderbuffer(GL_RENDERBUFFER, handle);
+	glRenderbufferStorage(GL_RENDERBUFFER, format, width, height);
+	glBindRenderbuffer(GL_RENDERBUFFER, binding);
+	TrackAllocation((int64_t)TextureBytes(width, height, format));
+	rtStatsGL.created++;
+	return handle;
+}
+
+void GLRenderTargetPool::ReleaseRenderbuffer(GLuint handle, GLenum format, int width, int height)
+{
+	if (!handle) return;
+	size_t bytes = TextureBytes(width, height, format);
+	FreeTargets.Push({ handle, width, height, format, false, bytes, PoolFrame, true });
+	FreeBytes += bytes;
+	Trim(false);
+}
+
+uint64_t GLRenderTargetPool::Frame()
+{
+	return PoolFrame;
+}
+
 void GLRenderTargetPool::FrameEnd()
 {
 	PoolFrame++;
+	// render targets of post-process effects that were turned off go back to the pool
+	PPResource::ReleaseIdleBackends();
 	if (FreeTargets.Size()) Trim(false);
 	rtStatsGL.pooledFreeBytes = FreeBytes;
+}
+
+bool PPGLTextureBackend::Idle() const
+{
+	return GLRenderTargetPool::Frame() - LastUse > (uint64_t)std::max(1, (int)gl_rtpool_maxage);
 }
 
 

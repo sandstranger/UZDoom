@@ -253,6 +253,7 @@ const char* OpenGLFrameBuffer::DeviceName() const
 void OpenGLFrameBuffer::Swap()
 {
 	BatchStatsEndFrame();
+	GLESRenderTargetPool::FrameEnd();
 	ProgramBinaryCache::ProcessPendingTrim();
 #ifdef ANDROID
 	// The window's depth/stencil are never read: don't let a tiler write them back.
