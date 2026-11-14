@@ -354,13 +354,9 @@ namespace ShaderInputsOutputs
 		{ShaderPosition::VOutput, {UniformType::Vec3, "", "gradientdist"}, 0, Simple},
 		{ShaderPosition::VOutput, {UniformType::Vec4, "", "vWorldNormal"}, 0, Simple},
 		{ShaderPosition::VOutput, {UniformType::Vec4, "", "vEyeNormal"}, 0, Simple},
-#ifdef ANDROID
-		{ShaderPosition::VOutput, {UniformType::Vec4, "", "ClipDistanceA"}, 0, 0},
-		{ShaderPosition::VOutput, {UniformType::Vec4, "", "ClipDistanceB"}, 0, 0},
-#else
-        {ShaderPosition::VOutput, {UniformType::Vec4, "", "ClipDistanceA"}, 0, HasClipDistance},
+		// clip distances emulated in the shaders (OpenGL ES: only in the clip emulation variant)
+		{ShaderPosition::VOutput, {UniformType::Vec4, "", "ClipDistanceA"}, 0, HasClipDistance},
 		{ShaderPosition::VOutput, {UniformType::Vec4, "", "ClipDistanceB"}, 0, HasClipDistance},
-#endif
 		{ShaderPosition::VOutput, {UniformType::Vec3, "", "vLightmap"}, 0, Simple},
 		//frag shader outputs
 		{ShaderPosition::FOutput, {UniformType::Vec4, "", "FragColor"}, 0, 0},

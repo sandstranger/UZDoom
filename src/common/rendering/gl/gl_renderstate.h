@@ -85,6 +85,16 @@ class FGLRenderState final : public FRenderState
 	StreamBuffer mInstanceStream, mIndexStream;
 	int mBatchCaps = -1;				// bit 0: merged draws, bit 1: instancing; -1 = not probed yet
 	FShader *mInstancedShader = nullptr;	// overrides the shader selection in ApplyShader
+	bool mClipPlane0 = false;			// the viewpoint has a portal/mirror clip plane (EnableClipDistance(0))
+	// OpenGL ES: whether the shaders must emulate a clip plane (see FShader::GetClipVariant)
+	bool ClipEmulationActive() const
+	{
+#ifdef ANDROID
+		return mClipPlane0 || mSplitEnabled || mClipSplit[0] > -1000000.f || mClipSplit[1] < 1000000.f;
+#else
+		return false;
+#endif
+	}
 	TArray<uint32_t> mMergedIndices;
 	size_t UploadStream(StreamBuffer &buf, unsigned int target, size_t maxCapacity, const void *data, size_t bytes);
 	void FlushForImmediate()

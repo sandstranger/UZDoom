@@ -38,10 +38,6 @@ varying vec4 vWorldNormal;
 varying vec4 vEyeNormal;
 #endif
 
-#ifdef NO_CLIPDISTANCE_SUPPORT
-varying vec4 ClipDistanceA;
-varying vec4 ClipDistanceB;
-#endif
 
 struct BonesResult
 {
@@ -98,7 +94,6 @@ void main()
 	vInstFogColor = UnpackInstanceColor(aInstColors.z);
 	vInstDesaturation = uintBitsToFloat(aInstColors.w);
 #endif
-	float ClipDistance0, ClipDistance1, ClipDistance2, ClipDistance3, ClipDistance4;
 
 	vec2 parmTexCoord;
 	vec4 parmPosition;
@@ -147,11 +142,6 @@ void main()
 			gradientdist.z = clamp(gradientdist.x / (topatpoint - bottomatpoint), 0.0, 1.0);
 		}
 
-		if (uSplitBottomPlane.z != 0.0)
-		{
-			ClipDistance3 = ((uSplitTopPlane.w + uSplitTopPlane.x * worldcoord.x + uSplitTopPlane.y * worldcoord.z) * uSplitTopPlane.z) - worldcoord.y;
-			ClipDistance4 = worldcoord.y - ((uSplitBottomPlane.w + uSplitBottomPlane.x * worldcoord.x + uSplitBottomPlane.y * worldcoord.z) * uSplitBottomPlane.z);
-		}
 
 		vWorldNormal = OBJECT_NORMAL_MATRIX * vec4(normalize(bones.Normal), 1.0);
 
@@ -169,32 +159,6 @@ void main()
 		vTexCoord = TextureMatrix * vec4(parmTexCoord, 0.0, 1.0);
 	#endif
 
-
-	if (uClipHeightDirection != 0.0) // clip planes used for reflective flats
-	{
-		ClipDistance0 = (worldcoord.y - uClipHeight) * uClipHeightDirection;
-	}
-	else if (uClipLine.x > -1000000.0) // and for line portals - this will never be active at the same time as the reflective planes clipping so it can use the same hardware clip plane.
-	{
-		ClipDistance0 = -( (worldcoord.z - uClipLine.y) * uClipLine.z + (uClipLine.x - worldcoord.x) * uClipLine.w ) + 1.0/32768.0;	// allow a tiny bit of imprecisions for colinear linedefs.
-	}
-	else
-	{
-		ClipDistance0 = 1.0;
-	}
-
-	// clip planes used for translucency splitting
-	ClipDistance1 = worldcoord.y - uClipSplit.x;
-	ClipDistance2 = uClipSplit.y - worldcoord.y;
-
-	if (uSplitTopPlane == vec4(0.0))
-	{
-		ClipDistance3 = 1.0;
-		ClipDistance4 = 1.0;
-	}
-
-	ClipDistanceA = vec4(ClipDistance0, ClipDistance1, ClipDistance2, ClipDistance3);
-	ClipDistanceB = vec4(ClipDistance4, 0.0, 0.0, 0.0);
 
 	gl_Position = ProjectionMatrix * eyeCoordPos;
 }

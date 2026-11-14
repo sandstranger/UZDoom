@@ -294,10 +294,12 @@ FString FShaderProgram::PatchShader(ShaderType type, const FString &code, const 
 
 	int shaderVersion = min((int)round(gl.glslversion * 10) * 10, maxGlslVersion);
 #ifdef ANDROID
+	// Both conversions end in GLSL ES 3.00 (TARGET_ESSL300 keeps GLSL ES 3.10 features out of
+	// the sources that check __VERSION__, which is 410 on the SPIR-V path).
 	if (gEnableSpirvCross) {
-		patchedCode.AppendFormat("#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n");
+		patchedCode.AppendFormat("#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n#define TARGET_ESSL300\n");
 	} else{
-		patchedCode.AppendFormat("#version 300 es\n#define NO_CLIPDISTANCE_SUPPORT\n");
+		patchedCode.AppendFormat("#version 300 es\n#define NO_CLIPDISTANCE_SUPPORT\n#define TARGET_ESSL300\n");
 	}
 #else
 	patchedCode.AppendFormat("#version %d\n", shaderVersion);

@@ -111,7 +111,7 @@ int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
 	memcpy(((char*)mBuffer->Memory()) + mUploadIndex * mBlockAlign, vp, sizeof(*vp));
 	mBuffer->Unmap();
 
-	mClipPlaneInfo.Push(vp->mClipHeightDirection != 0.f || vp->mClipLine.X > -10000000.0f);
+	mClipPlaneInfo.Push(vp->mClipHeightDirection != 0.f || vp->mClipLine.X > -1000000.0f);	// as main.vp tests it
 	return Bind(di, mUploadIndex++);
 }
 

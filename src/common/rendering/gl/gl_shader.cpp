@@ -524,11 +524,17 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 
 	FString vp_comb = defines;
 	vp_comb << i_data.GetChars();
-	vp_comb << ShaderInputsOutputs::GenerateInputsOutputs(false, false, type, false, true);
+#ifdef ANDROID
+	// The clip distance varyings only exist in the clip emulation variant.
+	const bool hasClipDistance = !(defines && strstr(defines, "#define CLIP_EMULATION"));
+#else
+	const bool hasClipDistance = true;
+#endif
+	vp_comb << ShaderInputsOutputs::GenerateInputsOutputs(false, false, type, false, hasClipDistance);
 	vp_comb << InstancingVertexDecl;
 	FString fp_comb = defines;
 	fp_comb << i_data.GetChars();
-	fp_comb << ShaderInputsOutputs::GenerateInputsOutputs(false, true, type, isGBuffer, true);
+	fp_comb << ShaderInputsOutputs::GenerateInputsOutputs(false, true, type, isGBuffer, hasClipDistance);
 	fp_comb << InstancingFragmentDecl;
 
 	vp_comb << "#line 1\n";
@@ -863,6 +869,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 FShader::~FShader()
 {
 	for (auto variant : mInstanced) delete variant;
+	delete mClipVariant;
 	glDeleteProgram(hShader);
 	if (hVertProg != 0)
 		glDeleteShader(hVertProg);
@@ -877,14 +884,10 @@ FShader::~FShader()
 //
 //==========================================================================
 
-FShader *FShader::GetInstancedVariant(int variant)
+FShader *FShader::BuildVariant(const FString &extraDefines, const char *what)
 {
-	if (variant < 1 || variant > 2 || !mParamsStored) return nullptr;
-	int slot = variant - 1;
-	if (mInstanced[slot] || mInstancedFailed[slot]) return mInstanced[slot];
-
 	FString defines = mDefines;
-	defines << "#define INSTANCING\n" << (variant == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
+	defines << extraDefines;
 	auto shader = new FShader(mName.GetChars());
 	try
 	{
@@ -897,15 +900,44 @@ FShader *FShader::GetInstancedVariant(int variant)
 	}
 	catch (CRecoverableError &err)
 	{
-		Printf("Instanced variant of shader %s unavailable, drawing without instancing:\n%s\n", mName.GetChars(), err.GetMessage());
+		Printf("%s variant of shader %s unavailable:\n%s\n", what, mName.GetChars(), err.GetMessage());
 		delete shader;
 		shader = nullptr;
 	}
 	// Load() leaves no program bound; make the next Bind() rebind for real.
 	GLRenderer->mShaderManager->SetActiveShader(nullptr);
+	return shader;
+}
+
+FShader *FShader::GetInstancedVariant(int variant)
+{
+	if (variant < 1 || variant > 2 || !mParamsStored) return nullptr;
+	int slot = variant - 1;
+	if (mInstanced[slot] || mInstancedFailed[slot]) return mInstanced[slot];
+
+	FString defines;
+	defines << "#define INSTANCING\n" << (variant == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
+	FShader *shader = BuildVariant(defines, "Instanced");	// nullptr: drawn without instancing
+	if (shader) shader->mIsClipVariant = mIsClipVariant;
 	mInstanced[slot] = shader;
 	mInstancedFailed[slot] = shader == nullptr;
 	return shader;
+}
+
+FShader *FShader::GetClipVariant()
+{
+	if (mIsClipVariant) return this;
+	if (mClipVariant) return mClipVariant;
+	if (mClipVariantFailed || !mParamsStored) return this;
+	// The emulation is in main.fp; effects with their own fragment program (fog boundary, burn,
+	// stencil) have none, a variant of them would only add the varyings.
+	if (mFragLump.CompareNoCase("shaders/glsl/main.fp") != 0) return this;
+
+	FShader *shader = BuildVariant("#define CLIP_EMULATION\n", "Clip emulation");
+	if (shader) shader->mIsClipVariant = true;
+	mClipVariant = shader;
+	mClipVariantFailed = shader == nullptr;
+	return shader ? shader : this;
 }
 
 bool FShader::Bind()

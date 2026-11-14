@@ -21,7 +21,7 @@ layout(binding=0) uniform sampler2D ExposureTexture;
 
 void main()
 {
-#if __VERSION__ < 400
+#if __VERSION__ < 400 || defined(TARGET_ESSL300)
 	ivec2 size = textureSize(ExposureTexture, 0);
 	ivec2 tl = max(ivec2(TexCoord * vec2(size) - 0.5), ivec2(0));
 	ivec2 br = min(tl + ivec2(1), size - ivec2(1));

@@ -23,10 +23,6 @@ varying vec3 gradientdist;
 varying vec4 vWorldNormal;
 varying vec4 vEyeNormal;
 
-#ifdef NO_CLIPDISTANCE_SUPPORT
-varying vec4 ClipDistanceA;
-varying vec4 ClipDistanceB;
-#endif
 
 
 struct Material
@@ -486,8 +482,6 @@ vec4 applyFog(vec4 frag, float fogfactor)
 
 void main()
 {
-
-	//if (ClipDistanceA.x < 0.0 || ClipDistanceA.y < 0.0 || ClipDistanceA.z < 0.0 || ClipDistanceA.w < 0.0 || ClipDistanceB.x < 0.0) discard;
 
 #ifndef LEGACY_USER_SHADER
 	Material material;

@@ -282,6 +282,11 @@ class FShader
 	AllShaderIndex mType = MATSHADER_Default;
 	FShader *mInstanced[2] = {};		// INSTANCED_QUADS, INSTANCED_MODELS
 	bool mInstancedFailed[2] = {};
+	FShader *mClipVariant = nullptr;	// CLIP_EMULATION
+	bool mClipVariantFailed = false;
+	bool mIsClipVariant = false;
+
+	FShader *BuildVariant(const FString &extraDefines, const char *what);
 
 public:
 	FShader(const char *name)
@@ -297,6 +302,10 @@ public:
 	// variant 1: instanced sprite quads, 2: instanced models. Built on first use; nullptr if it
 	// cannot be built (the caller then draws without instancing).
 	FShader *GetInstancedVariant(int variant);
+	// OpenGL ES has no gl_ClipDistance: the variant that emulates the clip planes with a discard,
+	// used only while a portal/mirror plane or a translucency split is active. Built on first
+	// use; the shader itself if it cannot be built (drawn unclipped then).
+	FShader *GetClipVariant();
 
 	bool Bind();
 	unsigned int GetHandle() const { return hShader; }
@@ -315,9 +324,10 @@ public:
 
 	FShader *BindEffect(int effect, EPassType passType);
 	FShader *Get(unsigned int eff, bool alphateston, EPassType passType);
-	FShader *GetInstanced(unsigned int eff, bool alphateston, EPassType passType, int variant)
+	FShader *GetInstanced(unsigned int eff, bool alphateston, EPassType passType, int variant, bool clip)
 	{
 		FShader *base = Get(eff, alphateston, passType);
+		if (base && clip) base = base->GetClipVariant();
 		return base ? base->GetInstancedVariant(variant) : nullptr;
 	}
 

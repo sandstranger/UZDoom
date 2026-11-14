@@ -854,7 +854,10 @@ vec3 AmbientOcclusionColor()
 
 void main()
 {
-#ifdef NO_CLIPDISTANCE_SUPPORT
+#if defined(NO_CLIPDISTANCE_SUPPORT) && defined(CLIP_EMULATION)
+	// No gl_ClipDistance (OpenGL ES): portal/mirror planes and translucency splits are emulated.
+	// Only the variant used while one of them is active has this discard: a shader that can
+	// discard loses early depth testing / hidden surface removal on tile-based GPUs.
 	if (ClipDistanceA.x < 0.0 || ClipDistanceA.y < 0.0 || ClipDistanceA.z < 0.0 || ClipDistanceA.w < 0.0 || ClipDistanceB.x < 0.0) discard;
 #endif
 

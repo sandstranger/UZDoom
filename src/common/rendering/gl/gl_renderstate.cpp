@@ -104,10 +104,16 @@ bool FGLRenderState::ApplyShader()
 	else if (mSpecialEffect > EFF_NONE)
 	{
 		activeShader = GLRenderer->mShaderManager->BindEffect(mSpecialEffect, mPassType);
+		if (activeShader && ClipEmulationActive())
+		{
+			activeShader = activeShader->GetClipVariant();
+			activeShader->Bind();
+		}
 	}
 	else
 	{
 		activeShader = GLRenderer->mShaderManager->Get(mTextureEnabled ? mEffectState : SHADER_NoTexture, mAlphaThreshold >= 0.f, mPassType);
+		if (ClipEmulationActive()) activeShader = activeShader->GetClipVariant();
 		activeShader->Bind();
 	}
 	if (activeShader != previous) batchStats.shaderSwitches++;
@@ -560,6 +566,7 @@ void FGLRenderState::EnableClipDistance(int num, bool state)
 {
 	FlushForImmediate();
 	// Update the viewpoint-related clip plane setting.
+	if (num == 0) mClipPlane0 = state;
 	if (!(gl.flags & RFL_NO_CLIP_PLANES))
 	{
 		ToggleState(GL_CLIP_DISTANCE0 + num, state);
@@ -769,7 +776,7 @@ bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 	// The material decides the shader (ApplyMaterial sets mEffectState), so apply it first.
 	ApplyState();
 	if (mSpecialEffect > EFF_NONE) return false;
-	FShader *shader = GLRenderer->mShaderManager->GetInstanced(mTextureEnabled ? mEffectState : SHADER_NoTexture, mAlphaThreshold >= 0.f, mPassType, variant);
+	FShader *shader = GLRenderer->mShaderManager->GetInstanced(mTextureEnabled ? mEffectState : SHADER_NoTexture, mAlphaThreshold >= 0.f, mPassType, variant, ClipEmulationActive());
 	if (!shader) return false;
 
 #if defined(__arm__) || defined(__i386__)

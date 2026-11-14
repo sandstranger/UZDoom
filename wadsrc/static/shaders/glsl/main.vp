@@ -171,8 +171,10 @@ void main()
 	}
 
 #ifdef NO_CLIPDISTANCE_SUPPORT
+	#ifdef CLIP_EMULATION	// the varyings only exist in the clip emulation variant
 	ClipDistanceA = vec4(ClipDistance0, ClipDistance1, ClipDistance2, ClipDistance3);
 	ClipDistanceB = vec4(ClipDistance4, 0.0, 0.0, 0.0);
+	#endif
 #else
 	gl_ClipDistance[0] = ClipDistance0;
 	gl_ClipDistance[1] = ClipDistance1;
