@@ -45,8 +45,15 @@ CVAR(Int, gles_glsl_precision, 2, 0); // 0 = low, 1 = medium, 2 = high
 
 FString GetGLSLPrecision()
 {
-	FString str = "precision highp int;\n \
-		           precision highp float;\n";
+	// GLSL ES 1.00 fragment shaders only have highp where GL_FRAGMENT_PRECISION_HIGH is defined
+	// (not on e.g. Mali-400): fall back to mediump there. The macro is visible in both stages,
+	// so uniforms shared by the vertex and fragment shader keep matching precisions (a link
+	// requirement in GLSL ES 1.00). GLSL ES 3.00 always has highp.
+	FString str = "#if defined(GL_FRAGMENT_PRECISION_HIGH) || __VERSION__ >= 300\n"
+		"precision highp int;\nprecision highp float;\n"
+		"#else\n"
+		"precision mediump int;\nprecision mediump float;\n"
+		"#endif\n";
 
 	if (gles_glsl_precision == 0)
 		str.Substitute("highp", "lowp");
@@ -61,8 +68,8 @@ bool IsShaderCacheActive()
 	if (!glProgramBinary || !glGetProgramBinary)
 		return false;
 #ifdef ANDROID
-	// GLES2 contexts: glProgramBinary is ES 3.0 core; the OES entry points are not loaded.
-	if (gles.glesMode == GLES_MODE_GLES || USING_GLES_2)
+	// GLES 2.0 path: glProgramBinary is ES 3.0 core; the OES entry points are not loaded.
+	if (gles.glesMode != GLES_MODE_GLES3)
 		return false;
 	// ES 3.0 core, but a driver may expose zero binary formats (then every binary is refused).
 	static int numFormats = -1;
@@ -354,7 +361,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 	vp_comb << "#line 1\n";
 	fp_comb << "#line 1\n";
 
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 	if(gles.essl300)
 	{
 		FString vpcode = GetStringFromLump(vp_lump);
@@ -376,7 +383,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 #endif
 	vp_comb << RemoveLayoutLocationDecl(GetStringFromLump(vp_lump), "out").GetChars() << "\n";
 	fp_comb << RemoveLayoutLocationDecl(GetStringFromLump(fp_lump), "in").GetChars() << "\n";
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 	}
 #endif
 	FString placeholder = "\n";
@@ -399,7 +406,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 				{
 					int pl_lump = fileSystem.CheckNumForFullName("shaders_gles/glsl/func_defaultmat2.fp", 0);
 					if (pl_lump == -1) I_Error("Unable to load '%s'", "shaders_gles/glsl/func_defaultmat2.fp");
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 					if(gles.essl300)
 					{
 						fp_comb << "\n" << GLSL100_to_GLSL300(GetStringFromLump(pl_lump), 1);
@@ -412,7 +419,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 				{
 					int pl_lump = fileSystem.CheckNumForFullName("shaders_gles/glsl/func_defaultmat.fp", 0);
 					if (pl_lump == -1) I_Error("Unable to load '%s'", "shaders_gles/glsl/func_defaultmat.fp");
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 					if(gles.essl300)
 					{
 						fp_comb << "\n" << GLSL100_to_GLSL300(GetStringFromLump(pl_lump), 1);
@@ -438,7 +445,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 				}
 			}
 
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 			if(gles.essl300)
 			{
 				fp_comb << GLSL100_to_GLSL300(RemoveLegacyUserUniforms(pp_data).GetChars(), 1);
@@ -452,7 +459,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 			{
 				int pl_lump = fileSystem.CheckNumForFullName("shaders_gles/glsl/func_defaultlight.fp", 0);
 				if (pl_lump == -1) I_Error("Unable to load '%s'", "shaders_gles/glsl/func_defaultlight.fp");
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 				if(gles.essl300)
 				{
 					fp_comb << "\n" << GLSL100_to_GLSL300(GetStringFromLump(pl_lump), 1);
@@ -472,7 +479,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		else
 		{
 			// Proc_prog_lump is not a lump name but the source itself (from generated shaders)
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 			if(gles.essl300)
 			{
 				fp_comb << GLSL100_to_GLSL300(proc_prog_lump.GetChars() + 1, 1);
@@ -482,7 +489,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 			fp_comb << proc_prog_lump.GetChars() + 1;
 		}
 	}
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 	if(gles.essl300)
 	{
 		fp_comb << GLSL100_to_GLSL300(placeholder, 1);

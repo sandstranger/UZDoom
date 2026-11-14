@@ -788,7 +788,7 @@ bool FGLRenderState::BatchingSupported(EBatchKind kind)
 		if (version) sscanf(es ? version + 9 : version, "%*[^0-9]%d", &major);
 		if (version && !es) sscanf(version, "%d", &major);
 		// The entry points are looked up by name; the context version decides whether they exist.
-		bool core = es ? major >= 3 : gles.glesMode == GLES_MODE_OGL3;
+		bool core = es && major >= 3 && gles.glesMode == GLES_MODE_GLES3;
 		if (core && gles.essl300)
 		{
 			GLint maxAttribs = 0;

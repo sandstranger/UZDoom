@@ -107,7 +107,8 @@ namespace OpenGLESRenderer
 	{
 		GLES_MODE_GLES = 0,
 		GLES_MODE_OGL2 = 1,
-		GLES_MODE_OGL3 = 2,
+		GLES_MODE_OGL3 = 2,		// desktop OpenGL 3.3+
+		GLES_MODE_GLES3 = 3,	// OpenGL ES 3.0 context (Android), GLSL ES 3.00
 	};
 
 	struct RenderContextGLES
@@ -129,6 +130,21 @@ namespace OpenGLESRenderer
 		bool nv_vram_ext;
 		bool ati_vram_ext;
 		bool essl300;	// shaders are converted to GLSL ES 3.00 (GLES 3.0 contexts on Android)
+
+		// Capability table of the context actually created (not of the requested mode)
+		int esVersion;			// 200, 300, 310, 320 for OpenGL ES contexts, 0 for desktop GL
+		bool bgraTextures;		// EXT_texture_format_BGRA8888
+		bool textureSwizzle;	// GL_TEXTURE_SWIZZLE_* (GLES 3.0 / desktop GL 3.3)
+		bool syncObjects;		// glFenceSync & co (GLES 3.0 / desktop GL 3.2)
+		bool integerAttribs;	// glVertexAttribIPointer (GLES 3.0 / desktop GL 3.0)
+		bool invalidateFramebuffer;	// glInvalidateFramebuffer (GLES 3.0)
+		void *pDiscardFramebuffer;	// glDiscardFramebufferEXT (GLES 2.0 + EXT_discard_framebuffer)
+		int msrtt;				// multisampled render-to-texture: 0 none, 1 EXT, 2 IMG
+		int msrttMaxSamples;
+		void *pFramebufferTexture2DMultisample;
+		void *pRenderbufferStorageMultisampleRTT;
+		bool msaaRenderbuffers;	// glRenderbufferStorageMultisample + glBlitFramebuffer (GLES 3.0)
+		int maxSamples;
 	};
 
 	extern RenderContextGLES gles;

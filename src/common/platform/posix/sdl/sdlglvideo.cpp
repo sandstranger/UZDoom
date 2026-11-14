@@ -252,8 +252,9 @@ namespace Priv
                 SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
                 SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
             } else {
+                // automatic: GLES 3.0 (no GLES 3.2 path exists any more)
                 SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-                SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+                SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
             }
         } else {
             // GL renderer: a GLES 3.0 request; EGL returns the highest compatible version
@@ -766,17 +767,6 @@ void I_SetWindowTitle(const char* caption)
 
 
 #ifdef ANDROID
-float GLimp_GetGLVersion(void)
-{
-    if(USING_GLES_2)
-        return 2.0f;
-    else if(USING_GLES_3)
-        return 3.0f;
-    else
-        return 3.0f;
-
-}
-
 extern "C" {
 __attribute__((used)) __attribute__((visibility("default")))
 void UpdateHarmGLESVersion(int targetHarmGLESVersion) {

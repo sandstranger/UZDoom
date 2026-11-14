@@ -45,6 +45,8 @@ CVAR(Bool, r_batch_stats, false, 0)
 
 FBatchStats batchStats;
 FBatchStats batchStatsLast;
+FRenderTargetStats rtStatsGL;
+FRenderTargetStats rtStatsGLES;
 
 bool BatchingEnabled()
 {
@@ -90,6 +92,29 @@ void BatchStatsEndFrame()
 {
 	batchStatsLast = batchStats;
 	memset(&batchStats, 0, sizeof(batchStats));
+	for (auto rt : { &rtStatsGL, &rtStatsGLES })
+	{
+		rt->frameFboBinds = rt->fboBinds - rt->lastFboBinds;
+		rt->frameResolves = rt->resolves - rt->lastResolves;
+		rt->lastFboBinds = rt->fboBinds;
+		rt->lastResolves = rt->resolves;
+	}
+}
+
+CCMD(r_rt_stats)
+{
+	static const char *names[2] = { "OpenGL renderer", "OpenGLES renderer" };
+	const FRenderTargetStats *stats[2] = { &rtStatsGL, &rtStatsGLES };
+	for (int i = 0; i < 2; i++)
+	{
+		auto &s = *stats[i];
+		if (s.created == 0 && s.fboBinds == 0) continue;
+		Printf("%s render targets:\n", names[i]);
+		Printf("  memory %llu KB (peak %llu KB), unused in pool %llu KB\n", (unsigned long long)(s.bytes / 1024),
+			(unsigned long long)(s.peakBytes / 1024), (unsigned long long)(s.pooledFreeBytes / 1024));
+		Printf("  created %u, deleted %u, pool hits %u, misses %u\n", s.created, s.deleted, s.poolHits, s.poolMisses);
+		Printf("  last frame: %u frame buffer binds, %u MSAA resolves\n", s.frameFboBinds, s.frameResolves);
+	}
 }
 
 //==========================================================================

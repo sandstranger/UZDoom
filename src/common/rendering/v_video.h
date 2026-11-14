@@ -261,6 +261,8 @@ public:
 	virtual int Backend() { return 0; }
 	virtual const char* DeviceName() const { return "Unknown"; }
 	virtual void AmbientOccludeScene(float m5) {}
+	// True when SSAO reads multisampled scene textures (sampler2DMS shader variants).
+	virtual bool SceneDataMultisampled();
 	virtual void FirstEye() {}
 	virtual void NextEye(int eyecount) {}
 	virtual void SetSceneRenderTarget(bool useSSAO) {}

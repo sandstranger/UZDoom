@@ -33,6 +33,11 @@ namespace ProgramBinaryCache
 
 	// Drops the RAM copies (all of them, or down to half the budget).
 	void TrimMemory(bool all);
+	// Memory pressure signalled from any thread (SDL_APP_LOWMEMORY); the RAM copies are
+	// dropped on the render thread by ProcessPendingTrim (called once per frame).
+	void RequestTrim();
+	void ProcessPendingTrim();
+	bool TrimRequested();
 	void PrintStats();
 }
 

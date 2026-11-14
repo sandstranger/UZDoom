@@ -34,6 +34,10 @@
 
 EXTERN_CVAR(Int, gl_debug_level)
 
+#include "hw_batching.h"
+#include <algorithm>
+EXTERN_CVAR(Int, gl_multisample)
+
 namespace OpenGLESRenderer
 {
 
@@ -64,21 +68,33 @@ namespace OpenGLESRenderer
 	void FGLRenderBuffers::ClearScene()
 	{
 		DeleteFrameBuffer(mSceneFB);
+		DeleteFrameBuffer(mResolveFB);
 		DeleteRenderBuffer(mSceneDepthStencilBuf);
 		DeleteRenderBuffer(mSceneStencilBuf);
+		DeleteRenderBuffer(mSceneColorMSBuf);
+		mMSAAMode = MSAA_None;
+		mResolvePending = false;
 	}
 
 	void FGLRenderBuffers::DeleteTexture(PPGLTexture& tex)
 	{
 		if (tex.handle != 0)
+		{
 			glDeleteTextures(1, &tex.handle);
+			rtStatsGLES.deleted++;
+			int64_t now = int64_t(rtStatsGLES.bytes) - int64_t(size_t(tex.Width) * size_t(tex.Height) * 4);
+			rtStatsGLES.bytes = now > 0 ? size_t(now) : 0;
+		}
 		tex.handle = 0;
 	}
 
 	void FGLRenderBuffers::DeleteRenderBuffer(PPGLRenderBuffer& buf)
 	{
 		if (buf.handle != 0)
+		{
 			glDeleteRenderbuffers(1, &buf.handle);
+			rtStatsGLES.deleted++;
+		}
 		buf.handle = 0;
 	}
 
@@ -107,11 +123,27 @@ namespace OpenGLESRenderer
 		glActiveTexture(GL_TEXTURE0);
 		glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
 
-		if (width != mWidth || height != mHeight)
-			CreatePipeline(width, height);
+		// MSAA: render-to-texture (EXT/IMG, GLES 2.0 and 3.0), else multisampled renderbuffers
+		// with a blit resolve (GLES 3.0), else none.
+		int samples = gl_multisample >= 2 ? (int)gl_multisample : 0;
+		if (samples)
+		{
+			if (gles.msrtt) samples = std::min(samples, gles.msrttMaxSamples);
+			else if (gles.msaaRenderbuffers) samples = std::min(samples, gles.maxSamples);
+			else samples = 0;
+		}
 
-		if (width != mWidth || height != mHeight )
-			CreateScene(width, height);
+		const bool resized = width != mWidth || height != mHeight;
+		if (resized)
+		{
+			// the frame buffer references the old texture: release both before creating the new set
+			ClearScene();
+			CreatePipeline(width, height);
+		}
+
+		if (resized || samples != mSamples)
+			CreateScene(width, height, samples);
+		mSamples = samples;
 
 		mWidth = width;
 		mHeight = height;
@@ -140,9 +172,12 @@ namespace OpenGLESRenderer
 	//
 	//==========================================================================
 
-	void FGLRenderBuffers::CreateScene(int width, int height)
+	void FGLRenderBuffers::CreateScene(int width, int height, int samples)
 	{
 		ClearScene();
+		if (samples > 1 && gles.msrtt && CreateSceneRTT(width, height, samples)) return;
+		if (samples > 1 && gles.msaaRenderbuffers && CreateSceneMultisample(width, height, samples)) return;
+
 		if(gles.depthStencilAvailable)
 			mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height);
 		else
@@ -161,7 +196,108 @@ namespace OpenGLESRenderer
 
 	void FGLRenderBuffers::CreatePipeline(int width, int height)
 	{
+		DeleteTexture(mSceneTex);	// was leaked on every resolution change
 		mSceneTex = Create2DTexture("PipelineTexture", GL_RGBA, width, height);
+	}
+
+	//==========================================================================
+	//
+	// Multisampled render-to-texture: samples stay in tile memory and are resolved
+	// into mSceneTex when tiles are written out - no multisampled buffer in memory.
+	//
+	//==========================================================================
+
+	bool FGLRenderBuffers::CreateSceneRTT(int width, int height, int samples)
+	{
+		typedef void (APIENTRY *FT2DMS)(GLenum, GLenum, GLenum, GLuint, GLint, GLsizei);
+		if (gles.depthStencilAvailable)
+			mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, samples, true);
+		else
+		{
+			mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH_COMPONENT16, width, height, samples, true);
+			mSceneStencilBuf = CreateRenderBuffer("SceneStencil", GL_STENCIL_INDEX8, width, height, samples, true);
+		}
+		glGenFramebuffers(1, &mSceneFB.handle);
+		glBindFramebuffer(GL_FRAMEBUFFER, mSceneFB.handle);
+		((FT2DMS)gles.pFramebufferTexture2DMultisample)(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mSceneTex.handle, 0, samples);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, mSceneDepthStencilBuf.handle);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gles.depthStencilAvailable ? mSceneDepthStencilBuf.handle : mSceneStencilBuf.handle);
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+		{
+			Printf("Multisampled render-to-texture frame buffer incomplete, trying other MSAA paths\n");
+			ClearScene();
+			return false;
+		}
+		ClearFrameBuffer(true, true);
+		mMSAAMode = MSAA_RenderToTexture;
+		return true;
+	}
+
+	//==========================================================================
+	//
+	// GLES 3.0: multisampled renderbuffers, resolved into mSceneTex by a blit
+	// (ResolveScene) before the scene texture is read.
+	//
+	//==========================================================================
+
+	bool FGLRenderBuffers::CreateSceneMultisample(int width, int height, int samples)
+	{
+		mSceneColorMSBuf = CreateRenderBuffer("SceneMultisample", GL_RGBA8, width, height, samples, false);
+		mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, samples, false);
+		glGenFramebuffers(1, &mSceneFB.handle);
+		glBindFramebuffer(GL_FRAMEBUFFER, mSceneFB.handle);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, mSceneColorMSBuf.handle);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mSceneDepthStencilBuf.handle);
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+		{
+			Printf("Multisampled frame buffer incomplete, rendering without MSAA\n");
+			ClearScene();
+			return false;
+		}
+		ClearFrameBuffer(true, true);
+		mResolveFB = CreateFrameBuffer("SceneResolveFB", mSceneTex);
+		mMSAAMode = MSAA_Renderbuffers;
+		return true;
+	}
+
+	void FGLRenderBuffers::ResolveScene()
+	{
+		if (mMSAAMode != MSAA_Renderbuffers || !mResolvePending) return;
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, mSceneFB.handle);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mResolveFB.handle);
+		glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		glBindFramebuffer(GL_FRAMEBUFFER, fb);
+		mResolvePending = false;
+		rtStatsGLES.resolves++;
+	}
+
+	void FGLRenderBuffers::BindReadableFB()
+	{
+		ResolveScene();
+		rtStatsGLES.fboBinds++;
+		glBindFramebuffer(GL_FRAMEBUFFER, mMSAAMode == MSAA_Renderbuffers ? mResolveFB.handle : mSceneFB.handle);
+	}
+
+	void FGLRenderBuffers::Discard(int count, const GLenum *attachments)
+	{
+		typedef void (APIENTRY *DISCARDFB)(GLenum, GLsizei, const GLenum *);
+		if (gles.invalidateFramebuffer)
+			glInvalidateFramebuffer(GL_FRAMEBUFFER, count, attachments);
+		else if (gles.pDiscardFramebuffer)
+			((DISCARDFB)gles.pDiscardFramebuffer)(GL_FRAMEBUFFER, count, attachments);
+	}
+
+	void FGLRenderBuffers::InvalidateSceneDepth()
+	{
+		if (!mSceneFB || (!gles.invalidateFramebuffer && !gles.pDiscardFramebuffer)) return;
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		glBindFramebuffer(GL_FRAMEBUFFER, mSceneFB.handle);
+		static const GLenum attachments[] = { GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT };
+		Discard(2, attachments);
+		glBindFramebuffer(GL_FRAMEBUFFER, fb);
 	}
 
 
@@ -177,6 +313,9 @@ namespace OpenGLESRenderer
 		PPGLTexture tex;
 		tex.Width = width;
 		tex.Height = height;
+		rtStatsGLES.created++;
+		rtStatsGLES.bytes += size_t(width) * size_t(height) * 4;
+		if (rtStatsGLES.bytes > rtStatsGLES.peakBytes) rtStatsGLES.peakBytes = rtStatsGLES.bytes;
 		glGenTextures(1, &tex.handle);
 		glBindTexture(GL_TEXTURE_2D, tex.handle);
 
@@ -227,6 +366,21 @@ namespace OpenGLESRenderer
 		glBindRenderbuffer(GL_RENDERBUFFER, buf.handle);
 
 		glRenderbufferStorage(GL_RENDERBUFFER, format, width, height);
+		rtStatsGLES.created++;
+		return buf;
+	}
+
+	PPGLRenderBuffer FGLRenderBuffers::CreateRenderBuffer(const char* name, GLuint format, int width, int height, int samples, bool renderToTexture)
+	{
+		typedef void (APIENTRY *RBSMS)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+		PPGLRenderBuffer buf;
+		glGenRenderbuffers(1, &buf.handle);
+		glBindRenderbuffer(GL_RENDERBUFFER, buf.handle);
+		if (renderToTexture)
+			((RBSMS)gles.pRenderbufferStorageMultisampleRTT)(GL_RENDERBUFFER, samples, format, width, height);	// the extension's own entry point
+		else
+			glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, format, width, height);
+		rtStatsGLES.created++;
 		return buf;
 	}
 
@@ -364,8 +518,13 @@ namespace OpenGLESRenderer
 				 .8515625, .6015625, .9765625, .7265625, .8671875, .6171875, .9921875, .7421875,
 			};
 
+			// The texture is RGBA8: the float matrix has to be converted (it used to be uploaded as
+			// raw bytes, which gave a garbage dither pattern).
+			uint8_t bytes[64 * 4];
+			for (int i = 0; i < 64; i++)
+				bytes[i * 4 + 0] = bytes[i * 4 + 1] = bytes[i * 4 + 2] = bytes[i * 4 + 3] = (uint8_t)(data[i] * 255.f + 0.5f);
 			glActiveTexture(GL_TEXTURE0 + texunit);
-			mDitherTexture = Create2DTexture("DitherTexture", GL_RGBA, 8, 8, data);
+			mDitherTexture = Create2DTexture("DitherTexture", GL_RGBA, 8, 8, bytes);
 		}
 		mDitherTexture.Bind(1, GL_NEAREST, GL_REPEAT);
 	}
@@ -379,6 +538,8 @@ namespace OpenGLESRenderer
 
 	void FGLRenderBuffers::BindSceneFB(bool sceneData)
 	{
+		rtStatsGLES.fboBinds++;
+		mResolvePending = true;
 		glBindFramebuffer(GL_FRAMEBUFFER, mSceneFB.handle);
 	}
 
@@ -390,6 +551,7 @@ namespace OpenGLESRenderer
 
 	void FGLRenderBuffers::BindCurrentTexture(int index, int filter, int wrap)
 	{
+		ResolveScene();
 		mSceneTex.Bind(index, filter, wrap);
 	}
 
@@ -402,6 +564,8 @@ namespace OpenGLESRenderer
 	void FGLRenderBuffers::BindCurrentFB()
 	{
 #ifndef NO_RENDER_BUFFER
+		rtStatsGLES.fboBinds++;
+		mResolvePending = true;
 		mSceneFB.Bind();
 #endif
 	}
@@ -414,6 +578,7 @@ namespace OpenGLESRenderer
 
 	void FGLRenderBuffers::BindOutputFB()
 	{
+		rtStatsGLES.fboBinds++;
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	}
 

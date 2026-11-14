@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <filesystem>
 #include <system_error>
+#include <atomic>
 
 #include "c_cvars.h"
 #include "c_dispatch.h"
@@ -58,8 +59,8 @@ namespace
 
 	struct Stats
 	{
-		unsigned ramHits = 0, diskHits = 0, misses = 0, stores = 0, rejects = 0, corrupt = 0, writeFailures = 0;
-		uint64_t bytesRead = 0, bytesWritten = 0;
+		unsigned ramHits = 0, diskHits = 0, misses = 0, stores = 0, rejects = 0, corrupt = 0, writeFailures = 0, evictions = 0;
+		uint64_t bytesRead = 0, bytesWritten = 0, bytesEvicted = 0, trimmedBytes = 0, peakRam = 0;
 	};
 
 	std::string RootOverride;
@@ -69,6 +70,7 @@ namespace
 	Stats Counters;
 	std::unordered_map<std::string, std::string> PreparedDirs;	// ns/driver -> directory (old drivers already pruned)
 	bool LegacyFilesRemoved = false;
+	std::atomic<bool> TrimPending{ false };
 
 	FString HexDigest(const uint8_t *digest, int bytes)
 	{
@@ -168,6 +170,8 @@ namespace
 	{
 		while (!Lru.empty() && (LruBytes > budget || Lru.size() > MaxRamEntries))
 		{
+			Counters.evictions++;
+			Counters.bytesEvicted += Lru.back().data.Size();
 			LruBytes -= Lru.back().data.Size();
 			LruIndex.erase(Lru.back().id);
 			Lru.pop_back();
@@ -189,6 +193,7 @@ namespace
 		Lru.push_front({ id, format, data });
 		LruIndex[id] = Lru.begin();
 		LruBytes += data.Size();
+		if (LruBytes > Counters.peakRam) Counters.peakRam = LruBytes;
 		LruEnforce(budget);
 	}
 
@@ -324,14 +329,34 @@ namespace ProgramBinaryCache
 
 	void TrimMemory(bool all)
 	{
+		size_t before = LruBytes;
 		LruEnforce(all ? 0 : RamBudget() / 2);
+		Counters.trimmedBytes += before - LruBytes;
+	}
+
+	void RequestTrim()
+	{
+		TrimPending = true;
+	}
+
+	bool TrimRequested()
+	{
+		return TrimPending;
+	}
+
+	void ProcessPendingTrim()
+	{
+		if (TrimPending.exchange(false))
+			TrimMemory(true);
 	}
 
 	void PrintStats()
 	{
 		Printf("Program binary cache: %s, root %s\n", r_programcache ? "on" : "off", RootDirectory().c_str());
-		Printf("  RAM: %u entries, %u KB (budget %d KB)\n", (unsigned)Lru.size(), (unsigned)(LruBytes / 1024), (int)r_programcache_ram_kb);
-		Printf("  hits: %u RAM, %u disk; misses %u; stored %u; rejected by driver %u; corrupt %u; write failures %u\n",
+		Printf("  RAM: %u entries, %u KB (peak %u KB, budget %d KB); %u evictions, %llu KB evicted, %llu KB dropped on memory pressure\n",
+			(unsigned)Lru.size(), (unsigned)(LruBytes / 1024), (unsigned)(Counters.peakRam / 1024), (int)r_programcache_ram_kb,
+			Counters.evictions, (unsigned long long)(Counters.bytesEvicted / 1024), (unsigned long long)(Counters.trimmedBytes / 1024));
+		Printf("  hits: %u RAM, %u disk; misses (compiled from source) %u; stored %u; rejected by driver %u; corrupt %u; write failures %u\n",
 			Counters.ramHits, Counters.diskHits, Counters.misses, Counters.stores, Counters.rejects, Counters.corrupt, Counters.writeFailures);
 		Printf("  disk traffic: %llu KB read, %llu KB written\n",
 			(unsigned long long)(Counters.bytesRead / 1024), (unsigned long long)(Counters.bytesWritten / 1024));

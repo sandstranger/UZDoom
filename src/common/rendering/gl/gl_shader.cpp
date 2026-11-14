@@ -62,12 +62,13 @@ namespace OpenGLRenderer
 {
 
 #if ANDROID
-    // Desktop GLSL fed to NG-GL4ES and the GLSL ES version SPIRV-Cross emits (part of the program cache key).
-    // GLSL ES 3.10 only where the context has it: GLES 3.0 devices (and an ES 3.0 context) get 3.00.
+    // Desktop GLSL fed to NG-GL4ES (SPIRV-Cross) and the GLSL ES version it must emit (part of
+    // the program cache key). The Android GL renderer is a GLES 3.0 renderer: GLSL ES 3.00 only.
     constexpr int NGGL4ES_SOURCE_GLSL = 410;
+    constexpr int NGGL4ES_TARGET_ESSL = 300;
     int NGGL4ESTargetESSL()
     {
-        return gl.esversion >= 310 ? 310 : 300;
+        return NGGL4ES_TARGET_ESSL;
     }
 
     typedef char* (*GLSLtoGLSLES_t)(const char*, GLenum, unsigned int, unsigned int, int*);
@@ -489,11 +490,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		pre_placeholder << "#version 410\n";
 	}
 	else {
-		pre_placeholder << (gl.esversion >= 310 ? "#version 310 es\n" : "#version 300 es\n");
+		pre_placeholder << "#version 300 es\n";
 		// ES fragment shaders have no default float precision, and the ViewpointUBO block below is the first
 		// thing that needs one: without this Mali rejects every fragment shader
 		// ("S0032: no default precision defined for member 'ProjectionMatrix'").
-		pre_placeholder << "precision highp int;\nprecision highp float;\nprecision highp sampler2D;\nprecision highp sampler2DArray;\nprecision highp samplerCube;\n";
+		pre_placeholder << "precision highp int;\nprecision highp float;\nprecision highp sampler2D;\nprecision highp sampler2DArray;\nprecision highp samplerCube;\nprecision highp sampler3D;\n";
 	}
 
 	bool lightbuffertype = screen->mLights->GetBufferType();

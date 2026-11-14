@@ -47,6 +47,8 @@ public:
 	int Width = -1;
 	int Height = -1;
 	bool nearestOnly = false;
+	bool pooled = false;		// render target without initial data: comes from / returns to the RT pool
+	GLuint internalFormat = 0;
 
 	explicit operator bool() const { return handle != 0; }
 
@@ -56,6 +58,21 @@ private:
 	friend class FGLRenderBuffers;
 	friend class PPGLTextureBackend;
 	friend class GLPPRenderState;
+	friend class GLRenderTargetPool;
+};
+
+// Pool of render target textures (no initial data), shared by all FGLRenderBuffers and the
+// post-process textures: a released texture is handed out again for the same size/format,
+// unused ones are freed after a while or when the pool exceeds its budget.
+class GLRenderTargetPool
+{
+public:
+	static bool Acquire(PPGLTexture &tex, int width, int height, GLuint format);
+	static void Release(PPGLTexture &tex);
+	static void FrameEnd();
+	static void Trim(bool all);
+	static void TrackAllocation(int64_t bytes);
+	static size_t TextureBytes(int width, int height, GLuint format);
 };
 
 class PPGLFrameBuffer
@@ -91,15 +108,24 @@ class PPGLTextureBackend : public PPTextureBackend
 public:
 	~PPGLTextureBackend()
 	{
-		if (Tex.handle != 0)
-		{
-			glDeleteTextures(1, &Tex.handle);
-			Tex.handle = 0;
-		}
+		// the frame buffer first: a pooled texture must not stay attached anywhere
 		if (FB.handle != 0)
 		{
 			glDeleteFramebuffers(1, &FB.handle);
 			FB.handle = 0;
+		}
+		if (Tex.handle != 0)
+		{
+			if (Tex.pooled)
+			{
+				GLRenderTargetPool::Release(Tex);
+			}
+			else
+			{
+				GLRenderTargetPool::TrackAllocation(-(int64_t)GLRenderTargetPool::TextureBytes(Tex.Width, Tex.Height, Tex.internalFormat));
+				glDeleteTextures(1, &Tex.handle);
+			}
+			Tex.handle = 0;
 		}
 	}
 
@@ -141,6 +167,13 @@ public:
 	void BindSceneDepthTexture(int index);
 	void BlitSceneToTexture();
 
+	// MSAA without multisample textures (GLES 3.0): the multisampled G-buffer is resolved into
+	// single-sampled textures before SSAO reads it.
+	void ResolveSceneData();
+	bool SceneDataMultisampled() const { return mSamples > 1 && !mResolveSceneData; }
+	// After the last use of the pipeline depth buffer in a frame.
+	void InvalidatePipelineDepth();
+
 	void BindCurrentTexture(int index, int filter = GL_NEAREST, int wrap = GL_CLAMP_TO_EDGE);
 	void BindCurrentFB();
 	void BindNextFB();
@@ -173,7 +206,9 @@ private:
 	void ClearEyeBuffers();
 	void ClearShadowMap();
 	void CreateScene(int width, int height, int samples, bool needsSceneTextures);
+	void CreateSceneES(int width, int height, int samples, bool needsSceneTextures);
 	void CreatePipeline(int width, int height);
+	void CreatePipelineTexture(int index);
 	void CreateEyeBuffers(int eye);
 	void CreateShadowMap();
 
@@ -185,6 +220,10 @@ private:
 	PPGLFrameBuffer CreateFrameBuffer(const char *name, PPGLTexture colorbuffer, PPGLRenderBuffer depthstencil);
 	PPGLFrameBuffer CreateFrameBuffer(const char *name, PPGLRenderBuffer colorbuffer, PPGLRenderBuffer depthstencil);
 	PPGLFrameBuffer CreateFrameBuffer(const char *name, PPGLTexture colorbuffer0, PPGLTexture colorbuffer1, PPGLTexture colorbuffer2, PPGLTexture depthstencil, bool multisample);
+	PPGLFrameBuffer CreateFrameBuffer(const char *name, PPGLRenderBuffer color0, PPGLRenderBuffer color1, PPGLRenderBuffer color2, PPGLRenderBuffer depthstencil);
+	PPGLFrameBuffer CreateDepthFrameBuffer(const char *name, PPGLTexture depthstencil);
+	PPGLFrameBuffer CreateFrameBufferRTT(const char *name, PPGLTexture colorbuffer, PPGLRenderBuffer depthstencil, int samples);
+	PPGLRenderBuffer CreateRenderBufferRTT(const char *name, GLuint format, int width, int height, int samples);
 	bool CheckFrameBufferCompleteness();
 	void ClearFrameBuffer(bool stencil, bool depth);
 	void DeleteTexture(PPGLTexture &handle);
@@ -214,6 +253,14 @@ private:
 	PPGLFrameBuffer mSceneFB;
 	PPGLFrameBuffer mSceneDataFB;
 	bool mSceneUsesTextures = false;
+
+	// GLES: how the scene is multisampled
+	enum EMSAAMode { MSAA_None, MSAA_RenderToTexture, MSAA_Renderbuffers };
+	EMSAAMode mMSAAMode = MSAA_None;
+	bool mResolveSceneData = false;
+	PPGLFrameBuffer mSceneFogResolveFB;
+	PPGLFrameBuffer mSceneNormalResolveFB;
+	PPGLFrameBuffer mSceneDepthResolveFB;
 
 	// Effect/HUD buffers
 	PPGLTexture mPipelineTexture[NumPipelineTextures];

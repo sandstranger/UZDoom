@@ -84,6 +84,8 @@ void FGLRenderer::AmbientOccludeScene(float m5)
 	int sceneWidth = mBuffers->GetSceneWidth();
 	int sceneHeight = mBuffers->GetSceneHeight();
 
+	// GLES: multisampled G-buffer attachments are resolved into textures first.
+	mBuffers->ResolveSceneData();
 	GLPPRenderState renderstate(mBuffers);
 	hw_postprocess.ssao.Render(&renderstate, m5, sceneWidth, sceneHeight);
 }
@@ -183,6 +185,8 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 
 	mBuffers->BindCurrentTexture(0);
 	DrawPresentTexture(box, applyGamma);
+	// The pipeline depth buffer is not read after the frame's 2D/HUD drawing.
+	if (!bounds) mBuffers->InvalidatePipelineDepth();
 	FGLDebug::PopGroup();
 }
 

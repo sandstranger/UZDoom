@@ -166,7 +166,7 @@ void FGLRenderer::BindToFrameBuffer(FTexture *tex)
 void FGLRenderer::BeginFrame()
 {
 	mScreenBuffers->Setup(screen->mScreenViewport.width, screen->mScreenViewport.height, screen->mSceneViewport.width, screen->mSceneViewport.height);
-	mSaveBuffers->Setup(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH, SAVEPICHEIGHT);
+	// mSaveBuffers are set up by SetSaveBuffers when a savegame picture is rendered.
 }
 
 }

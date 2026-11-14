@@ -50,6 +50,8 @@
 #include "flatvertices.h"
 #include "hw_cvars.h"
 #include "hw_batching.h"
+#include "hw_programcache.h"
+#include "gl_renderbuffers.h"
 
 EXTERN_CVAR (Bool, vid_vsync)
 EXTERN_CVAR(Int, gl_tonemap)
@@ -89,6 +91,7 @@ OpenGLFrameBuffer::~OpenGLFrameBuffer()
 {
 	PPResource::ResetAll();
 	gl_RenderState.ReleaseBatchResources();
+	GLRenderTargetPool::Trim(true);
 
 	if (mVertexData != nullptr) delete mVertexData;
 	if (mSkyData != nullptr) delete mSkyData;
@@ -154,9 +157,9 @@ void OpenGLFrameBuffer::InitializeState()
 	glDisable(GL_POLYGON_OFFSET_FILL);
 	glEnable(GL_POLYGON_OFFSET_LINE);
 	glEnable(GL_BLEND);
-	glEnable(GL_DEPTH_CLAMP);
+	if (gl.esversion == 0) glEnable(GL_DEPTH_CLAMP);
 	glDisable(GL_DEPTH_TEST);
-	glDisable(GL_LINE_SMOOTH);
+	if (gl.esversion == 0) glDisable(GL_LINE_SMOOTH);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -286,6 +289,8 @@ CVAR(Bool, gl_finishbeforeswap, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 void OpenGLFrameBuffer::Swap()
 {
 	BatchStatsEndFrame();
+	GLRenderTargetPool::FrameEnd();
+	ProgramBinaryCache::ProcessPendingTrim();
 #ifdef ANDROID
 	if (gl.flags & RFL_INVALIDATE_BUFFER)
 	{
@@ -517,8 +522,23 @@ void OpenGLFrameBuffer::WaitForCommands(bool finish)
 void OpenGLFrameBuffer::SetSaveBuffers(bool yes)
 {
 	if (!GLRenderer) return;
-	if (yes) GLRenderer->mBuffers = GLRenderer->mSaveBuffers;
-	else GLRenderer->mBuffers = GLRenderer->mScreenBuffers;
+	if (yes)
+	{
+		// Created only for the savegame picture and released right after it.
+		GLRenderer->mSaveBuffers->Setup(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH, SAVEPICHEIGHT);
+		GLRenderer->mBuffers = GLRenderer->mSaveBuffers;
+	}
+	else
+	{
+		GLRenderer->mBuffers = GLRenderer->mScreenBuffers;
+		delete GLRenderer->mSaveBuffers;
+		GLRenderer->mSaveBuffers = new FGLRenderBuffers();
+	}
+}
+
+bool OpenGLFrameBuffer::SceneDataMultisampled()
+{
+	return GLRenderer && GLRenderer->mBuffers ? GLRenderer->mBuffers->SceneDataMultisampled() : DFrameBuffer::SceneDataMultisampled();
 }
 
 //===========================================================================

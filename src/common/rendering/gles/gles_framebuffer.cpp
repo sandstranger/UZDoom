@@ -48,6 +48,7 @@
 #include "flatvertices.h"
 #include "hw_cvars.h"
 #include "hw_batching.h"
+#include "hw_programcache.h"
 
 EXTERN_CVAR (Bool, vid_vsync)
 EXTERN_CVAR(Int, gl_tonemap)
@@ -249,6 +250,18 @@ const char* OpenGLFrameBuffer::DeviceName() const
 void OpenGLFrameBuffer::Swap()
 {
 	BatchStatsEndFrame();
+	ProgramBinaryCache::ProcessPendingTrim();
+#ifdef ANDROID
+	// The window's depth/stencil are never read: don't let a tiler write them back.
+	if (gles.invalidateFramebuffer || gles.pDiscardFramebuffer)
+	{
+		typedef void (APIENTRY *DISCARDFB)(GLenum, GLsizei, const GLenum *);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		static const GLenum attachments[] = { 0x1801 /* GL_DEPTH(_EXT) */, 0x1802 /* GL_STENCIL(_EXT) */ };
+		if (gles.invalidateFramebuffer) glInvalidateFramebuffer(GL_FRAMEBUFFER, 2, attachments);
+		else ((DISCARDFB)gles.pDiscardFramebuffer)(GL_FRAMEBUFFER, 2, attachments);
+	}
+#endif
 
 	Finish.Reset();
 	Finish.Clock();
@@ -492,7 +505,7 @@ FTexture *OpenGLFrameBuffer::WipeStartScreen()
 #endif	
 	static_cast<FHardwareTexture*>(tex->GetSystemTexture())->Bind(0, false);
 
-	GLRenderer->mBuffers->BindCurrentFB();
+	GLRenderer->mBuffers->BindReadableFB();	// a multisampled frame buffer cannot be copied from
 	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport.left, viewport.top, viewport.width, viewport.height);
 	return tex;
 }
@@ -515,7 +528,7 @@ FTexture *OpenGLFrameBuffer::WipeEndScreen()
 	glFinish();
 #endif
 	static_cast<FHardwareTexture*>(tex->GetSystemTexture())->Bind(0, false);
-	GLRenderer->mBuffers->BindCurrentFB();
+	GLRenderer->mBuffers->BindReadableFB();	// a multisampled frame buffer cannot be copied from
 	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport.left, viewport.top, viewport.width, viewport.height);
 	return tex;
 }

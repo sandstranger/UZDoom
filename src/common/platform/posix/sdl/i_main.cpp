@@ -198,6 +198,7 @@ void I_StartupJoysticks();
 	} while (0);
 
 #ifdef ANDROID
+#include "hw_programcache.h"
 static int SDLCALL AndroidLifeCycleEventFilter(void*, SDL_Event* event);
 
 int SDL_main(int argc, char **argv)
@@ -338,6 +339,10 @@ static int SDLCALL AndroidLifeCycleEventFilter(void*, SDL_Event* event){
 		case SDL_APP_DIDENTERFOREGROUND:
 			S_SetSoundPaused(1);
 			AppActive = true;
+			break;
+		case SDL_APP_LOWMEMORY:
+			// may arrive on another thread: only flag it, the renderer trims at the end of a frame
+			ProgramBinaryCache::RequestTrim();
 			break;
 	}
 	return 1;

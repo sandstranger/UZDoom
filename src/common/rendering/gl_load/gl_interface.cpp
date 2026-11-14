@@ -30,6 +30,9 @@
 #include "v_video.h"
 #include "printf.h"
 #include "gl_interface.h"
+#ifdef __ANDROID__
+#include <SDL.h>
+#endif
 
 static TArray<FString>  m_Extensions;
 RenderContext gl;
@@ -97,6 +100,90 @@ static void InitContext()
 
 #define FUDGE_FUNC(name, ext) 	if (_ptrc_##name == NULL) _ptrc_##name = _ptrc_##name##ext;
 
+//==========================================================================
+//
+// OpenGL ES context (Android): the renderer uses the GLES 3.0 feature set,
+// whatever version the driver created. Everything optional is taken from the
+// extension list and the entry points actually present - no desktop version is
+// substituted.
+//
+//==========================================================================
+
+static void *GetESProc(const char *name)
+{
+#ifdef __ANDROID__
+	return SDL_GL_GetProcAddress(name);
+#else
+	return nullptr;
+#endif
+}
+
+static void LoadESCapabilities()
+{
+	int v = 0;
+	if (gl.esphysical < 300)
+		I_FatalError("The OpenGL renderer needs OpenGL ES 3.0 (context: %s).\n", (const char *)glGetString(GL_VERSION));
+
+	gl.esversion = 300;
+	realglversion = gl.esphysical / 100.0;
+
+	// Dialect of the engine's GLSL sources that is converted to GLSL ES 3.00: the uniform
+	// buffer light/bone path (no shader storage), sampler bindings assigned from C++.
+	gl.glslversion = 3.31f;
+
+	// GLES 3.0 has no gl_ClipDistance; glInvalidateFramebuffer is core.
+	gl.flags |= RFL_NO_CLIP_PLANES | RFL_INVALIDATE_BUFFER;
+	if (CheckExtension("GL_KHR_debug")) gl.flags |= RFL_DEBUG;
+
+	gl.floatlinear = CheckExtension("GL_OES_texture_float_linear");
+	gl.bgra = CheckExtension("GL_EXT_texture_format_BGRA8888");
+	gl.colorbuffer32f = CheckExtension("GL_EXT_color_buffer_float");
+	gl.colorbuffer16f = gl.colorbuffer32f || CheckExtension("GL_EXT_color_buffer_half_float");
+
+	// Multisampled render-to-texture (inline resolve on tile-based GPUs). EXT and IMG are
+	// separate APIs with their own entry points and limits.
+	if (CheckExtension("GL_EXT_multisampled_render_to_texture"))
+	{
+		gl.pFramebufferTexture2DMultisample = GetESProc("glFramebufferTexture2DMultisampleEXT");
+		gl.pRenderbufferStorageMultisampleRTT = GetESProc("glRenderbufferStorageMultisampleEXT");
+		if (gl.pFramebufferTexture2DMultisample && gl.pRenderbufferStorageMultisampleRTT)
+		{
+			gl.msrtt = 1;
+			glGetIntegerv(0x8D57 /* GL_MAX_SAMPLES_EXT */, &gl.msrttMaxSamples);
+		}
+	}
+	if (gl.msrtt == 0 && CheckExtension("GL_IMG_multisampled_render_to_texture"))
+	{
+		gl.pFramebufferTexture2DMultisample = GetESProc("glFramebufferTexture2DMultisampleIMG");
+		gl.pRenderbufferStorageMultisampleRTT = GetESProc("glRenderbufferStorageMultisampleIMG");
+		if (gl.pFramebufferTexture2DMultisample && gl.pRenderbufferStorageMultisampleRTT)
+		{
+			gl.msrtt = 2;
+			glGetIntegerv(0x9135 /* GL_MAX_SAMPLES_IMG */, &gl.msrttMaxSamples);
+		}
+	}
+	if (gl.msrtt == 0 || gl.msrttMaxSamples < 2)
+	{
+		gl.msrtt = gl.msrttMaxSamples = 0;
+		gl.pFramebufferTexture2DMultisample = gl.pRenderbufferStorageMultisampleRTT = nullptr;
+	}
+
+	glGetIntegerv(GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, &v);
+	gl.maxuniforms = v;
+	glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &v);
+	gl.maxuniformblock = min(65536, v);
+	glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &v);
+	gl.uniformblockalignment = v;
+
+	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &gl.max_texturesize);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	bindless = false;
+
+	Printf("OpenGL ES %d.%d context, renderer limited to GLES 3.0; float16 targets %s, float32 targets %s, float32 filtering %s, MSAA render-to-texture %s (max %d)\n",
+		gl.esphysical / 100, (gl.esphysical / 10) % 10, gl.colorbuffer16f ? "yes" : "no", gl.colorbuffer32f ? "yes" : "no", gl.floatlinear ? "yes" : "no",
+		gl.msrtt == 1 ? "EXT" : gl.msrtt == 2 ? "IMG" : "no", gl.msrttMaxSamples);
+}
+
 
 void gl_LoadExtensions()
 {
@@ -107,21 +194,20 @@ void gl_LoadExtensions()
 
 	const char *glversion = (const char*)glGetString(GL_VERSION);
 
-	// The real ES version decides which ES-only features (multisample textures, GLSL ES 3.10)
-	// may be used; on Android the version below is replaced by "3.3" for the capability logic.
-	gl.esversion = 0;
+	gl.esphysical = gl.esversion = 0;
+	gl.msrtt = gl.msrttMaxSamples = 0;
+	gl.pFramebufferTexture2DMultisample = gl.pRenderbufferStorageMultisampleRTT = nullptr;
+	gl.vendorstring = (char*)glGetString(GL_VENDOR);
+	gl.modelstring = (char*)glGetString(GL_RENDERER);
 	if (glversion && strncmp(glversion, "OpenGL ES ", 10) == 0)
 	{
 		int major = 0, minor = 0;
 		if (sscanf(glversion + 10, "%d.%d", &major, &minor) >= 1)
-			gl.esversion = major * 100 + minor * 10;
+			gl.esphysical = major * 100 + minor * 10;
+		LoadESCapabilities();
+		return;
 	}
-
-#ifdef ANDROID
-	glversion = "3.3";
-	gl.flags |= RFL_NO_CLIP_PLANES;
-	gl.flags |= RFL_INVALIDATE_BUFFER;
-#endif
+	gl.floatlinear = gl.colorbuffer16f = gl.colorbuffer32f = gl.bgra = true;
 
 	const char *version = Args->CheckValue(FArg_glversion);
 	realglversion = strtod(glversion, NULL);
@@ -155,12 +241,7 @@ void gl_LoadExtensions()
 	// add 0.01 to account for roundoff errors making the number a tad smaller than the actual version
 	gl.glslversion = strtod((char*)glGetString(GL_SHADING_LANGUAGE_VERSION), NULL) + 0.01f;
 
-	gl.vendorstring = (char*)glGetString(GL_VENDOR);
-	gl.modelstring = (char*)glGetString(GL_RENDERER);
-
 	// first test for optional features
-	// GLES 3.0: R32F/RG32F/RGBA32F are not filterable without OES_texture_float_linear (desktop: always).
-	gl.floatlinear = gl.esversion == 0 || CheckExtension("GL_OES_texture_float_linear");
 	if (CheckExtension("GL_ARB_texture_compression")) gl.flags |= RFL_TEXTURE_COMPRESSION;
 	if (CheckExtension("GL_EXT_texture_compression_s3tc")) gl.flags |= RFL_TEXTURE_COMPRESSION_S3TC;
 
@@ -216,11 +297,15 @@ void gl_LoadExtensions()
 void gl_PrintStartupLog()
 {
 	int v = 0;
-	glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &v);
+	// GL_CONTEXT_PROFILE_MASK and GL_MAX_VARYING_FLOATS do not exist in OpenGL ES.
+	if (gl.esversion == 0) glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &v);
 
 	Printf ("GL_VENDOR: %s\n", glGetString(GL_VENDOR));
 	Printf ("GL_RENDERER: %s\n", glGetString(GL_RENDERER));
-	Printf ("GL_VERSION: %s (%s profile)\n", glGetString(GL_VERSION), (v & GL_CONTEXT_CORE_PROFILE_BIT)? "Core" : "Compatibility");
+	if (gl.esversion == 0)
+		Printf ("GL_VERSION: %s (%s profile)\n", glGetString(GL_VERSION), (v & GL_CONTEXT_CORE_PROFILE_BIT)? "Core" : "Compatibility");
+	else
+		Printf ("GL_VERSION: %s (used as OpenGL ES 3.0)\n", glGetString(GL_VERSION));
 	Printf ("GL_SHADING_LANGUAGE_VERSION: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
 	Printf (PRINT_LOG, "GL_EXTENSIONS:");
 	for (unsigned i = 0; i < m_Extensions.Size(); i++)
@@ -232,8 +317,16 @@ void gl_PrintStartupLog()
 	Printf("\nMax. texture size: %d\n", v);
 	glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &v);
 	Printf ("Max. texture units: %d\n", v);
-	glGetIntegerv(GL_MAX_VARYING_FLOATS, &v);
-	Printf ("Max. varying: %d\n", v);
+	if (gl.esversion == 0)
+	{
+		glGetIntegerv(GL_MAX_VARYING_FLOATS, &v);
+		Printf ("Max. varying: %d\n", v);
+	}
+	else
+	{
+		glGetIntegerv(0x8DFC /* GL_MAX_VARYING_VECTORS */, &v);
+		Printf ("Max. varying vectors: %d\n", v);
+	}
 
 	if (gl.flags & RFL_SHADER_STORAGE_BUFFER)
 	{

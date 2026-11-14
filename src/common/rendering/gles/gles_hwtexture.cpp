@@ -117,8 +117,46 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 	// store the physical size.
 
 	int sourcetype;
+	bool swapRB = false;
+	unsigned char *swapped = nullptr;
 
-	if (gles.glesMode == GLES_MODE_GLES)
+	if (gles.esVersion > 0 && gles.glesMode != GLES_MODE_GLES)
+	{
+		// OpenGL ES 2.0 / 3.0 (Android). 1 byte: GL_ALPHA (the shaders read alpha; core in both,
+		// unlike GL_RED in GLES 2.0 and texture swizzles). 4 bytes arrive in BGRA order: GL_BGRA
+		// needs EXT_texture_format_BGRA8888 (internal format BGRA as well); without it the data
+		// is uploaded as RGBA and red/blue are swapped by texture swizzle (GLES 3.0) or on the CPU.
+		if (glTextureBytes == 1)
+		{
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			sourcetype = texformat = GL_ALPHA;
+		}
+		else if (gles.bgraTextures)
+		{
+			sourcetype = texformat = GL_BGRA;
+		}
+		else
+		{
+			sourcetype = texformat = GL_RGBA;
+			swapRB = true;
+			if (!gles.textureSwizzle && buffer)
+			{
+				const size_t n = size_t(rw) * size_t(rh);
+				swapped = (unsigned char *)malloc(n * 4);
+				if (swapped)
+				{
+					for (size_t i = 0; i < n; i++)
+					{
+						swapped[i * 4 + 0] = buffer[i * 4 + 2];
+						swapped[i * 4 + 1] = buffer[i * 4 + 1];
+						swapped[i * 4 + 2] = buffer[i * 4 + 0];
+						swapped[i * 4 + 3] = buffer[i * 4 + 3];
+					}
+				}
+			}
+		}
+	}
+	else if (gles.glesMode == GLES_MODE_GLES)
 	{
 		if (glTextureBytes == 1)
 		{
@@ -151,9 +189,17 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		}
 	}
 
-	glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, buffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, swapped ? swapped : buffer);
+	if (swapped) free(swapped);
 
-	if (gles.glesMode != GLES_MODE_GLES)
+	if (gles.esVersion > 0 && gles.textureSwizzle)
+	{
+		// set every time: the texture object may have held another format before
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, swapRB ? GL_BLUE : GL_RED);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, swapRB ? GL_RED : GL_BLUE);
+	}
+
+	if (gles.esVersion == 0 && gles.glesMode != GLES_MODE_GLES)
 	{
 		// The shader is using the alpha channel instead of red, this work on GLES but not on GL
 		// So the texture uses GL_RED and this swizzels the red channel into the alpha channel
@@ -201,7 +247,7 @@ void FHardwareTexture::AllocateBuffer(int w, int h, int texelsize)
 	if (texBuffer)
 		delete[] texBuffer;
 
-	texBuffer = new uint8_t[(w * h) * texelsize];
+	texBuffer = new uint8_t[size_t(w) * size_t(h) * size_t(texelsize)];
 	return;
 }
 

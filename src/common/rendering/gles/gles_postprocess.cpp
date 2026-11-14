@@ -99,14 +99,22 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 	}
 	else
 	{
+#ifdef ANDROID
+		// A full clear tells a tile-based GPU that nothing of the previous frame is needed.
+		glDisable(GL_SCISSOR_TEST);
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+#else
 		ClearBorders();
+#endif
 		box = screen->mOutputLetterbox;
 	}
 
-	mBuffers->BindCurrentTexture(0);
+	mBuffers->BindCurrentTexture(0);	// resolves a multisampled scene first
 #ifndef NO_RENDER_BUFFER
 	DrawPresentTexture(box, applyGamma);
 #endif
+	if (!bounds) mBuffers->InvalidateSceneDepth();
 }
 
 void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma)

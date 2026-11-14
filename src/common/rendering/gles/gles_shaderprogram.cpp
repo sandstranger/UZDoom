@@ -276,7 +276,7 @@ FString FShaderProgram::PatchShader(ShaderType type, const FString &code, const 
 
 
 	patchedCode << "#line 1\n";
-#ifdef ANDROID //karin: convert GLSL code to 320 es on OpenGLES
+#ifdef ANDROID // GLES 3.0: convert the GLSL ES 1.00 sources to GLSL ES 3.00
 	if(gles.essl300)
 	{
 		FString newcode = RemoveLayoutLocationDecl(code, type == Vertex ? "out" : "in");

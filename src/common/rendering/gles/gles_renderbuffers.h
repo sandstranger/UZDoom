@@ -126,6 +126,14 @@ public:
 
 	void BindDitherTexture(int texunit);
 
+	// Multisampled scene (renderbuffer path): the color is resolved into the scene texture
+	// before it is read; render-to-texture resolves inline.
+	void ResolveScene();
+	// Single-sampled frame buffer holding the current image (source of glCopyTexSubImage2D).
+	void BindReadableFB();
+	// After the frame's last draw: the scene depth/stencil need not be written back.
+	void InvalidateSceneDepth();
+
 	int GetWidth() const { return mWidth; }
 	int GetHeight() const { return mHeight; }
 
@@ -135,7 +143,11 @@ public:
 private:
 	void ClearScene();
 
-	void CreateScene(int width, int height);
+	void CreateScene(int width, int height, int samples);
+	PPGLRenderBuffer CreateRenderBuffer(const char *name, GLuint format, int width, int height, int samples, bool renderToTexture);
+	bool CreateSceneRTT(int width, int height, int samples);
+	bool CreateSceneMultisample(int width, int height, int samples);
+	void Discard(int count, const GLenum *attachments);
 	void CreatePipeline(int width, int height);
 
 	PPGLTexture Create2DTexture(const char *name, GLuint format, int width, int height, const void *data = nullptr);
@@ -162,6 +174,13 @@ private:
 	PPGLRenderBuffer mSceneStencilBuf; // This is only use when combined depth-stencil is not avaliable
 	PPGLFrameBuffer mSceneFB;
 	bool mSceneUsesTextures = false;
+
+	enum EMSAAMode { MSAA_None, MSAA_RenderToTexture, MSAA_Renderbuffers };
+	EMSAAMode mMSAAMode = MSAA_None;
+	int mSamples = 0;
+	PPGLRenderBuffer mSceneColorMSBuf;
+	PPGLFrameBuffer mResolveFB;
+	bool mResolvePending = false;
 
 	PPGLTexture mDitherTexture;
 

@@ -96,12 +96,44 @@ static void* LoadGLES2Proc(const char* name)
 
 static TArray<FString>  m_Extensions;
 
-#ifdef __ANDROID__ //karin: force GL version
-extern float GLimp_GetGLVersion(void);
+#ifdef __ANDROID__
+#include <SDL.h>
 #endif
+
+// Version of the context that was actually created: 200/300/310/320 for OpenGL ES, 0 for desktop GL.
+static int ContextESVersion()
+{
+	const char *v = (const char *)glGetString(GL_VERSION);
+	int major = 0, minor = 0;
+	if (v && strncmp(v, "OpenGL ES", 9) == 0 && sscanf(v + 9, "%*[^0-9]%d.%d", &major, &minor) >= 1)
+		return major * 100 + minor * 10;
+	return 0;
+}
+
+static void *GetProc(const char *name)
+{
+#ifdef __ANDROID__
+	return SDL_GL_GetProcAddress(name);
+#else
+	return nullptr;
+#endif
+}
 
 static void CollectExtensions()
 {
+	m_Extensions.Clear();
+	if (ContextESVersion() >= 300 && glGetStringi)
+	{
+		// GLES 3.0: the indexed query (GL_EXTENSIONS through glGetString is the GLES 2.0 way)
+		GLint count = 0;
+		glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+		for (GLint i = 0; i < count; i++)
+		{
+			const char *ext = (const char *)glGetStringi(GL_EXTENSIONS, i);
+			if (ext) m_Extensions.Push(FString(ext));
+		}
+		if (count > 0) return;
+	}
 	const char* supported = (char*)glGetString(GL_EXTENSIONS);
 
 	if (nullptr != supported)
@@ -165,7 +197,8 @@ namespace OpenGLESRenderer
 		}
 		// Vertex array objects are GLES 3.0 core; a GLES 2.0 context only has them through
 		// OES_vertex_array_object, which this loader does not resolve. Default VAO there.
-		if (GLimp_GetGLVersion() >= 3.0f && glGenVertexArrays && glBindVertexArray)
+		const int esContext = ContextESVersion();
+		if ((esContext == 0 || esContext >= 300) && glGenVertexArrays && glBindVertexArray)
 		{
 			GLuint vao;
 			glGenVertexArrays(1, &vao);
@@ -185,9 +218,9 @@ namespace OpenGLESRenderer
 		}
 		const char* glVersionStr = (const char*)glGetString(GL_VERSION);
 		double glVersion = strtod(glVersionStr, NULL);
-#ifdef __ANDROID__ //karin: force GL version
-		glVersion = GLimp_GetGLVersion();
-#endif
+		// The version of the created context, not of the requested one.
+		gles.esVersion = ContextESVersion();
+		if (gles.esVersion > 0) glVersion = gles.esVersion / 100.0;
 
 		Printf("GL Version parsed = %f\n", glVersion);
 
@@ -229,11 +262,18 @@ namespace OpenGLESRenderer
 		}
 #ifdef ANDROID //karin: custom GL version
 		} else {
-			if(USING_GLES_2)
+			if (USING_GLES_2)
 				gles.glesMode = GLES_MODE_OGL2; // GLES 2.0 context, GLSL ES 1.00
+			else if (gles.esVersion >= 300)
+				gles.glesMode = GLES_MODE_GLES3; // GLES 3.0 context, GLSL ES 3.00
 			else
-				gles.glesMode = GLES_MODE_OGL3; // GLES 3.0 context, GLSL ES 3.00
+			{
+				Printf("OpenGL ES 3.0 requested but the context is %s: using the OpenGL ES 2.0 path\n", glVersionStr);
+				gles.glesMode = GLES_MODE_OGL2;
+			}
 		}
+		if (USING_GLES_AUTO && gles.esVersion >= 300)
+			gles.glesMode = GLES_MODE_GLES3;
 #endif
 
 		gles.nv_vram_ext = CheckExtension("GL_NVX_gpu_memory_info");
@@ -254,11 +294,14 @@ namespace OpenGLESRenderer
 			Printf("GLES choosing mode: GLES_MODE_OGL2\n");
 
 			gles.shaderVersionString = "100";
-#ifdef ANDROID //karin: check extensions on OpenGLES
+#ifdef ANDROID
+			// OpenGL ES 2.0 (also on a newer context: the GLES 2.0 path uses GLES 2.0 features only)
 			gles.depthStencilAvailable = CheckExtension("GL_OES_packed_depth_stencil");
 			gles.npotAvailable = CheckExtension("GL_OES_texture_npot");
 			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
 			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
+			// glMapBufferRange/glUnmapBuffer are GLES 3.0 core; their GLES 2.0 extension forms are not loaded.
+			gles.useMappedBuffers = false;
 #else
 			gles.depthStencilAvailable = true;
 			gles.npotAvailable = true;
@@ -271,25 +314,81 @@ namespace OpenGLESRenderer
 		{
 			Printf("GLES choosing mode: GLES_MODE_OGL3\n");
 
-#ifdef ANDROID
-			// GLES 3.0 context: the GLSL ES 1.00 sources are converted to GLSL ES 3.00 (needed by
-			// the instanced shader flavours). Packed depth/stencil and NPOT textures with mipmaps
-			// and repeat are core in GLES 3.0, independent of the OES extension strings.
-			gles.shaderVersionString = "300 es";
-			gles.essl300 = true;
-			gles.depthStencilAvailable = true;
-			gles.npotAvailable = true;
-			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
-			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
-#else
 			gles.shaderVersionString = "330";
 			gles.depthStencilAvailable = true;
 			gles.npotAvailable = true;
 			gles.useMappedBuffers = true;
 			gles.depthClampAvailable = true;
 			gles.anistropicFilterAvailable = true;
-#endif
 		}
+		else if (gles.glesMode == GLES_MODE_GLES3)
+		{
+			Printf("GLES choosing mode: GLES_MODE_GLES3\n");
+
+			// OpenGL ES 3.0: the GLSL ES 1.00 sources are converted to GLSL ES 3.00. Packed
+			// depth/stencil and NPOT textures with mipmaps and repeat are core, independent of
+			// the OES extension strings. Nothing beyond GLES 3.0 is used on 3.1/3.2 contexts.
+			gles.shaderVersionString = "300 es";
+			gles.essl300 = true;
+			gles.depthStencilAvailable = true;
+			gles.npotAvailable = true;
+			gles.depthClampAvailable = CheckExtension("GL_EXT_depth_clamp");
+			gles.anistropicFilterAvailable = CheckExtension("GL_EXT_texture_filter_anisotropic");
+		}
+
+		// Capability table. A GLES 3.0 feature is used when the mode is the GLES 3.0 one (or
+		// desktop GL 3.3) and its entry points were resolved.
+		const bool es3 = gles.glesMode == GLES_MODE_GLES3;
+		const bool core3 = es3 || gles.glesMode == GLES_MODE_OGL3;
+		gles.bgraTextures = CheckExtension("GL_EXT_texture_format_BGRA8888");
+		gles.textureSwizzle = core3;
+		gles.syncObjects = core3 && glFenceSync && glClientWaitSync && glDeleteSync;
+		gles.integerAttribs = core3 && glVertexAttribIPointer;
+		gles.invalidateFramebuffer = es3 && glInvalidateFramebuffer;
+		gles.pDiscardFramebuffer = nullptr;
+		if (!es3 && gles.esVersion > 0 && CheckExtension("GL_EXT_discard_framebuffer"))
+			gles.pDiscardFramebuffer = GetProc("glDiscardFramebufferEXT");
+
+		gles.msrtt = gles.msrttMaxSamples = 0;
+		gles.pFramebufferTexture2DMultisample = gles.pRenderbufferStorageMultisampleRTT = nullptr;
+		if (gles.esVersion > 0)
+		{
+			// EXT and IMG multisampled render-to-texture are different APIs with their own entry points.
+			if (CheckExtension("GL_EXT_multisampled_render_to_texture"))
+			{
+				gles.pFramebufferTexture2DMultisample = GetProc("glFramebufferTexture2DMultisampleEXT");
+				gles.pRenderbufferStorageMultisampleRTT = GetProc("glRenderbufferStorageMultisampleEXT");
+				if (gles.pFramebufferTexture2DMultisample && gles.pRenderbufferStorageMultisampleRTT)
+				{
+					gles.msrtt = 1;
+					glGetIntegerv(0x8D57 /* GL_MAX_SAMPLES_EXT */, &gles.msrttMaxSamples);
+				}
+			}
+			if (gles.msrtt == 0 && CheckExtension("GL_IMG_multisampled_render_to_texture"))
+			{
+				gles.pFramebufferTexture2DMultisample = GetProc("glFramebufferTexture2DMultisampleIMG");
+				gles.pRenderbufferStorageMultisampleRTT = GetProc("glRenderbufferStorageMultisampleIMG");
+				if (gles.pFramebufferTexture2DMultisample && gles.pRenderbufferStorageMultisampleRTT)
+				{
+					gles.msrtt = 2;
+					glGetIntegerv(0x9135 /* GL_MAX_SAMPLES_IMG */, &gles.msrttMaxSamples);
+				}
+			}
+			if (gles.msrttMaxSamples < 2)
+			{
+				gles.msrtt = gles.msrttMaxSamples = 0;
+				gles.pFramebufferTexture2DMultisample = gles.pRenderbufferStorageMultisampleRTT = nullptr;
+			}
+		}
+		gles.maxSamples = 0;
+		gles.msaaRenderbuffers = core3 && glRenderbufferStorageMultisample && glBlitFramebuffer;
+		if (gles.msaaRenderbuffers) glGetIntegerv(GL_MAX_SAMPLES, &gles.maxSamples);
+		if (gles.maxSamples < 2) gles.msaaRenderbuffers = false;
+
+		Printf("GLES capabilities: BGRA textures %s, sync %s, invalidate %s, discard %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers %s (max %d)\n",
+			gles.bgraTextures ? "yes" : "no", gles.syncObjects ? "yes" : "no", gles.invalidateFramebuffer ? "yes" : "no",
+			gles.pDiscardFramebuffer ? "yes" : "no", gles.msrtt == 1 ? "EXT" : gles.msrtt == 2 ? "IMG" : "no", gles.msrttMaxSamples,
+			gles.msaaRenderbuffers ? "yes" : "no", gles.maxSamples);
 
 		setGlVersion(glVersion);
 	}

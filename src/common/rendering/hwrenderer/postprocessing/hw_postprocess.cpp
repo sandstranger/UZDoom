@@ -789,7 +789,8 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 
 	// Calculate linear depth values
 	renderstate->Clear();
-	renderstate->Shader = gl_multisample > 1 ? &LinearDepthMS : &LinearDepth;
+	const bool msaaInput = screen->SceneDataMultisampled();
+	renderstate->Shader = msaaInput ? &LinearDepthMS : &LinearDepth;
 	renderstate->Uniforms.Set(linearUniforms);
 	renderstate->Viewport = ambientViewport;
 	renderstate->SetInputSceneDepth(0);
@@ -800,7 +801,7 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 
 	// Apply ambient occlusion
 	renderstate->Clear();
-	renderstate->Shader = gl_multisample > 1 ? &AmbientOccludeMS : &AmbientOcclude;
+	renderstate->Shader = msaaInput ? &AmbientOccludeMS : &AmbientOcclude;
 	renderstate->Uniforms.Set(ssaoUniforms);
 	renderstate->Viewport = ambientViewport;
 	renderstate->SetInputTexture(0, &LinearDepthTexture);
@@ -834,7 +835,7 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 
 	// Add SSAO back to scene texture:
 	renderstate->Clear();
-	renderstate->Shader = gl_multisample > 1 ? &CombineMS : &Combine;
+	renderstate->Shader = msaaInput ? &CombineMS : &Combine;
 	renderstate->Uniforms.Set(combineUniforms);
 	renderstate->Viewport = screen->mSceneViewport;
 	if (gl_ssao_debug < 4)

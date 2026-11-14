@@ -33,6 +33,8 @@
 #include "gl_buffers.h"
 
 #include <random>
+#include "hw_batching.h"
+#include "engineerrors.h"
 
 EXTERN_CVAR(Int, gl_debug_level)
 CVAR(Int, gl_multisample, 1, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
@@ -68,22 +70,23 @@ FGLRenderBuffers::~FGLRenderBuffers()
 
 void FGLRenderBuffers::ClearScene()
 {
+	if (mSceneDataFB.handle == mSceneFB.handle) mSceneDataFB.handle = 0;	// render-to-texture: one frame buffer
 	DeleteFrameBuffer(mSceneFB);
 	DeleteFrameBuffer(mSceneDataFB);
-	if (mSceneUsesTextures)
-	{
-		DeleteTexture(mSceneMultisampleTex);
-		DeleteTexture(mSceneFogTex);
-		DeleteTexture(mSceneNormalTex);
-		DeleteTexture(mSceneDepthStencilTex);
-	}
-	else
-	{
-		DeleteRenderBuffer(mSceneMultisampleBuf);
-		DeleteRenderBuffer(mSceneFogBuf);
-		DeleteRenderBuffer(mSceneNormalBuf);
-		DeleteRenderBuffer(mSceneDepthStencilBuf);
-	}
+	DeleteFrameBuffer(mSceneFogResolveFB);
+	DeleteFrameBuffer(mSceneNormalResolveFB);
+	DeleteFrameBuffer(mSceneDepthResolveFB);
+	// Every handle is checked by the delete functions, so both sets can be cleared.
+	DeleteTexture(mSceneMultisampleTex);
+	DeleteTexture(mSceneFogTex);
+	DeleteTexture(mSceneNormalTex);
+	DeleteTexture(mSceneDepthStencilTex);
+	DeleteRenderBuffer(mSceneMultisampleBuf);
+	DeleteRenderBuffer(mSceneFogBuf);
+	DeleteRenderBuffer(mSceneNormalBuf);
+	DeleteRenderBuffer(mSceneDepthStencilBuf);
+	mMSAAMode = MSAA_None;
+	mResolveSceneData = false;
 }
 
 void FGLRenderBuffers::ClearPipeline()
@@ -111,14 +114,27 @@ void FGLRenderBuffers::ClearEyeBuffers()
 void FGLRenderBuffers::DeleteTexture(PPGLTexture &tex)
 {
 	if (tex.handle != 0)
-		glDeleteTextures(1, &tex.handle);
+	{
+		if (tex.pooled)
+		{
+			GLRenderTargetPool::Release(tex);
+		}
+		else
+		{
+			GLRenderTargetPool::TrackAllocation(-(int64_t)GLRenderTargetPool::TextureBytes(tex.Width, tex.Height, tex.internalFormat));
+			glDeleteTextures(1, &tex.handle);
+		}
+	}
 	tex.handle = 0;
 }
 
 void FGLRenderBuffers::DeleteRenderBuffer(PPGLRenderBuffer &buf)
 {
 	if (buf.handle != 0)
+	{
 		glDeleteRenderbuffers(1, &buf.handle);
+		rtStatsGL.deleted++;
+	}
 	buf.handle = 0;
 }
 
@@ -143,15 +159,7 @@ void FGLRenderBuffers::Setup(int width, int height, int sceneWidth, int sceneHei
 
 	int samples = clamp((int)gl_multisample, 0, mMaxSamples);
 	bool needsSceneTextures = (gl_ssao != 0);
-	// SSAO with MSAA samples multisample textures (glTexImage2DMultisample, sampler2DMS), which
-	// GLES 3.0 does not have: there the scene is rendered single-sampled while SSAO is on.
-	if (needsSceneTextures && samples > 1 && gl.esversion > 0 && gl.esversion < 310)
-	{
-		static bool warned = false;
-		if (!warned) Printf("Multisampling is not combined with SSAO on OpenGL ES 3.0 (no multisample textures); rendering without MSAA.\n");
-		warned = true;
-		samples = 0;
-	}
+	if (samples < 2) samples = 0;
 
 	GLint activeTex;
 	GLint textureBinding;
@@ -159,11 +167,21 @@ void FGLRenderBuffers::Setup(int width, int height, int sceneWidth, int sceneHei
 	glActiveTexture(GL_TEXTURE0);
 	glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
 
-	if (width != mWidth || height != mHeight)
+	const bool resized = width != mWidth || height != mHeight;
+	if (resized)
+	{
+		// Release the old set before the new one is created (the pool drops textures of the
+		// old size right away instead of keeping both sets alive).
+		ClearScene();
 		CreatePipeline(width, height);
+		GLRenderTargetPool::Trim(true);
+	}
 
-	if (width != mWidth || height != mHeight || mSamples != samples || mSceneUsesTextures != needsSceneTextures)
-		CreateScene(width, height, samples, needsSceneTextures);
+	if (resized || mSamples != samples || mSceneUsesTextures != needsSceneTextures)
+	{
+		if (gl.esversion > 0) CreateSceneES(width, height, samples, needsSceneTextures);
+		else CreateScene(width, height, samples, needsSceneTextures);
+	}
 
 	mWidth = width;
 	mHeight = height;
@@ -250,12 +268,20 @@ void FGLRenderBuffers::CreatePipeline(int width, int height)
 	ClearPipeline();
 	ClearEyeBuffers();
 
+	mWidth = width;
+	mHeight = height;
 	mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, width, height);
-	for (int i = 0; i < NumPipelineTextures; i++)
-	{
-		mPipelineTexture[i] = Create2DTexture("PipelineTexture", GL_RGBA16F, width, height);
-		mPipelineFB[i] = CreateFrameBuffer("PipelineFB", mPipelineTexture[i], mPipelineDepthStencilBuf);
-	}
+	// The second texture is only needed by post-process passes that ping-pong; created on first use.
+	CreatePipelineTexture(0);
+}
+
+void FGLRenderBuffers::CreatePipelineTexture(int i)
+{
+	if (mPipelineTexture[i]) return;
+	// GLES: the scene and every pipeline stage stay RGBA8 - half the tile store/load traffic of
+	// RGBA16F on tile-based GPUs; HDR is kept for the effect textures that need it.
+	mPipelineTexture[i] = Create2DTexture("PipelineTexture", gl.esversion > 0 ? GL_RGBA8 : GL_RGBA16F, mWidth, mHeight);
+	mPipelineFB[i] = CreateFrameBuffer("PipelineFB", mPipelineTexture[i], mPipelineDepthStencilBuf);
 }
 
 //==========================================================================
@@ -277,7 +303,7 @@ void FGLRenderBuffers::CreateEyeBuffers(int eye)
 
 	while (mEyeFBs.Size() <= unsigned(eye))
 	{
-		PPGLTexture texture = Create2DTexture("EyeTexture", GL_RGBA16F, mWidth, mHeight);
+		PPGLTexture texture = Create2DTexture("EyeTexture", gl.esversion > 0 ? GL_RGBA8 : GL_RGBA16F, mWidth, mHeight);
 		mEyeTextures.Push(texture);
 		mEyeFBs.Push(CreateFrameBuffer("EyeFB", texture));
 	}
@@ -298,14 +324,49 @@ PPGLTexture FGLRenderBuffers::Create2DTexture(const char *name, GLuint format, i
 	PPGLTexture tex;
 	tex.Width = width;
 	tex.Height = height;
+
+	if (gl.esversion > 0 && !data)
+	{
+		// GLES 3.0 capability table for render targets: a float format is only used when it
+		// is color-renderable on this device, otherwise the closest renderable one.
+		switch (format)
+		{
+		case GL_RGBA16F:	if (!gl.colorbuffer16f) format = GL_RGBA8; break;
+		case GL_RG16F:		if (!gl.colorbuffer16f) format = GL_RG8; break;
+		case GL_R16F:		if (!gl.colorbuffer16f) format = GL_R8; break;
+		case GL_R32F:		if (!gl.colorbuffer32f) format = gl.colorbuffer16f ? GL_R16F : GL_R8; break;
+		case GL_RG32F:		if (!gl.colorbuffer32f) format = gl.colorbuffer16f ? GL_RG16F : GL_RG8; break;
+		case GL_RGBA32F:	if (!gl.colorbuffer32f) format = gl.colorbuffer16f ? GL_RGBA16F : GL_RGBA8; break;
+		case GL_RGBA16:		format = GL_RGBA8; break;	// no 16-bit normalized formats in GLES 3.0
+		default: break;
+		}
+	}
+	tex.internalFormat = format;
+
+	if (!data && GLRenderTargetPool::Acquire(tex, width, height, format))
+	{
+		glBindTexture(GL_TEXTURE_2D, tex.handle);
+		const GLint filter = tex.nearestOnly ? GL_NEAREST : GL_LINEAR;
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		return tex;
+	}
+
 	glGenTextures(1, &tex.handle);
 	glBindTexture(GL_TEXTURE_2D, tex.handle);
 	FGLDebug::LabelObject(GL_TEXTURE, tex.handle, name);
+	tex.pooled = data == nullptr;
+	GLRenderTargetPool::TrackAllocation((int64_t)GLRenderTargetPool::TextureBytes(width, height, format));
+	rtStatsGL.created++;
 
 	GLenum dataformat = 0, datatype = 0;
 	switch (format)
 	{
 	case GL_RGBA8:				dataformat = GL_RGBA; datatype = GL_UNSIGNED_BYTE; break;
+	case GL_RG8:				dataformat = GL_RG; datatype = GL_UNSIGNED_BYTE; break;
+	case GL_R8:					dataformat = GL_RED; datatype = GL_UNSIGNED_BYTE; break;
 	case GL_RGBA16:				dataformat = GL_RGBA; datatype = GL_UNSIGNED_SHORT; break;
 	case GL_RGBA16F:			dataformat = GL_RGBA; datatype = GL_FLOAT; break;
 	case GL_RGBA32F:			dataformat = GL_RGBA; datatype = GL_FLOAT; break;
@@ -315,20 +376,13 @@ PPGLTexture FGLRenderBuffers::Create2DTexture(const char *name, GLuint format, i
 	case GL_RG32F:				dataformat = GL_RG; datatype = GL_FLOAT; break;
 	case GL_RG16F:				dataformat = GL_RG; datatype = GL_FLOAT; break;
 	case GL_RGB10_A2:			dataformat = GL_RGBA; datatype = GL_UNSIGNED_INT_2_10_10_10_REV; break;
-	case GL_DEPTH_COMPONENT24:	dataformat = GL_DEPTH_COMPONENT; datatype = GL_FLOAT; break;
+	case GL_DEPTH_COMPONENT24:	dataformat = GL_DEPTH_COMPONENT; datatype = gl.esversion > 0 ? GL_UNSIGNED_INT : GL_FLOAT; break;	// GLES: only UNSIGNED_INT is valid
 	case GL_STENCIL_INDEX8:		dataformat = GL_STENCIL_INDEX; datatype = GL_INT; break;
 	case GL_DEPTH24_STENCIL8:	dataformat = GL_DEPTH_STENCIL; datatype = GL_UNSIGNED_INT_24_8; break;
 	default: I_FatalError("Unknown format passed to FGLRenderBuffers.Create2DTexture");
 	}
 
-#ifdef ANDROID // FIXME
-	if (format == GL_RGBA16F)
-	{
-		format = GL_RGBA8;
-		dataformat = GL_RGBA;
-		datatype = GL_UNSIGNED_BYTE;
-	}
-
+#ifdef ANDROID
 	// GLES has no GL_RGBA16_SNORM: use GL_RGBA8_SNORM (SSAO random texture). Every one of the
 	// 4 * width * height components is converted, into a copy (the source belongs to the caller).
 	TArray<int8_t> snorm8;
@@ -391,6 +445,7 @@ PPGLRenderBuffer FGLRenderBuffers::CreateRenderBuffer(const char *name, GLuint f
 	glBindRenderbuffer(GL_RENDERBUFFER, buf.handle);
 	FGLDebug::LabelObject(GL_RENDERBUFFER, buf.handle, name);
 	glRenderbufferStorage(GL_RENDERBUFFER, format, width, height);
+	rtStatsGL.created++;
 	return buf;
 }
 
@@ -404,7 +459,71 @@ PPGLRenderBuffer FGLRenderBuffers::CreateRenderBuffer(const char *name, GLuint f
 	glBindRenderbuffer(GL_RENDERBUFFER, buf.handle);
 	FGLDebug::LabelObject(GL_RENDERBUFFER, buf.handle, name);
 	glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, format, width, height);
+	rtStatsGL.created++;
 	return buf;
+}
+
+// Renderbuffer for an EXT/IMG multisampled-render-to-texture frame buffer: it must come from
+// the extension's own entry point to be compatible with the implicitly resolved color texture.
+PPGLRenderBuffer FGLRenderBuffers::CreateRenderBufferRTT(const char *name, GLuint format, int width, int height, int samples)
+{
+	typedef void (APIENTRY *RBSMS)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+	PPGLRenderBuffer buf;
+	glGenRenderbuffers(1, &buf.handle);
+	glBindRenderbuffer(GL_RENDERBUFFER, buf.handle);
+	FGLDebug::LabelObject(GL_RENDERBUFFER, buf.handle, name);
+	((RBSMS)gl.pRenderbufferStorageMultisampleRTT)(GL_RENDERBUFFER, samples, format, width, height);
+	rtStatsGL.created++;
+	return buf;
+}
+
+PPGLFrameBuffer FGLRenderBuffers::CreateFrameBufferRTT(const char *name, PPGLTexture colorbuffer, PPGLRenderBuffer depthstencil, int samples)
+{
+	typedef void (APIENTRY *FT2DMS)(GLenum, GLenum, GLenum, GLuint, GLint, GLsizei);
+	PPGLFrameBuffer fb;
+	glGenFramebuffers(1, &fb.handle);
+	glBindFramebuffer(GL_FRAMEBUFFER, fb.handle);
+	FGLDebug::LabelObject(GL_FRAMEBUFFER, fb.handle, name);
+	((FT2DMS)gl.pFramebufferTexture2DMultisample)(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorbuffer.handle, 0, samples);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthstencil.handle);
+	if (CheckFrameBufferCompleteness())
+		ClearFrameBuffer(true, true);
+	else
+	{
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glDeleteFramebuffers(1, &fb.handle);
+		fb.handle = 0;
+	}
+	return fb;
+}
+
+PPGLFrameBuffer FGLRenderBuffers::CreateFrameBuffer(const char *name, PPGLRenderBuffer color0, PPGLRenderBuffer color1, PPGLRenderBuffer color2, PPGLRenderBuffer depthstencil)
+{
+	PPGLFrameBuffer fb;
+	glGenFramebuffers(1, &fb.handle);
+	glBindFramebuffer(GL_FRAMEBUFFER, fb.handle);
+	FGLDebug::LabelObject(GL_FRAMEBUFFER, fb.handle, name);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color0.handle);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER, color1.handle);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_RENDERBUFFER, color2.handle);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthstencil.handle);
+	if (CheckFrameBufferCompleteness())
+		ClearFrameBuffer(true, true);
+	return fb;
+}
+
+PPGLFrameBuffer FGLRenderBuffers::CreateDepthFrameBuffer(const char *name, PPGLTexture depthstencil)
+{
+	PPGLFrameBuffer fb;
+	glGenFramebuffers(1, &fb.handle);
+	glBindFramebuffer(GL_FRAMEBUFFER, fb.handle);
+	FGLDebug::LabelObject(GL_FRAMEBUFFER, fb.handle, name);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, depthstencil.handle, 0);
+	GLenum none = GL_NONE;
+	glDrawBuffers(1, &none);
+	glReadBuffer(GL_NONE);
+	CheckFrameBufferCompleteness();
+	return fb;
 }
 
 //==========================================================================
@@ -559,9 +678,22 @@ void FGLRenderBuffers::BlitSceneToTexture()
 {
 	mCurrentPipelineTexture = 0;
 
-	if (mSamples <= 1)
+	if (mSamples <= 1 || mMSAAMode == MSAA_RenderToTexture)
+	{
+		// The scene depth is not read after the scene pass (single-sampled: the pipeline continues
+		// on its own depth buffer; render-to-texture: the color was resolved inline and the
+		// multisampled depth is undefined anyway). Don't let a tiler write it back.
+		if ((gl.flags & RFL_INVALIDATE_BUFFER) && mSceneFB)
+		{
+			glBindFramebuffer(GL_FRAMEBUFFER, mSceneFB.handle);
+			GLenum attachments[1] = { GL_DEPTH_STENCIL_ATTACHMENT };
+			glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, attachments);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		}
 		return;
+	}
 
+	rtStatsGL.resolves++;
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, mSceneFB.handle);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mPipelineFB[mCurrentPipelineTexture].handle);
 	glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -574,6 +706,53 @@ void FGLRenderBuffers::BlitSceneToTexture()
 
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+}
+
+//==========================================================================
+//
+// GLES 3.0 MSAA with SSAO: there are no multisample textures, so the
+// multisampled G-buffer (color, fog, normal, depth renderbuffers) is resolved
+// attachment by attachment into single-sampled textures for the SSAO passes.
+//
+//==========================================================================
+
+void FGLRenderBuffers::ResolveSceneData()
+{
+	if (!mResolveSceneData) return;
+	rtStatsGL.resolves++;
+
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, mSceneDataFB.handle);
+	struct { GLenum attachment; GLuint target; } colors[] = {
+		{ GL_COLOR_ATTACHMENT0, mPipelineFB[0].handle },
+		{ GL_COLOR_ATTACHMENT1, mSceneFogResolveFB.handle },
+		{ GL_COLOR_ATTACHMENT2, mSceneNormalResolveFB.handle } };
+	for (auto &c : colors)
+	{
+		glReadBuffer(c.attachment);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, c.target);
+		glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	}
+	glReadBuffer(GL_COLOR_ATTACHMENT0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mSceneDepthResolveFB.handle);
+	glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+}
+
+void FGLRenderBuffers::InvalidatePipelineDepth()
+{
+	if (!(gl.flags & RFL_INVALIDATE_BUFFER) || !mPipelineDepthStencilBuf.handle) return;
+	GLint fb = 0;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+	GLenum attachments[1] = { GL_DEPTH_STENCIL_ATTACHMENT };
+	for (auto &pfb : mPipelineFB)
+	{
+		if (!pfb) continue;
+		glBindFramebuffer(GL_FRAMEBUFFER, pfb.handle);
+		glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, attachments);
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, fb);
 }
 
 //==========================================================================
@@ -709,6 +888,7 @@ void FGLRenderBuffers::CreateShadowMap()
 
 void FGLRenderBuffers::BindSceneFB(bool sceneData)
 {
+	rtStatsGL.fboBinds++;
 	glBindFramebuffer(GL_FRAMEBUFFER, sceneData ? mSceneDataFB.handle : mSceneFB.handle);
 }
 
@@ -721,7 +901,7 @@ void FGLRenderBuffers::BindSceneFB(bool sceneData)
 void FGLRenderBuffers::BindSceneColorTexture(int index)
 {
 	glActiveTexture(GL_TEXTURE0 + index);
-	if (mSamples > 1)
+	if (SceneDataMultisampled())
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mSceneMultisampleTex.handle);
 	else
 		glBindTexture(GL_TEXTURE_2D, mPipelineTexture[0].handle);
@@ -736,7 +916,7 @@ void FGLRenderBuffers::BindSceneColorTexture(int index)
 void FGLRenderBuffers::BindSceneFogTexture(int index)
 {
 	glActiveTexture(GL_TEXTURE0 + index);
-	if (mSamples > 1)
+	if (SceneDataMultisampled())
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mSceneFogTex.handle);
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneFogTex.handle);
@@ -751,7 +931,7 @@ void FGLRenderBuffers::BindSceneFogTexture(int index)
 void FGLRenderBuffers::BindSceneNormalTexture(int index)
 {
 	glActiveTexture(GL_TEXTURE0 + index);
-	if (mSamples > 1)
+	if (SceneDataMultisampled())
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mSceneNormalTex.handle);
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneNormalTex.handle);
@@ -766,7 +946,7 @@ void FGLRenderBuffers::BindSceneNormalTexture(int index)
 void FGLRenderBuffers::BindSceneDepthTexture(int index)
 {
 	glActiveTexture(GL_TEXTURE0 + index);
-	if (mSamples > 1)
+	if (SceneDataMultisampled())
 		glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mSceneDepthStencilTex.handle);
 	else
 		glBindTexture(GL_TEXTURE_2D, mSceneDepthStencilTex.handle);
@@ -791,6 +971,7 @@ void FGLRenderBuffers::BindCurrentTexture(int index, int filter, int wrap)
 
 void FGLRenderBuffers::BindCurrentFB()
 {
+	rtStatsGL.fboBinds++;
 	mPipelineFB[mCurrentPipelineTexture].Bind();
 }
 
@@ -803,6 +984,18 @@ void FGLRenderBuffers::BindCurrentFB()
 void FGLRenderBuffers::BindNextFB()
 {
 	int out = (mCurrentPipelineTexture + 1) % NumPipelineTextures;
+	if (!mPipelineTexture[out])
+	{
+		// first ping-pong pass: create the second pipeline texture without disturbing the
+		// texture bindings the post-process pass has already set up
+		GLint activeTex, textureBinding;
+		glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTex);
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
+		CreatePipelineTexture(out);
+		glBindTexture(GL_TEXTURE_2D, textureBinding);
+		glActiveTexture(activeTex);
+	}
+	rtStatsGL.fboBinds++;
 	mPipelineFB[out].Bind();
 }
 
@@ -825,6 +1018,7 @@ void FGLRenderBuffers::NextTexture()
 
 void FGLRenderBuffers::BindOutputFB()
 {
+	rtStatsGL.fboBinds++;
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -1073,5 +1267,175 @@ int FGLRenderBuffers::NextEye(int eyeCount)
 	BlitFromEyeTexture(mCurrentEye);
 	return mCurrentEye;
 }
+
+
+//==========================================================================
+//
+// GLES 3.0 scene buffers. MSAA, in order of preference:
+//  - EXT/IMG multisampled render-to-texture: the samples live in tile memory and are
+//    resolved into the pipeline texture when the tile is written out (no multisampled
+//    buffer in memory, no blit). Only with one color attachment, so not with SSAO.
+//  - multisampled renderbuffers + glBlitFramebuffer resolve (GLES 3.0 core); with SSAO
+//    the G-buffer attachments are resolved into textures before SSAO (ResolveSceneData).
+//  - no multisampling.
+//
+//==========================================================================
+
+void FGLRenderBuffers::CreateSceneES(int width, int height, int samples, bool needsSceneTextures)
+{
+	ClearScene();
+	if (samples > 1 && !needsSceneTextures && gl.msrtt)
+	{
+		int s = std::min(samples, gl.msrttMaxSamples);
+		mSceneDepthStencilBuf = CreateRenderBufferRTT("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, s);
+		mSceneFB = CreateFrameBufferRTT("SceneFB", mPipelineTexture[0], mSceneDepthStencilBuf, s);
+		if (mSceneFB)
+		{
+			mSceneDataFB = mSceneFB;
+			mMSAAMode = MSAA_RenderToTexture;
+			return;
+		}
+		DeleteRenderBuffer(mSceneDepthStencilBuf);
+		Printf("Multisampled render-to-texture frame buffer incomplete; using multisampled renderbuffers.\n");
+	}
+	if (samples > 1)
+	{
+		mMSAAMode = MSAA_Renderbuffers;
+		mSceneMultisampleBuf = CreateRenderBuffer("SceneMultisample", GL_RGBA8, width, height, samples);
+		mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, samples);
+		mSceneFB = CreateFrameBuffer("SceneFB", mSceneMultisampleBuf, mSceneDepthStencilBuf);
+		if (needsSceneTextures)
+		{
+			mResolveSceneData = true;
+			mSceneFogBuf = CreateRenderBuffer("SceneFog", GL_RGBA8, width, height, samples);
+			mSceneNormalBuf = CreateRenderBuffer("SceneNormal", GL_RGB10_A2, width, height, samples);
+			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mSceneMultisampleBuf, mSceneFogBuf, mSceneNormalBuf, mSceneDepthStencilBuf);
+			// single-sampled copies read by SSAO
+			mSceneDepthStencilTex = Create2DTexture("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height);
+			mSceneFogTex = Create2DTexture("SceneFog", GL_RGBA8, width, height);
+			mSceneNormalTex = Create2DTexture("SceneNormal", GL_RGB10_A2, width, height);
+			mSceneFogResolveFB = CreateFrameBuffer("SceneFogResolveFB", mSceneFogTex);
+			mSceneNormalResolveFB = CreateFrameBuffer("SceneNormalResolveFB", mSceneNormalTex);
+			mSceneDepthResolveFB = CreateDepthFrameBuffer("SceneDepthResolveFB", mSceneDepthStencilTex);
+		}
+		else
+		{
+			mSceneDataFB = CreateFrameBuffer("SceneGBufferFB", mSceneMultisampleBuf, mSceneDepthStencilBuf);
+		}
+		return;
+	}
+	CreateScene(width, height, 0, needsSceneTextures);
+}
+
+//==========================================================================
+//
+// Render target pool
+//
+//==========================================================================
+
+namespace
+{
+	struct PoolEntry
+	{
+		GLuint handle;
+		int width, height;
+		GLuint format;
+		bool nearestOnly;
+		size_t bytes;
+		uint64_t released;	// frame of release
+	};
+	TArray<PoolEntry> FreeTargets;
+	size_t FreeBytes = 0;
+	uint64_t PoolFrame = 0;
+}
+
+
+#if defined(__arm__) || defined(__i386__)
+CVAR(Int, gl_rtpool_budget_mb, 16, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+#else
+CVAR(Int, gl_rtpool_budget_mb, 48, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+#endif
+CVAR(Int, gl_rtpool_maxage, 300, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)	// frames an unused target may stay
+
+size_t GLRenderTargetPool::TextureBytes(int width, int height, GLuint format)
+{
+	size_t bpp;
+	switch (format)
+	{
+	case GL_R8:				bpp = 1; break;
+	case GL_RG8: case GL_R16F:	bpp = 2; break;
+	case GL_RGBA16F: case GL_RG32F: case GL_RGBA16: case GL_RGBA16_SNORM: bpp = 8; break;
+	case GL_RGBA32F:		bpp = 16; break;
+	default:				bpp = 4; break;
+	}
+	if (width <= 0 || height <= 0) return 0;
+	return size_t(width) * size_t(height) * bpp;
+}
+
+void GLRenderTargetPool::TrackAllocation(int64_t bytes)
+{
+	int64_t now = int64_t(rtStatsGL.bytes) + bytes;
+	rtStatsGL.bytes = now > 0 ? size_t(now) : 0;
+	if (rtStatsGL.bytes > rtStatsGL.peakBytes) rtStatsGL.peakBytes = rtStatsGL.bytes;
+}
+
+bool GLRenderTargetPool::Acquire(PPGLTexture &tex, int width, int height, GLuint format)
+{
+	for (unsigned i = 0; i < FreeTargets.Size(); i++)
+	{
+		auto &e = FreeTargets[i];
+		if (e.width == width && e.height == height && e.format == format)
+		{
+			tex.handle = e.handle;
+			tex.nearestOnly = e.nearestOnly;
+			tex.pooled = true;
+			tex.internalFormat = format;
+			FreeBytes -= e.bytes;
+			FreeTargets.Delete(i);
+			rtStatsGL.poolHits++;
+			return true;
+		}
+	}
+	rtStatsGL.poolMisses++;
+	return false;
+}
+
+void GLRenderTargetPool::Release(PPGLTexture &tex)
+{
+	if (!tex.handle) return;
+	size_t bytes = TextureBytes(tex.Width, tex.Height, tex.internalFormat);
+	FreeTargets.Push({ tex.handle, tex.Width, tex.Height, tex.internalFormat, tex.nearestOnly, bytes, PoolFrame });
+	FreeBytes += bytes;
+	tex.handle = 0;
+	Trim(false);
+}
+
+void GLRenderTargetPool::Trim(bool all)
+{
+	const size_t budget = size_t(std::max(0, (int)gl_rtpool_budget_mb)) << 20;
+	const uint64_t maxAge = (uint64_t)std::max(1, (int)gl_rtpool_maxage);
+	// oldest releases first
+	for (unsigned i = 0; i < FreeTargets.Size();)
+	{
+		auto &e = FreeTargets[i];
+		if (all || FreeBytes > budget || PoolFrame - e.released > maxAge)
+		{
+			glDeleteTextures(1, &e.handle);
+			FreeBytes -= e.bytes;
+			TrackAllocation(-(int64_t)e.bytes);
+			rtStatsGL.deleted++;
+			FreeTargets.Delete(i);
+		}
+		else i++;
+	}
+}
+
+void GLRenderTargetPool::FrameEnd()
+{
+	PoolFrame++;
+	if (FreeTargets.Size()) Trim(false);
+	rtStatsGL.pooledFreeBytes = FreeBytes;
+}
+
 
 }  // namespace OpenGLRenderer

@@ -57,6 +57,12 @@ void setTargetFPS (const int targetFPS){
 #endif
 
 CVAR(Bool, gl_scale_viewport, true, CVAR_ARCHIVE);
+EXTERN_CVAR(Int, gl_multisample)
+
+bool DFrameBuffer::SceneDataMultisampled()
+{
+	return gl_multisample > 1;
+}
 
 EXTERN_CVAR(Int, vid_maxfps)
 CVAR(Bool, cl_capfps, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)

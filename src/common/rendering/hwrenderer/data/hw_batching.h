@@ -46,6 +46,19 @@ struct FBatchStats
 	double uploadMs;	// CPU time spent building and uploading instance/index data
 };
 
+// Render target diagnostics, one instance per backend (rtStatsGL, rtStatsGLES).
+struct FRenderTargetStats
+{
+	unsigned created, deleted;		// render target textures/renderbuffers (cumulative)
+	unsigned poolHits, poolMisses;	// render target pool (cumulative)
+	unsigned fboBinds, resolves;	// cumulative; per frame below
+	unsigned frameFboBinds, frameResolves;
+	size_t bytes, peakBytes;		// render target memory (estimated from size and format)
+	size_t pooledFreeBytes;			// part of 'bytes' held unused in the pool
+	unsigned lastFboBinds, lastResolves;
+};
+extern FRenderTargetStats rtStatsGL, rtStatsGLES;
+
 extern FBatchStats batchStats;		// the frame being rendered
 extern FBatchStats batchStatsLast;	// the previous complete frame
 

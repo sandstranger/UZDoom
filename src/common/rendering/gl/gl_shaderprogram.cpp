@@ -297,7 +297,7 @@ FString FShaderProgram::PatchShader(ShaderType type, const FString &code, const 
 	if (gEnableSpirvCross) {
 		patchedCode.AppendFormat("#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n");
 	} else{
-		patchedCode.AppendFormat("#version %s\n#define NO_CLIPDISTANCE_SUPPORT\n", gl.esversion >= 310 ? "310 es" : "300 es");
+		patchedCode.AppendFormat("#version 300 es\n#define NO_CLIPDISTANCE_SUPPORT\n");
 	}
 #else
 	patchedCode.AppendFormat("#version %d\n", shaderVersion);
@@ -315,7 +315,6 @@ if (!gEnableSpirvCross) {
 	patchedCode << "precision highp sampler2D;\n";
 	patchedCode << "precision highp sampler2DArray;\n";
 	patchedCode << "precision highp samplerCube;\n";
-	if (gl.esversion >= 310) patchedCode << "precision highp sampler2DMS;\n";	// the type does not exist in GLSL ES 3.00
 }
 #endif
 

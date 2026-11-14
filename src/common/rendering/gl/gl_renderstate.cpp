@@ -258,7 +258,11 @@ void FGLRenderState::ApplyState()
 
 	if (mSplitEnabled != stSplitEnabled)
 	{
-		if (mSplitEnabled)
+		if (gl.flags & RFL_NO_CLIP_PLANES)
+		{
+			// no hardware clip planes (OpenGL ES): the split planes are applied in the shaders
+		}
+		else if (mSplitEnabled)
 		{
 			glEnable(GL_CLIP_DISTANCE3);
 			glEnable(GL_CLIP_DISTANCE4);
@@ -620,13 +624,13 @@ void FGLRenderState::EnableDepthTest(bool on)
 void FGLRenderState::EnableMultisampling(bool on)
 {
 	FlushForImmediate();
-	ToggleState(GL_MULTISAMPLE, on);
+	if (gl.esversion == 0) ToggleState(GL_MULTISAMPLE, on);	// always on for multisampled targets in OpenGL ES
 }
 
 void FGLRenderState::EnableLineSmooth(bool on)
 {
 	FlushForImmediate();
-	ToggleState(GL_LINE_SMOOTH, on);
+	if (gl.esversion == 0) ToggleState(GL_LINE_SMOOTH, on);	// not in OpenGL ES
 }
 
 //==========================================================================
@@ -637,13 +641,13 @@ void FGLRenderState::EnableLineSmooth(bool on)
 void FGLRenderState::ClearScreen()
 {
 	FlushForImmediate();
-	bool multi = !!glIsEnabled(GL_MULTISAMPLE);
+	bool multi = gl.esversion == 0 && glIsEnabled(GL_MULTISAMPLE);
 
 	screen->mViewpoints->Set2D(*this, SCREENWIDTH, SCREENHEIGHT);
 	SetColor(0, 0, 0);
 	Apply();
 
-	glDisable(GL_MULTISAMPLE);
+	if (multi) glDisable(GL_MULTISAMPLE);
 	glDisable(GL_DEPTH_TEST);
 
 	glDrawArrays(GL_TRIANGLE_STRIP, FFlatVertexBuffer::FULLSCREEN_INDEX, 4);
@@ -665,8 +669,11 @@ bool FGLRenderState::SetDepthClamp(bool on)
 {
 	FlushForImmediate();
 	bool res = mLastDepthClamp;
-	if (!on) glDisable(GL_DEPTH_CLAMP);
-	else glEnable(GL_DEPTH_CLAMP);
+	if (gl.esversion == 0)	// OpenGL ES 3.0 has no depth clamping
+	{
+		if (!on) glDisable(GL_DEPTH_CLAMP);
+		else glEnable(GL_DEPTH_CLAMP);
+	}
 	mLastDepthClamp = on;
 	return res;
 }

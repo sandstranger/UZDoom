@@ -223,7 +223,7 @@ void GLBuffer::Resize(size_t newsize)
 
 void GLBuffer::GPUDropSync()
 {
-	if (gles.glesMode > GLES_MODE_GLES && gles.useMappedBuffers && glFenceSync && glDeleteSync)
+	if (gles.syncObjects && gles.useMappedBuffers)
 	{
 		if (mGLSync != NULL)
 		{
@@ -236,7 +236,7 @@ void GLBuffer::GPUDropSync()
 
 void GLBuffer::GPUWaitSync()
 {
-	if (gles.glesMode > GLES_MODE_GLES && gles.useMappedBuffers && glDeleteSync && glClientWaitSync)
+	if (gles.syncObjects && gles.useMappedBuffers && mGLSync)
 	{
 		GLenum status = glClientWaitSync(mGLSync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000 * 1000 * 50); // Wait for a max of 50ms...
 
@@ -303,7 +303,7 @@ void GLVertexBuffer::Bind(int *offsets)
 				glVertexAttribPointer(i, attrinf.size, attrinf.format, attrinf.normalize, (GLsizei)mStride, (void*)(intptr_t)ofs);
 			else
 			{
-				if (gles.glesMode >= GLES_MODE_OGL3)
+				if (gles.integerAttribs)
 					glVertexAttribIPointer(i, attrinf.size, attrinf.format, (GLsizei)mStride, (void*)(intptr_t)ofs);
 			}
 		}

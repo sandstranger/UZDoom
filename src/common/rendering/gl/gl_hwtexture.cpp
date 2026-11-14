@@ -137,18 +137,31 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		sourcetype = GL_BGRA;
 	}
 
-#ifdef ANDROID
-	if (glTextureBytes == 1)
+	bool swapRB = false;
+	if (gl.esversion > 0)
 	{
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		sourcetype = GL_RED;
-		texformat = GL_R8;
+		// OpenGL ES 3.0: no GL_BGR, GL_BGRA only with EXT_texture_format_BGRA8888 (then also as
+		// internal format); without it the BGRA data is uploaded as RGBA8 and red/blue are
+		// swapped by texture swizzle (core in GLES 3.0), so no CPU copy is needed.
+		if (glTextureBytes == 1)
+		{
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			sourcetype = GL_RED;
+			texformat = GL_R8;
+		}
+		else if (gl.bgra)
+		{
+			texformat = sourcetype = GL_BGRA;
+		}
+		else
+		{
+			texformat = GL_RGBA8;
+			sourcetype = GL_RGBA;
+			swapRB = true;
+		}
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, swapRB ? GL_BLUE : GL_RED);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, swapRB ? GL_RED : GL_BLUE);
 	}
-    else
-    {
-		texformat = sourcetype = GL_BGRA;
-    }
-#endif
 
 	if (!firstCall && glBufferID > 0)
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, rw, rh, sourcetype, GL_UNSIGNED_BYTE, buffer);
@@ -190,10 +203,12 @@ void FHardwareTexture::AllocateBuffer(int w, int h, int texelsize)
 	{
 		glGenBuffers(1, &glBufferID);
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, glBufferID);
-		glBufferData(GL_PIXEL_UNPACK_BUFFER, w*h*texelsize, nullptr, GL_STREAM_DRAW);
+		// size_t arithmetic: w*h*4 overflows int for very large canvases on 32-bit builds
+		const size_t bytes = size_t(w) * size_t(h) * size_t(texelsize);
+		glBufferData(GL_PIXEL_UNPACK_BUFFER, (GLsizeiptr)bytes, nullptr, GL_STREAM_DRAW);
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 #ifdef ANDROID
-		size = w*h*texelsize;
+		size = (decltype(size))bytes;
 #endif
 	}
 }
@@ -203,7 +218,9 @@ uint8_t *FHardwareTexture::MapBuffer()
 {
 	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, glBufferID);
 #ifdef ANDROID
-	return (uint8_t*)glMapBufferRange (GL_PIXEL_UNPACK_BUFFER, 0, size, GL_MAP_WRITE_BIT );
+	// The whole buffer is rewritten: invalidating it lets the driver hand out fresh storage
+	// instead of waiting for the GPU to finish the previous upload from it.
+	return (uint8_t*)glMapBufferRange (GL_PIXEL_UNPACK_BUFFER, 0, size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
 #else
 	return (uint8_t*)glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
 #endif
