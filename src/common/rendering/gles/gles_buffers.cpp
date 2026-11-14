@@ -211,6 +211,9 @@ void GLBuffer::SetSubData(size_t offset, size_t size, const void *data)
 
 void GLBuffer::Upload(size_t start, size_t size)
 {
+	// Data buffers (lights, bones, viewpoints) are CPU memory here, read by the render state: the
+	// written ranges they report are nothing to upload (and they have no GL buffer storage).
+	if (isData) return;
 	if (mStaging)
 	{
 		if (size == 0) return;

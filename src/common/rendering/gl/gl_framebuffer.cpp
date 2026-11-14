@@ -306,6 +306,7 @@ void OpenGLFrameBuffer::Swap()
 	bool swapbefore = gl_finishbeforeswap && camtexcount == 0;
 	Finish.Reset();
 	Finish.Clock();
+	gl_RenderState.EndStreamFrame();	// fence of the instance/index stream region this frame wrote
 	if (!mPipelineType)	// not the live cvar: the buffers were set up for the value at startup
 	{
 #ifndef ANDROID		
@@ -326,6 +327,7 @@ void OpenGLFrameBuffer::Swap()
 		mVertexData->NextPipelineBuffer();
 		mVertexData->WaitSync();
 	}
+	gl_RenderState.BeginStreamFrame();
 
 #ifdef ANDROID
 	GLRenderer->mShaderManager->SetActiveShader(0);

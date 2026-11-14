@@ -271,12 +271,14 @@ void OpenGLFrameBuffer::Swap()
 	Finish.Clock();
 
 	mVertexData->DropSync();
+	gl_RenderState.EndStreamFrame();	// fence of the instance/index stream region this frame wrote
 
 	FPSLimit();
 	SwapBuffers();
 
 	mVertexData->NextPipelineBuffer();
 	mVertexData->WaitSync();
+	gl_RenderState.BeginStreamFrame();
 
 	Finish.Unclock();
 	camtexcount = 0;

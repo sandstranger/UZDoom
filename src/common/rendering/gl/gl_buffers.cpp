@@ -27,6 +27,12 @@
 #include "gl_renderstate.h"
 #include "v_video.h"
 #include "flatvertices.h"
+#include "gl_interface.h"
+#include "c_cvars.h"
+
+// OpenGL ES: map the dynamic buffers (lights, bones, viewpoints) once with GL_EXT_buffer_storage
+// when the driver has it. Takes effect when the renderer starts.
+CVAR(Bool, gl_es_persistent_buffers, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 namespace OpenGLRenderer
 {
@@ -53,8 +59,10 @@ GLBuffer::~GLBuffer()
 	if (mBufferId != 0)
 	{
 		// glUnmapBuffer on a buffer that is not mapped is GL_INVALID_OPERATION (the 2D drawer's
-		// temporary buffers raised it every frame): only a mapped one is released first.
-		if (map != nullptr)
+		// temporary buffers raised it every frame): only a mapped one is released first. A staged
+		// buffer's 'map' is its CPU copy, its GL buffer is not mapped.
+		SetPersistentRegistered(false);
+		if (mPersistentMap != nullptr || (map != nullptr && !mStaging))
 		{
 			glBindBuffer(mUseType, mBufferId);
 			glUnmapBuffer(mUseType);
@@ -92,9 +100,117 @@ bool GLBuffer::SetStaging(void *staging)
 
 void GLBuffer::Upload(size_t start, size_t size)
 {
-	if (!mStaging || size == 0) return;
+	if (!mStaging && !mExplicitFlush) return;
 	std::lock_guard<std::mutex> lock(mDirtyLock);	// plane updates may come from other threads
+	if (mExplicitFlush) mRangesReported = true;	// even if empty: nothing to flush then
+	if (size == 0) return;
 	mDirty.push_back({ start, size });
+	if (mPersistentMap != nullptr) sWritesPending.store(true, std::memory_order_release);
+}
+
+//===========================================================================
+//
+// Persistently mapped buffers that may have reported writes not flushed yet
+// (all created and destroyed on the render thread).
+//
+//===========================================================================
+
+std::atomic<bool> GLBuffer::sWritesPending(false);
+static std::vector<GLBuffer *> PersistentBuffers;
+
+void GLBuffer::SetPersistentRegistered(bool on)
+{
+	auto it = std::find(PersistentBuffers.begin(), PersistentBuffers.end(), this);
+	if (on && it == PersistentBuffers.end()) PersistentBuffers.push_back(this);
+	else if (!on && it != PersistentBuffers.end()) PersistentBuffers.erase(it);
+}
+
+void GLBuffer::FlushPendingWritesSlow()
+{
+	if (!sWritesPending.exchange(false, std::memory_order_acq_rel)) return;
+	for (GLBuffer *buffer : PersistentBuffers)
+	{
+		if (buffer->mPersistentMap != nullptr) buffer->FlushWritten(false);
+	}
+}
+
+//===========================================================================
+//
+// Explicitly flushed mappings (OpenGL ES): makes the written ranges visible
+// to the GPU. Must be called while the buffer is mapped. Without coherent
+// mappings this is what publishes the CPU writes - drivers with non-coherent
+// CPU caches (Mali) need the flush, a coherent mapping does not get it right
+// there. Users that do not report what they wrote get all of the buffer
+// flushed (the cost the plain glUnmapBuffer of a whole-buffer mapping had).
+//
+//===========================================================================
+
+void GLBuffer::FlushWritten(bool atUnmap)
+{
+	std::vector<std::pair<size_t, size_t>> ranges;
+	bool reported;
+	{
+		std::lock_guard<std::mutex> lock(mDirtyLock);
+		if (mDirty.empty() && !atUnmap) return;
+		ranges.swap(mDirty);
+		reported = mRangesReported;
+		if (atUnmap) mRangesReported = false;
+	}
+	if (atUnmap && !reported)
+	{
+		ranges.clear();
+		ranges.push_back({ 0, buffersize });
+	}
+	if (ranges.empty()) return;
+
+	// in order and merged: one flush per contiguous range
+	std::sort(ranges.begin(), ranges.end());
+	Bind();
+	size_t curStart = 0, curEnd = 0;
+	bool open = false;
+	auto flush = [&]()
+	{
+		if (open && curEnd > curStart) glFlushMappedBufferRange(mUseType, (GLintptr)curStart, (GLsizeiptr)(curEnd - curStart));
+	};
+	for (auto &range : ranges)
+	{
+		const size_t start = std::min(range.first, buffersize);
+		const size_t end = std::min(range.first + range.second, buffersize);
+		if (end <= start) continue;
+		if (open && start <= curEnd)
+		{
+			curEnd = std::max(curEnd, end);
+		}
+		else
+		{
+			flush();
+			curStart = start;
+			curEnd = end;
+			open = true;
+		}
+	}
+	flush();
+	// Only a vertex buffer binding is tracked by the render state; rebinding the uniform/storage
+	// buffer target does not disturb a draw that is being set up.
+	if (mUseType == GL_ARRAY_BUFFER) InvalidateBufferState();
+}
+
+void GLBuffer::ReleaseImmutableStorage()
+{
+	// Storage made by glBufferStorage cannot be respecified: the buffer object is replaced.
+	if (!mImmutable) return;
+	Bind();
+	if (mPersistentMap != nullptr) glUnmapBuffer(mUseType);
+	mPersistentMap = nullptr;
+	SetPersistentRegistered(false);
+	glBindBuffer(mUseType, 0);
+	glDeleteBuffers(1, &mBufferId);
+	glGenBuffers(1, &mBufferId);
+	mImmutable = false;
+	map = nullptr;
+	std::lock_guard<std::mutex> lock(mDirtyLock);
+	mDirty.clear();
+	mRangesReported = false;
 }
 
 void GLBuffer::FlushStaged()
@@ -163,6 +279,8 @@ void GLBuffer::SetData(size_t size, const void *data, BufferUsageType usage)
 		InvalidateBufferState();
 		return;
 	}
+	ReleaseImmutableStorage();
+	mExplicitFlush = false;
 	Bind();
 	if (usage == BufferUsageType::Static)
 	{
@@ -179,6 +297,36 @@ void GLBuffer::SetData(size_t size, const void *data, BufferUsageType usage)
 		{
 			glBufferStorage(mUseType, size, nullptr, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
 			map = glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
+		}
+		else if (gl.esversion > 0)
+		{
+			// OpenGL ES: written between Map and Unmap, flushed explicitly at Unmap (FlushWritten).
+			// With GL_EXT_buffer_storage: one persistent, non-coherent mapping for the buffer's lifetime
+			// (no glMapBufferRange/glUnmapBuffer per use); otherwise a mapping per use.
+			mExplicitFlush = true;
+			map = nullptr;
+			if (gl.bufferstorage && gl_es_persistent_buffers)
+			{
+				typedef void (APIENTRY *BUFFERSTORAGE)(GLenum, GLsizeiptr, const void *, GLbitfield);
+				((BUFFERSTORAGE)gl.pBufferStorage)(mUseType, (GLsizeiptr)size, nullptr, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT);
+				mImmutable = true;
+				mPersistentMap = glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_FLUSH_EXPLICIT_BIT);
+				if (mPersistentMap != nullptr)
+				{
+					SetPersistentRegistered(true);
+				}
+				else
+				{
+					// the storage could not be mapped (address space...): a plain buffer, mapped per use
+					ReleaseImmutableStorage();
+					Bind();
+					glBufferData(mUseType, size, nullptr, GL_STREAM_DRAW);
+				}
+			}
+			else
+			{
+				glBufferData(mUseType, size, nullptr, GL_STREAM_DRAW);
+			}
 		}
 		else
 		{
@@ -210,10 +358,19 @@ void GLBuffer::Map()
 		return;
 	}
 	assert(nomap == false);	// do not allow mapping of static buffers. Vulkan cannot do that so it should be blocked in OpenGL, too.
+	if (mPersistentMap != nullptr)
+	{
+		// mapped for good; 'map' is only handed out between Map and Unmap, like a mapping per use,
+		// so that nothing is written where it would not be flushed
+		map = mPersistentMap;
+		return;
+	}
 	if (!mPersistent && !nomap)
 	{
 		Bind();
-		map = (FFlatVertex*)glMapBufferRange(mUseType, 0, buffersize, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+		GLbitfield access = GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT;
+		if (mExplicitFlush) access |= GL_MAP_FLUSH_EXPLICIT_BIT;
+		map = (FFlatVertex*)glMapBufferRange(mUseType, 0, buffersize, access);
 		InvalidateBufferState();
 	}
 }
@@ -226,9 +383,16 @@ void GLBuffer::Unmap()
 		return;
 	}
 	assert(nomap == false);
+	if (mPersistentMap != nullptr)
+	{
+		if (map != nullptr) FlushWritten(true);
+		map = nullptr;
+		return;
+	}
 	if (!mPersistent && map != nullptr)
 	{
 		Bind();
+		if (mExplicitFlush) FlushWritten(true);
 		glUnmapBuffer(mUseType);
 		InvalidateBufferState();
 		map = nullptr;
@@ -262,7 +426,17 @@ void GLBuffer::Resize(size_t newsize)
 
 		// first unmap the old buffer (if it is mapped at all: non-persistent buffers mostly aren't)
 		Bind();
-		if (map != nullptr) glUnmapBuffer(mUseType);
+		if (mPersistentMap != nullptr) glUnmapBuffer(mUseType);
+		else if (map != nullptr) glUnmapBuffer(mUseType);
+		mPersistentMap = nullptr;
+		SetPersistentRegistered(false);
+		mImmutable = false;	// the old buffer object is deleted below, the new one has no storage yet
+		map = nullptr;
+		{
+			std::lock_guard<std::mutex> lock(mDirtyLock);
+			mDirty.clear();
+			mRangesReported = false;
+		}
 
 		glGenBuffers(1, &mBufferId);
 		SetData(newsize, nullptr, BufferUsageType::Persistent);

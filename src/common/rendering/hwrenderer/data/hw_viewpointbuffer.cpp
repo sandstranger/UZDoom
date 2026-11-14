@@ -97,6 +97,7 @@ void HWViewpointBuffer::Set2D(FRenderState &di, int width, int height, int pll)
 	CheckSize();
 	mBuffer->Map();
 	memcpy(((char*)mBuffer->Memory()) + mUploadIndex * mBlockAlign, &matrices, sizeof(matrices));
+	mBuffer->Upload(mUploadIndex * mBlockAlign, sizeof(matrices));	// the written block (explicitly flushed mappings)
 	mBuffer->Unmap();
 
 	mClipPlaneInfo.Push(0);
@@ -109,6 +110,7 @@ int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
 	CheckSize();
 	mBuffer->Map();
 	memcpy(((char*)mBuffer->Memory()) + mUploadIndex * mBlockAlign, vp, sizeof(*vp));
+	mBuffer->Upload(mUploadIndex * mBlockAlign, sizeof(*vp));	// the written block (explicitly flushed mappings)
 	mBuffer->Unmap();
 
 	mClipPlaneInfo.Push(vp->mClipHeightDirection != 0.f || vp->mClipLine.X > -1000000.0f);	// as main.vp tests it

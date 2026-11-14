@@ -47,6 +47,11 @@ struct RenderContext
 	void *pRenderbufferStorageMultisampleRTT;	// glRenderbufferStorageMultisample{EXT,IMG} (the RTT-compatible one)
 	int msaaMaxSamples;		// multisampled renderbuffers: highest count every scene format supports
 	bool angle;				// the GLES driver is ANGLE (GL_RENDERER / GL_VERSION name it)
+	// GL_EXT_buffer_storage (GLES): buffers mapped once for their whole lifetime. Used WITHOUT
+	// GL_MAP_COHERENT_BIT: the written ranges are flushed explicitly (glFlushMappedBufferRange),
+	// coherent mappings are not reliable on every driver (Mali).
+	bool bufferstorage;
+	void *pBufferStorage;	// glBufferStorageEXT
 	int max_texturesize;
 	char * vendorstring;
 	char * modelstring;

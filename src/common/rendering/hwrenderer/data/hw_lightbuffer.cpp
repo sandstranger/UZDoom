@@ -72,6 +72,28 @@ void FLightBuffer::Clear()
 	mBuffer = mBufferPipeline[mPipelinePos];
 }
 
+//==========================================================================
+//
+// The range written between Map and Unmap is reported (IBuffer::Upload):
+// backends that flush mapped buffers explicitly (OpenGL ES) flush only that
+// instead of the whole buffer (80000 lights, 5 MB).
+//
+//==========================================================================
+
+void FLightBuffer::Map()
+{
+	mMapStart = std::min<unsigned int>(mIndex, mBufferSize);
+	mBuffer->Map();
+}
+
+void FLightBuffer::Unmap()
+{
+	const unsigned int end = std::min<unsigned int>(mIndex, mBufferSize);	// mIndex grows past the end when the buffer is full
+	const unsigned int start = std::min(mMapStart, end);
+	mBuffer->Upload(size_t(start) * ELEMENT_SIZE, size_t(end - start) * ELEMENT_SIZE);
+	mBuffer->Unmap();
+}
+
 int FLightBuffer::UploadLights(FDynLightData &data)
 {
 	// All meaasurements here are in vec4's.

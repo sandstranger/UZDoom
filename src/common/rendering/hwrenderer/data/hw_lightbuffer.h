@@ -35,6 +35,7 @@ class FLightBuffer
 
 	bool mBufferType;
 	std::atomic<unsigned int> mIndex;
+	unsigned int mMapStart = 0;	// mIndex at Map: what is written up to Unmap is reported to the backend
 	unsigned int mBlockAlign;
 	unsigned int mBlockSize;
 	unsigned int mBufferSize;
@@ -49,8 +50,8 @@ public:
 	~FLightBuffer();
 	void Clear();
 	int UploadLights(FDynLightData &data);
-	void Map() { mBuffer->Map(); }
-	void Unmap() { mBuffer->Unmap(); }
+	void Map();
+	void Unmap();
 	unsigned int GetBlockSize() const { return mBlockSize; }
 	bool GetBufferType() const { return mBufferType; }
 	int GetBinding(unsigned int index, size_t* pOffset, size_t* pSize);

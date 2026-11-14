@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <mutex>
 #include <vector>
 #include "buffers.h"
@@ -51,8 +52,20 @@ protected:
 	char *mStaging = nullptr;
 	size_t mCapacity = 0;	// GPU storage of a staged buffer
 	std::mutex mDirtyLock;
-	std::vector<std::pair<size_t, size_t>> mDirty;	// written ranges not on the GPU yet
+	std::vector<std::pair<size_t, size_t>> mDirty;	// written ranges not on the GPU yet (staged), or not flushed yet (explicit flush)
 	void FlushStaged();
+
+	// OpenGL ES dynamic buffers: mapped with GL_MAP_FLUSH_EXPLICIT_BIT, only the ranges reported
+	// through Upload() are flushed at Unmap (all of the buffer when its user reports none).
+	// With GL_EXT_buffer_storage the mapping is made once and kept (mPersistentMap, not coherent).
+	bool mExplicitFlush = false;
+	bool mRangesReported = false;	// Upload() was called since the last Unmap
+	bool mImmutable = false;		// has glBufferStorage storage: cannot be respecified
+	void *mPersistentMap = nullptr;
+	void FlushWritten(bool atUnmap);
+	void ReleaseImmutableStorage();
+	void SetPersistentRegistered(bool on);
+	static void FlushPendingWritesSlow();
 
 	GLBuffer(int usetype);
 	~GLBuffer();
@@ -76,6 +89,15 @@ protected:
 	void GPUWaitSync();
 public:
 	void Bind();
+
+	// Persistently mapped buffers are written between Map and Unmap, but some writes are drawn
+	// before the Unmap (the bones of a model are uploaded right before its draws): the draw calls
+	// flush what was reported (Upload) so far. Only a relaxed flag check when nothing is pending.
+	static std::atomic<bool> sWritesPending;
+	static void FlushPendingWrites()
+	{
+		if (sWritesPending.load(std::memory_order_relaxed)) FlushPendingWritesSlow();
+	}
 };
 
 

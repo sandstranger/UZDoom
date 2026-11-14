@@ -36,6 +36,8 @@
 #include "hwrenderer/data/hw_viewpointbuffer.h"
 #include "texturemanager.h"
 
+EXTERN_CVAR(Bool, gl_es_persistent_buffers)
+
 namespace OpenGLRenderer
 {
 
@@ -480,6 +482,7 @@ void FGLRenderState::Draw(int dt, int index, int count, bool apply)
 	{
 		Apply();
 	}
+	GLBuffer::FlushPendingWrites();
 	drawcalls.Clock();
 	glDrawArrays(dt2gl[dt], index, count);
 	drawcalls.Unclock();
@@ -497,6 +500,7 @@ void FGLRenderState::DrawIndexed(int dt, int index, int count, bool apply)
 	{
 		Apply();
 	}
+	GLBuffer::FlushPendingWrites();
 	drawcalls.Clock();
 	glDrawElements(dt2gl[dt], count, GL_UNSIGNED_INT, (void*)(intptr_t)(index * sizeof(uint32_t)));
 	drawcalls.Unclock();
@@ -720,13 +724,110 @@ bool FGLRenderState::BatchingSupported(EBatchKind kind)
 	return (mBatchCaps & (kind == BK_Merge ? 1 : 2)) != 0;
 }
 
-// Streams data into a buffer that is only ever appended to; when it is full the storage is
-// orphaned (glBufferData with no data), so no region the GPU may still read is overwritten
-// and no CPU/GPU synchronisation is needed. Returns the byte offset or SIZE_MAX.
-size_t FGLRenderState::UploadStream(StreamBuffer &buf, unsigned int target, size_t maxCapacity, const void *data, size_t bytes)
+// Instance/index streams. With GL_EXT_buffer_storage (OpenGL ES) the data goes into a
+// persistent, non-coherent mapping: one region per frame in flight, guarded by a fence of
+// its own (BeginStreamFrame), each upload a memcpy plus an explicit flush of its range - no
+// driver copies, no mapping calls. Otherwise (or when this frame's region is full) a buffer
+// that is only ever appended to and orphaned when full (glBufferData with no data), written
+// through unsynchronized range mappings: a range that was never written in this storage is
+// nothing the GPU may still read, so neither a wait nor a driver copy of a buffer that pending
+// draws reference (glBufferSubData on a tiler: the whole buffer is ghosted) is needed.
+// Returns the byte offset or SIZE_MAX; 'bufferId' is the buffer that holds the data.
+
+bool FGLRenderState::PersistentStreamsAvailable()
+{
+	return gl.esversion > 0 && gl.bufferstorage && gl_es_persistent_buffers && glFenceSync && glClientWaitSync && glDeleteSync && glFlushMappedBufferRange;
+}
+
+size_t FGLRenderState::UploadPersistentStream(StreamBuffer &buf, unsigned int target, size_t regionSize, const void *data, size_t bytes)
+{
+	if (buf.persistentFailed || !mStreamFrameUsable || bytes > regionSize) return SIZE_MAX;
+	if (buf.persistentId == 0)
+	{
+		if (!PersistentStreamsAvailable())
+		{
+			buf.persistentFailed = true;
+			return SIZE_MAX;
+		}
+		const size_t total = regionSize * STREAM_FRAMES;
+		glGenBuffers(1, &buf.persistentId);
+		glBindBuffer(target, buf.persistentId);
+		for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; i++) {}
+		typedef void (APIENTRY *BUFFERSTORAGE)(GLenum, GLsizeiptr, const void *, GLbitfield);
+		((BUFFERSTORAGE)gl.pBufferStorage)(target, (GLsizeiptr)total, nullptr, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT);
+		if (glGetError() == GL_NO_ERROR)
+			buf.persistentMap = (char *)glMapBufferRange(target, 0, (GLsizeiptr)total, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_FLUSH_EXPLICIT_BIT);
+		if (buf.persistentMap == nullptr)
+		{
+			glDeleteBuffers(1, &buf.persistentId);
+			buf.persistentId = 0;
+			buf.persistentFailed = true;
+			DPrintf(DMSG_NOTIFY, "Persistent stream buffer unavailable, streaming through orphaned buffers\n");
+			return SIZE_MAX;
+		}
+		buf.regionSize = regionSize;
+		buf.regionPos = 0;
+	}
+	if (buf.regionPos + bytes > buf.regionSize) return SIZE_MAX;	// this frame's region is full: the orphaned stream takes the rest
+
+	const size_t offset = size_t(mStreamFrame) * buf.regionSize + buf.regionPos;
+	memcpy(buf.persistentMap + offset, data, bytes);
+	glBindBuffer(target, buf.persistentId);
+	glFlushMappedBufferRange(target, (GLintptr)offset, (GLsizeiptr)bytes);
+	buf.regionPos = (buf.regionPos + bytes + 15) & ~size_t(15);
+	mStreamFrameWritten = true;
+	return offset;
+}
+
+void FGLRenderState::EndStreamFrame()
+{
+	if (!mStreamFrameWritten) return;
+	void *&fence = mStreamFences[mStreamFrame];
+	if (fence) glDeleteSync((GLsync)fence);
+	fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+	mStreamFrameWritten = false;
+}
+
+void FGLRenderState::BeginStreamFrame()
+{
+	mStreamFrame = (mStreamFrame + 1) % STREAM_FRAMES;
+	mInstanceStream.regionPos = mIndexStream.regionPos = 0;
+	mStreamFrameUsable = true;
+	void *&fence = mStreamFences[mStreamFrame];
+	if (fence)
+	{
+		// The region was last written STREAM_FRAMES frames ago: normally long done. If the GPU is
+		// still on it after a second this frame streams through the orphaned buffers instead and
+		// the fence is kept for the next time around.
+		GLenum status = glClientWaitSync((GLsync)fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+		for (int i = 0; i < 20 && status == GL_TIMEOUT_EXPIRED; i++)
+			status = glClientWaitSync((GLsync)fence, GL_SYNC_FLUSH_COMMANDS_BIT, 50 * 1000 * 1000);
+		if (status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED)
+		{
+			glDeleteSync((GLsync)fence);
+			fence = nullptr;
+		}
+		else
+		{
+			mStreamFrameUsable = false;
+		}
+	}
+}
+
+size_t FGLRenderState::UploadStream(StreamBuffer &buf, unsigned int target, size_t maxCapacity, size_t regionSize, const void *data, size_t bytes, unsigned int &bufferId)
 {
 	if (bytes == 0 || bytes > maxCapacity) return SIZE_MAX;
 	double t0 = BatchStatsTiming() ? BatchTimeMs() : 0;
+
+	size_t offset = UploadPersistentStream(buf, target, regionSize, data, bytes);
+	if (offset != SIZE_MAX)
+	{
+		bufferId = buf.persistentId;
+		batchStats.instanceUploads++;
+		batchStats.uploadBytes += bytes;
+		if (t0 != 0) batchStats.uploadMs += BatchTimeMs() - t0;
+		return offset;
+	}
 
 	bool allocate = false;
 	if (buf.id == 0)
@@ -761,9 +862,19 @@ size_t FGLRenderState::UploadStream(StreamBuffer &buf, unsigned int target, size
 			return SIZE_MAX;
 		}
 	}
-	size_t offset = buf.pos;
-	glBufferSubData(target, offset, bytes, data);
+	offset = buf.pos;
+	void *p = glMapBufferRange(target, (GLintptr)offset, (GLsizeiptr)bytes, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
+	if (p != nullptr)
+	{
+		memcpy(p, data, bytes);
+		glUnmapBuffer(target);
+	}
+	else
+	{
+		glBufferSubData(target, offset, bytes, data);
+	}
 	buf.pos = (offset + bytes + 15) & ~size_t(15);
+	bufferId = buf.id;
 
 	batchStats.instanceUploads++;
 	batchStats.uploadBytes += bytes;
@@ -784,10 +895,13 @@ bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 
 #if defined(__arm__) || defined(__i386__)
 	const size_t maxStream = 512 * 1024;
+	const size_t regionSize = 256 * 1024;	// 2048 instances per frame in the persistent stream
 #else
 	const size_t maxStream = 2048 * 1024;
+	const size_t regionSize = 512 * 1024;	// 4096 instances per frame in the persistent stream
 #endif
-	size_t offset = UploadStream(mInstanceStream, GL_ARRAY_BUFFER, maxStream, batch.instances.Data(), count * sizeof(FInstanceGPU));
+	unsigned int streamId = 0;
+	size_t offset = UploadStream(mInstanceStream, GL_ARRAY_BUFFER, maxStream, regionSize, batch.instances.Data(), count * sizeof(FInstanceGPU), streamId);
 	if (offset == SIZE_MAX) return false;
 
 	mInstancedShader = shader;
@@ -797,7 +911,7 @@ bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 	mInstancedShader = nullptr;
 
 	// Per-instance attributes. The per-vertex ones (bound by ApplyBuffers) keep divisor 0.
-	glBindBuffer(GL_ARRAY_BUFFER, mInstanceStream.id);
+	glBindBuffer(GL_ARRAY_BUFFER, streamId);
 	const GLsizei stride = sizeof(FInstanceGPU);
 	auto attrib = [&](GLuint loc, size_t field)
 	{
@@ -814,6 +928,7 @@ bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 	glVertexAttribDivisor(VATTR_INSTANCE_COLORS, 1);
 
 	static const int dt2gl[] = { GL_POINTS, GL_LINES, GL_TRIANGLES, GL_TRIANGLE_FAN, GL_TRIANGLE_STRIP };
+	GLBuffer::FlushPendingWrites();
 	drawcalls.Clock();
 	if (batch.kind == BK_Quad)
 	{
@@ -852,15 +967,19 @@ bool FGLRenderState::DrawMergedBatch(FDrawBatch &batch)
 	Apply();
 #if defined(__arm__) || defined(__i386__)
 	const size_t maxStream = 1024 * 1024;
+	const size_t regionSize = 512 * 1024;	// 128K indices per frame in the persistent stream
 #else
 	const size_t maxStream = 4096 * 1024;
+	const size_t regionSize = 1024 * 1024;	// 256K indices per frame in the persistent stream
 #endif
-	size_t offset = UploadStream(mIndexStream, GL_ELEMENT_ARRAY_BUFFER, maxStream, mMergedIndices.Data(), batch.mergedIndices * sizeof(uint32_t));
+	unsigned int streamId = 0;
+	size_t offset = UploadStream(mIndexStream, GL_ELEMENT_ARRAY_BUFFER, maxStream, regionSize, mMergedIndices.Data(), batch.mergedIndices * sizeof(uint32_t), streamId);
 	if (offset == SIZE_MAX)
 	{
 		mCurrentIndexBuffer = nullptr;
 		return false;
 	}
+	GLBuffer::FlushPendingWrites();
 	drawcalls.Clock();
 	glDrawElements(GL_TRIANGLES, batch.mergedIndices, GL_UNSIGNED_INT, (void *)(intptr_t)offset);
 	drawcalls.Unclock();
@@ -873,6 +992,17 @@ void FGLRenderState::ReleaseBatchResources()
 {
 	if (mInstanceStream.id) glDeleteBuffers(1, &mInstanceStream.id);
 	if (mIndexStream.id) glDeleteBuffers(1, &mIndexStream.id);
+	// deleting a mapped buffer releases its mapping
+	if (mInstanceStream.persistentId) glDeleteBuffers(1, &mInstanceStream.persistentId);
+	if (mIndexStream.persistentId) glDeleteBuffers(1, &mIndexStream.persistentId);
+	for (void *&fence : mStreamFences)
+	{
+		if (fence) glDeleteSync((GLsync)fence);
+		fence = nullptr;
+	}
+	mStreamFrame = 0;
+	mStreamFrameWritten = false;
+	mStreamFrameUsable = true;
 	mInstanceStream = {};
 	mIndexStream = {};
 	mMergedIndices.Reset();

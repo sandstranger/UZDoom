@@ -83,12 +83,26 @@ class FGLRenderState final : public FRenderState
 		unsigned int id = 0;
 		size_t capacity = 0;
 		size_t pos = 0;
+		// GL_EXT_buffer_storage (OpenGL ES): one persistent, non-coherent mapping split into
+		// STREAM_FRAMES regions, one per frame in flight (fenced, see BeginStreamFrame)
+		unsigned int persistentId = 0;
+		char *persistentMap = nullptr;
+		size_t regionSize = 0;
+		size_t regionPos = 0;
+		bool persistentFailed = false;
 	};
+	static constexpr int STREAM_FRAMES = 3;
+	void *mStreamFences[STREAM_FRAMES] = {};	// GLsync of the last frame that wrote each region
+	int mStreamFrame = 0;
+	bool mStreamFrameWritten = false;
+	bool mStreamFrameUsable = true;			// this frame's region is free (its fence signalled)
+	bool PersistentStreamsAvailable();
+	size_t UploadPersistentStream(StreamBuffer &buf, unsigned int target, size_t regionSize, const void *data, size_t bytes);
 	StreamBuffer mInstanceStream, mIndexStream;
 	int mBatchCaps = -1;			// bit 0: merged draws, bit 1: instancing; -1 = not probed yet
 	int mInstancedVariant = 0;		// 1 quads, 2 models: selects the shader flavour in ApplyShader
 	TArray<uint32_t> mMergedIndices;
-	size_t UploadStream(StreamBuffer &buf, unsigned int target, size_t maxCapacity, const void *data, size_t bytes);
+	size_t UploadStream(StreamBuffer &buf, unsigned int target, size_t maxCapacity, size_t regionSize, const void *data, size_t bytes, unsigned int &bufferId);
 	void FlushForImmediate()
 	{
 		if (mPendingBatches && !mFlushingBatch) FlushBatches(BB_Immediate);
@@ -108,6 +122,9 @@ protected:
 
 public:
 	void ReleaseBatchResources();
+	// Frame boundaries for the instance/index stream regions: around the buffer swap.
+	void EndStreamFrame();
+	void BeginStreamFrame();
 
 	FGLRenderState()
 	{

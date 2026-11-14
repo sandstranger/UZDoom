@@ -347,6 +347,13 @@ namespace OpenGLESRenderer
 		gles.bgraTextures = CheckExtension("GL_EXT_texture_format_BGRA8888");
 		gles.textureSwizzle = core3;
 		gles.syncObjects = core3 && glFenceSync && glClientWaitSync && glDeleteSync;
+		gles.bufferStorage = false;
+		gles.pBufferStorage = nullptr;
+		if (es3 && gles.syncObjects && glMapBufferRange && glFlushMappedBufferRange && CheckExtension("GL_EXT_buffer_storage"))
+		{
+			gles.pBufferStorage = GetProc("glBufferStorageEXT");
+			gles.bufferStorage = gles.pBufferStorage != nullptr;
+		}
 		gles.integerAttribs = core3 && glVertexAttribIPointer;
 		gles.invalidateFramebuffer = es3 && glInvalidateFramebuffer;
 		gles.pDiscardFramebuffer = nullptr;

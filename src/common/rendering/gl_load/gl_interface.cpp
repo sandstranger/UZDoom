@@ -187,6 +187,15 @@ static void LoadESCapabilities()
 	}
 	gl.msaaMaxSamples = MaxSceneRenderbufferSamples();
 
+	// Persistent buffer mappings. Not exposed as RFL_BUFFER_STORAGE: that flag makes the scene code
+	// write vertices and lights at any time, even between draws, which needs coherent mappings. Here
+	// the scene keeps writing between Map and Unmap and the backend flushes what was written at Unmap.
+	if (CheckExtension("GL_EXT_buffer_storage"))
+	{
+		gl.pBufferStorage = GetESProc("glBufferStorageEXT");
+		gl.bufferstorage = gl.pBufferStorage != nullptr;
+	}
+
 	glGetIntegerv(GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, &v);
 	gl.maxuniforms = v;
 	glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &v);
@@ -201,6 +210,7 @@ static void LoadESCapabilities()
 	Printf("OpenGL ES %d.%d context%s, renderer limited to GLES 3.0; float16 targets %s, float32 targets %s, float32 filtering %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers max %d\n",
 		gl.esphysical / 100, (gl.esphysical / 10) % 10, gl.angle ? " (ANGLE)" : "", gl.colorbuffer16f ? "yes" : "no", gl.colorbuffer32f ? "yes" : "no", gl.floatlinear ? "yes" : "no",
 		gl.msrtt == 1 ? "EXT" : gl.msrtt == 2 ? "IMG" : "no", gl.msrttMaxSamples, gl.msaaMaxSamples);
+	Printf("Dynamic buffers: %s, written ranges flushed explicitly\n", gl.bufferstorage ? "persistently mapped (EXT_buffer_storage)" : "mapped per use");
 }
 
 
@@ -216,6 +226,8 @@ void gl_LoadExtensions()
 	gl.esphysical = gl.esversion = 0;
 	gl.msrtt = gl.msrttMaxSamples = gl.msaaMaxSamples = 0;
 	gl.pFramebufferTexture2DMultisample = gl.pRenderbufferStorageMultisampleRTT = nullptr;
+	gl.bufferstorage = false;
+	gl.pBufferStorage = nullptr;
 	gl.vendorstring = (char*)glGetString(GL_VENDOR);
 	gl.modelstring = (char*)glGetString(GL_RENDERER);
 	gl.angle = (gl.modelstring && strstr(gl.modelstring, "ANGLE")) || (glversion && strstr(glversion, "ANGLE"));

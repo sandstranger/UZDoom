@@ -67,6 +67,27 @@ void BoneBuffer::Clear()
 	mBuffer = mBufferPipeline[mPipelinePos];
 }
 
+//==========================================================================
+//
+// The range written between Map and Unmap is reported (IBuffer::Upload):
+// backends that flush mapped buffers explicitly (OpenGL ES) flush only that
+// instead of the whole buffer (80000 matrices, 5 MB).
+//
+//==========================================================================
+
+void BoneBuffer::Map()
+{
+	mMapStart = std::min<unsigned int>(mIndex, mBufferSize);
+	mBuffer->Map();
+}
+
+void BoneBuffer::Unmap()
+{
+	// every upload reported its range already (UploadBones): an empty report says so
+	mBuffer->Upload(0, 0);
+	mBuffer->Unmap();
+}
+
 int BoneBuffer::UploadBones(const TArray<VSMatrix>& bones)
 {
 	int totalsize = bones.Size();
@@ -85,6 +106,9 @@ int BoneBuffer::UploadBones(const TArray<VSMatrix>& bones)
 	if (thisindex + totalsize <= mBufferSize)
 	{
 		memcpy(mBufferPointer + thisindex * BONE_SIZE, bones.Data(), totalsize * BONE_SIZE);
+		// Reported right away: models are drawn with these bones before the buffer is unmapped,
+		// a persistently mapped buffer gets the range flushed by the next draw call.
+		mBuffer->Upload(size_t(thisindex) * BONE_SIZE, size_t(totalsize) * BONE_SIZE);
 		return thisindex;
 	}
 	else

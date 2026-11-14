@@ -136,6 +136,8 @@ namespace OpenGLESRenderer
 		bool bgraTextures;		// EXT_texture_format_BGRA8888
 		bool textureSwizzle;	// GL_TEXTURE_SWIZZLE_* (GLES 3.0 / desktop GL 3.3)
 		bool syncObjects;		// glFenceSync & co (GLES 3.0 / desktop GL 3.2)
+		bool bufferStorage;		// GL_EXT_buffer_storage, GLES 3.0 mode: persistent mappings (used non-coherent, explicitly flushed)
+		void *pBufferStorage;	// glBufferStorageEXT
 		bool integerAttribs;	// glVertexAttribIPointer (GLES 3.0 / desktop GL 3.0)
 		bool invalidateFramebuffer;	// glInvalidateFramebuffer (GLES 3.0)
 		void *pDiscardFramebuffer;	// glDiscardFramebufferEXT (GLES 2.0 + EXT_discard_framebuffer)
