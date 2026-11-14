@@ -170,7 +170,11 @@ public:
 	// MSAA without multisample textures (GLES 3.0): the multisampled G-buffer is resolved into
 	// single-sampled textures before SSAO reads it.
 	void ResolveSceneData();
-	bool SceneDataMultisampled() const { return mSamples > 1 && !mResolveSceneData; }
+	bool SceneDataMultisampled() const { return mSceneSamples > 1 && mMSAAMode != MSAA_RenderToTexture && !mResolveSceneData; }
+	int GetSceneSamples() const { return mSceneSamples > 1 ? mSceneSamples : 1; }
+	// Highest sample count offered for the scene (see the definition).
+	static int MultisampleLimit();
+	static const char *MultisamplePath();
 	// After the last use of the pipeline depth buffer in a frame.
 	void InvalidatePipelineDepth();
 
@@ -232,8 +236,9 @@ private:
 
 	int mWidth = 0;
 	int mHeight = 0;
-	int mSamples = 0;
-	int mMaxSamples = 0;
+	int mSamples = 0;		// requested count the scene buffers were created for
+	int mSceneSamples = 0;	// count they actually have (0: single-sampled)
+	int mMaxSamples = 0;	// multisampled renderbuffers
 	int mSceneWidth = 0;
 	int mSceneHeight = 0;
 

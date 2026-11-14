@@ -40,6 +40,8 @@
 #include "flatvertices.h"
 #include "version.h"
 #include "hw_material.h"
+#include "menu.h"
+#include "printf.h"
 
 #include <chrono>
 #include <thread>
@@ -62,6 +64,64 @@ EXTERN_CVAR(Int, gl_multisample)
 bool DFrameBuffer::SceneDataMultisampled()
 {
 	return gl_multisample > 1;
+}
+
+int DFrameBuffer::SceneSampleCount()
+{
+	return gl_multisample > 1 ? (int)gl_multisample : 1;
+}
+
+//==========================================================================
+//
+// MSAA sample counts
+//
+//==========================================================================
+
+int V_MultisampleCount(int requested, int limit)
+{
+	int n = std::min(requested, limit);
+	if (n < 2) return 0;
+	int samples = 2;
+	while (samples * 2 <= n) samples *= 2;
+	return samples;
+}
+
+void V_SetMultisampleLimit(int limit, const char *path)
+{
+	// The full list as MENUDEF defined it is kept, so a renderer restart with another limit
+	// (or a menu reparse, which creates a new list) starts from all choices again.
+	static TArray<FOptionValues::Pair> allChoices;
+	static FOptionValues *filtered = nullptr;
+	FOptionValues **opt = OptionValues.CheckKey("Multisample");
+	if (opt != nullptr && *opt != nullptr)
+	{
+		TArray<FOptionValues::Pair> &vals = (*opt)->mValues;
+		if (*opt != filtered)
+		{
+			allChoices = vals;
+			filtered = *opt;
+		}
+		vals.Clear();
+		for (auto &choice : allChoices)
+		{
+			// 'Off' always stays; a count is listed only when it is rendered as such
+			if (choice.Value < 2 || (choice.Value <= limit && V_MultisampleCount((int)choice.Value, limit) == (int)choice.Value))
+				vals.Push(choice);
+		}
+	}
+
+	if (gl_multisample > 1)
+	{
+		int samples = V_MultisampleCount(gl_multisample, limit);
+		if (samples != gl_multisample)
+		{
+			if (samples > 1) Printf("MSAA: %dx is not available on this device, using %dx\n", (int)gl_multisample, samples);
+			else Printf("MSAA: %dx is not available on this device, MSAA off\n", (int)gl_multisample);
+			gl_multisample = samples > 1 ? samples : 1;
+		}
+	}
+	if (limit >= 2) Printf("MSAA: up to %dx (%s)\n", V_MultisampleCount(limit, limit), path);
+	else Printf("MSAA: not available (%s)\n", path);
 }
 
 EXTERN_CVAR(Int, vid_maxfps)

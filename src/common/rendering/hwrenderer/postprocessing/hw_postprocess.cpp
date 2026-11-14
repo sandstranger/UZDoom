@@ -774,7 +774,7 @@ void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneW
 	blurUniforms.PowExponent = gl_ssao_exponent;
 
 	AmbientCombineUniforms combineUniforms;
-	combineUniforms.SampleCount = gl_multisample;
+	combineUniforms.SampleCount = screen->SceneSampleCount();
 	combineUniforms.Scale = screen->SceneScale();
 	combineUniforms.Offset = screen->SceneOffset();
 	combineUniforms.DebugMode = gl_ssao_debug;

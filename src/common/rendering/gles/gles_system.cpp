@@ -346,8 +346,16 @@ namespace OpenGLESRenderer
 		gles.integerAttribs = core3 && glVertexAttribIPointer;
 		gles.invalidateFramebuffer = es3 && glInvalidateFramebuffer;
 		gles.pDiscardFramebuffer = nullptr;
-		if (!es3 && gles.esVersion > 0 && CheckExtension("GL_EXT_discard_framebuffer"))
-			gles.pDiscardFramebuffer = GetProc("glDiscardFramebufferEXT");
+		if (!es3 && gles.esVersion > 0)
+		{
+			// GLES 2.0 path: EXT_discard_framebuffer. A GLES 3.x context that does not list it has
+			// the same operation as core glInvalidateFramebuffer (only on a real 3.x context: a
+			// GLES 2.0 driver may hand out a pointer for any name).
+			if (CheckExtension("GL_EXT_discard_framebuffer"))
+				gles.pDiscardFramebuffer = GetProc("glDiscardFramebufferEXT");
+			else if (gles.esVersion >= 300 && glInvalidateFramebuffer)
+				gles.invalidateFramebuffer = true;
+		}
 
 		gles.msrtt = gles.msrttMaxSamples = 0;
 		gles.pFramebufferTexture2DMultisample = gles.pRenderbufferStorageMultisampleRTT = nullptr;
@@ -382,8 +390,24 @@ namespace OpenGLESRenderer
 		}
 		gles.maxSamples = 0;
 		gles.msaaRenderbuffers = core3 && glRenderbufferStorageMultisample && glBlitFramebuffer;
-		if (gles.msaaRenderbuffers) glGetIntegerv(GL_MAX_SAMPLES, &gles.maxSamples);
-		if (gles.maxSamples < 2) gles.msaaRenderbuffers = false;
+		if (gles.msaaRenderbuffers)
+		{
+			glGetIntegerv(GL_MAX_SAMPLES, &gles.maxSamples);
+			if (es3 && glGetInternalformativ)
+			{
+				// lowered to the largest count each scene format reports (a higher one is an
+				// error for that format)
+				static const GLenum formats[] = { GL_RGBA8, GL_DEPTH24_STENCIL8 };
+				for (GLenum format : formats)
+				{
+					GLint count = 0, best = 0;
+					glGetInternalformativ(GL_RENDERBUFFER, format, GL_NUM_SAMPLE_COUNTS, 1, &count);
+					if (count > 0) glGetInternalformativ(GL_RENDERBUFFER, format, GL_SAMPLES, 1, &best);
+					gles.maxSamples = std::min<int>(gles.maxSamples, best);
+				}
+			}
+		}
+		if (gles.maxSamples < 2) gles.msaaRenderbuffers = false, gles.maxSamples = 0;
 
 		Printf("GLES capabilities: BGRA textures %s, sync %s, invalidate %s, discard %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers %s (max %d)\n",
 			gles.bgraTextures ? "yes" : "no", gles.syncObjects ? "yes" : "no", gles.invalidateFramebuffer ? "yes" : "no",

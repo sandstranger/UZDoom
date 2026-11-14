@@ -144,7 +144,7 @@ namespace OpenGLESRenderer
 		void *pFramebufferTexture2DMultisample;
 		void *pRenderbufferStorageMultisampleRTT;
 		bool msaaRenderbuffers;	// glRenderbufferStorageMultisample + glBlitFramebuffer (GLES 3.0)
-		int maxSamples;
+		int maxSamples;			// multisampled renderbuffers: highest count RGBA8 and depth/stencil both support
 	};
 
 	extern RenderContextGLES gles;

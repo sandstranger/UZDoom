@@ -118,6 +118,24 @@ static void *GetESProc(const char *name)
 #endif
 }
 
+// Multisampled renderbuffers: GL_MAX_SAMPLES, lowered to the largest count glGetInternalformativ
+// reports for any of the scene formats (RGBA8 color, RGBA8/RGB10_A2 G-buffer attachments,
+// packed depth/stencil) - a count above it is an error for that format.
+static int MaxSceneRenderbufferSamples()
+{
+	static const GLenum formats[] = { GL_RGBA8, GL_RGB10_A2, GL_DEPTH24_STENCIL8 };
+	GLint limit = 0;
+	glGetIntegerv(GL_MAX_SAMPLES, &limit);
+	for (GLenum format : formats)
+	{
+		GLint count = 0, best = 0;
+		glGetInternalformativ(GL_RENDERBUFFER, format, GL_NUM_SAMPLE_COUNTS, 1, &count);
+		if (count > 0) glGetInternalformativ(GL_RENDERBUFFER, format, GL_SAMPLES, 1, &best);
+		limit = min(limit, best);
+	}
+	return limit >= 2 ? limit : 0;
+}
+
 static void LoadESCapabilities()
 {
 	int v = 0;
@@ -167,6 +185,7 @@ static void LoadESCapabilities()
 		gl.msrtt = gl.msrttMaxSamples = 0;
 		gl.pFramebufferTexture2DMultisample = gl.pRenderbufferStorageMultisampleRTT = nullptr;
 	}
+	gl.msaaMaxSamples = MaxSceneRenderbufferSamples();
 
 	glGetIntegerv(GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, &v);
 	gl.maxuniforms = v;
@@ -179,9 +198,9 @@ static void LoadESCapabilities()
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	bindless = false;
 
-	Printf("OpenGL ES %d.%d context, renderer limited to GLES 3.0; float16 targets %s, float32 targets %s, float32 filtering %s, MSAA render-to-texture %s (max %d)\n",
+	Printf("OpenGL ES %d.%d context, renderer limited to GLES 3.0; float16 targets %s, float32 targets %s, float32 filtering %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers max %d\n",
 		gl.esphysical / 100, (gl.esphysical / 10) % 10, gl.colorbuffer16f ? "yes" : "no", gl.colorbuffer32f ? "yes" : "no", gl.floatlinear ? "yes" : "no",
-		gl.msrtt == 1 ? "EXT" : gl.msrtt == 2 ? "IMG" : "no", gl.msrttMaxSamples);
+		gl.msrtt == 1 ? "EXT" : gl.msrtt == 2 ? "IMG" : "no", gl.msrttMaxSamples, gl.msaaMaxSamples);
 }
 
 
@@ -195,7 +214,7 @@ void gl_LoadExtensions()
 	const char *glversion = (const char*)glGetString(GL_VERSION);
 
 	gl.esphysical = gl.esversion = 0;
-	gl.msrtt = gl.msrttMaxSamples = 0;
+	gl.msrtt = gl.msrttMaxSamples = gl.msaaMaxSamples = 0;
 	gl.pFramebufferTexture2DMultisample = gl.pRenderbufferStorageMultisampleRTT = nullptr;
 	gl.vendorstring = (char*)glGetString(GL_VENDOR);
 	gl.modelstring = (char*)glGetString(GL_RENDERER);
@@ -284,6 +303,7 @@ void gl_LoadExtensions()
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &gl.max_texturesize);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glGetIntegerv(GL_MAX_SAMPLES, &gl.msaaMaxSamples);
 
 	bindless = CheckExtension("GL_ARB_bindless_texture");
 }

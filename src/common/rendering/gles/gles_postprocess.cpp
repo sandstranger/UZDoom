@@ -90,6 +90,9 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 	FGLPostProcessState savedState;
 	savedState.SaveTextureBindings(2);
 
+	// The 2D pass was the last one into the scene frame buffer: drop its depth/stencil while it
+	// is still the bound one, before a tiler writes them out on the switch to the window.
+	if (!bounds) mBuffers->InvalidateSceneDepth();
 	mBuffers->BindOutputFB();
 
 	IntRect box;
@@ -114,7 +117,6 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 #ifndef NO_RENDER_BUFFER
 	DrawPresentTexture(box, applyGamma);
 #endif
-	if (!bounds) mBuffers->InvalidateSceneDepth();
 }
 
 void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma)

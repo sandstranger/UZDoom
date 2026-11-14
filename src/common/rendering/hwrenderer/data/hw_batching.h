@@ -56,6 +56,8 @@ struct FRenderTargetStats
 	size_t bytes, peakBytes;		// render target memory (estimated from size and format)
 	size_t pooledFreeBytes;			// part of 'bytes' held unused in the pool
 	unsigned lastFboBinds, lastResolves;
+	int msaaSamples;				// sample count of the current scene buffers (0: none)
+	const char *msaaPath;			// how they are multisampled and resolved
 };
 extern FRenderTargetStats rtStatsGL, rtStatsGLES;
 

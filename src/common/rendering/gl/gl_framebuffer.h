@@ -52,6 +52,7 @@ public:
 
 	void AmbientOccludeScene(float m5) override;
 	bool SceneDataMultisampled() override;
+	int SceneSampleCount() override;
 	void FirstEye() override;
 	void NextEye(int eyecount) override;
 	void SetSceneRenderTarget(bool useSSAO) override;

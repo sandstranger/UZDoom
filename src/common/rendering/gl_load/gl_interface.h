@@ -45,6 +45,7 @@ struct RenderContext
 	int msrttMaxSamples;
 	void *pFramebufferTexture2DMultisample;	// glFramebufferTexture2DMultisample{EXT,IMG}
 	void *pRenderbufferStorageMultisampleRTT;	// glRenderbufferStorageMultisample{EXT,IMG} (the RTT-compatible one)
+	int msaaMaxSamples;		// multisampled renderbuffers: highest count every scene format supports
 	int max_texturesize;
 	char * vendorstring;
 	char * modelstring;

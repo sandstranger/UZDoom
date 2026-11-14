@@ -50,7 +50,33 @@ namespace OpenGLRenderer
 
 FGLRenderBuffers::FGLRenderBuffers()
 {
-	glGetIntegerv(GL_MAX_SAMPLES, &mMaxSamples);
+	mMaxSamples = gl.msaaMaxSamples;
+}
+
+//==========================================================================
+//
+// MSAA limit of the scene. On GLES it is the one of the tile-based path,
+// multisampled render-to-texture: the samples only exist in tile memory and
+// are resolved when a tile is written out, so its limit is what the GPU
+// renders without extra memory traffic. Without that extension the scene is
+// multisampled in renderbuffers that are resolved by a blit; their limit is
+// the smallest one of the formats the scene uses (GL_MAX_SAMPLES is only an
+// upper bound on GLES 3.0).
+//
+//==========================================================================
+
+int FGLRenderBuffers::MultisampleLimit()
+{
+	if (gl.esversion > 0 && gl.msrtt) return gl.msrttMaxSamples;
+	return gl.msaaMaxSamples;
+}
+
+const char *FGLRenderBuffers::MultisamplePath()
+{
+	if (gl.esversion == 0) return "multisampled render buffers";
+	if (gl.msrtt == 1) return "render-to-texture (EXT), resolved in tile memory";
+	if (gl.msrtt == 2) return "render-to-texture (IMG), resolved in tile memory";
+	return "multisampled renderbuffers, blit resolve";
 }
 
 //==========================================================================
@@ -87,6 +113,7 @@ void FGLRenderBuffers::ClearScene()
 	DeleteRenderBuffer(mSceneDepthStencilBuf);
 	mMSAAMode = MSAA_None;
 	mResolveSceneData = false;
+	mSceneSamples = 0;
 }
 
 void FGLRenderBuffers::ClearPipeline()
@@ -157,9 +184,11 @@ void FGLRenderBuffers::Setup(int width, int height, int sceneWidth, int sceneHei
 	if (width <= 0 || height <= 0)
 		I_FatalError("Requested invalid render buffer sizes: screen = %dx%d", width, height);
 
-	int samples = clamp((int)gl_multisample, 0, mMaxSamples);
 	bool needsSceneTextures = (gl_ssao != 0);
-	if (samples < 2) samples = 0;
+	int samples = V_MultisampleCount(gl_multisample, MultisampleLimit());
+	// SSAO needs the G-buffer, which multisampled render-to-texture cannot hold: those scene
+	// buffers are multisampled renderbuffers, limited to what their formats support.
+	if (gl.esversion > 0 && needsSceneTextures) samples = V_MultisampleCount(samples, mMaxSamples);
 
 	GLint activeTex;
 	GLint textureBinding;
@@ -181,6 +210,13 @@ void FGLRenderBuffers::Setup(int width, int height, int sceneWidth, int sceneHei
 	{
 		if (gl.esversion > 0) CreateSceneES(width, height, samples, needsSceneTextures);
 		else CreateScene(width, height, samples, needsSceneTextures);
+		if (GLRenderer && this == GLRenderer->mScreenBuffers)
+		{
+			rtStatsGL.msaaSamples = mSceneSamples;
+			rtStatsGL.msaaPath = mMSAAMode == MSAA_RenderToTexture ? MultisamplePath() :
+				gl.esversion == 0 ? "multisampled render buffers" :
+				mResolveSceneData ? "multisampled renderbuffers, blit resolve (SSAO G-buffer)" : "multisampled renderbuffers, blit resolve";
+		}
 	}
 
 	mWidth = width;
@@ -218,6 +254,7 @@ void FGLRenderBuffers::Setup(int width, int height, int sceneWidth, int sceneHei
 void FGLRenderBuffers::CreateScene(int width, int height, int samples, bool needsSceneTextures)
 {
 	ClearScene();
+	mSceneSamples = samples > 1 ? samples : 0;
 
 	if (samples > 1)
 	{
@@ -678,7 +715,7 @@ void FGLRenderBuffers::BlitSceneToTexture()
 {
 	mCurrentPipelineTexture = 0;
 
-	if (mSamples <= 1 || mMSAAMode == MSAA_RenderToTexture)
+	if (mSceneSamples <= 1 || mMSAAMode == MSAA_RenderToTexture)
 	{
 		// The scene depth is not read after the scene pass (single-sampled: the pipeline continues
 		// on its own depth buffer; render-to-texture: the color was resolved inline and the
@@ -1286,21 +1323,25 @@ void FGLRenderBuffers::CreateSceneES(int width, int height, int samples, bool ne
 	ClearScene();
 	if (samples > 1 && !needsSceneTextures && gl.msrtt)
 	{
-		int s = std::min(samples, gl.msrttMaxSamples);
+		int s = V_MultisampleCount(samples, gl.msrttMaxSamples);
 		mSceneDepthStencilBuf = CreateRenderBufferRTT("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, s);
 		mSceneFB = CreateFrameBufferRTT("SceneFB", mPipelineTexture[0], mSceneDepthStencilBuf, s);
 		if (mSceneFB)
 		{
 			mSceneDataFB = mSceneFB;
 			mMSAAMode = MSAA_RenderToTexture;
+			mSceneSamples = s;
 			return;
 		}
 		DeleteRenderBuffer(mSceneDepthStencilBuf);
 		Printf("Multisampled render-to-texture frame buffer incomplete; using multisampled renderbuffers.\n");
 	}
+	// multisampled renderbuffers can have a lower limit than render-to-texture
+	samples = V_MultisampleCount(samples, mMaxSamples);
 	if (samples > 1)
 	{
 		mMSAAMode = MSAA_Renderbuffers;
+		mSceneSamples = samples;
 		mSceneMultisampleBuf = CreateRenderBuffer("SceneMultisample", GL_RGBA8, width, height, samples);
 		mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, samples);
 		mSceneFB = CreateFrameBuffer("SceneFB", mSceneMultisampleBuf, mSceneDepthStencilBuf);

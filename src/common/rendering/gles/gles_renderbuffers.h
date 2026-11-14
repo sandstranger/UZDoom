@@ -140,6 +140,10 @@ public:
 	int GetSceneWidth() const { return mSceneWidth; }
 	int GetSceneHeight() const { return mSceneHeight; }
 
+	// Highest MSAA sample count offered for the scene (see the definition).
+	static int MultisampleLimit();
+	static const char *MultisamplePath();
+
 private:
 	void ClearScene();
 
@@ -177,7 +181,8 @@ private:
 
 	enum EMSAAMode { MSAA_None, MSAA_RenderToTexture, MSAA_Renderbuffers };
 	EMSAAMode mMSAAMode = MSAA_None;
-	int mSamples = 0;
+	int mSamples = 0;		// requested count the scene buffers were created for
+	int mSceneSamples = 0;	// count they actually have (0: single-sampled)
 	PPGLRenderBuffer mSceneColorMSBuf;
 	PPGLFrameBuffer mResolveFB;
 	bool mResolvePending = false;

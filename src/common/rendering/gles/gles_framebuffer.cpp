@@ -121,6 +121,9 @@ void OpenGLFrameBuffer::InitializeState()
 	hwcaps = gles.flags;
 	vendorstring = gles.vendorstring;
 
+	// The MSAA menu only offers the sample counts this device renders the scene with.
+	V_SetMultisampleLimit(FGLRenderBuffers::MultisampleLimit(), FGLRenderBuffers::MultisamplePath());
+
 	glDepthFunc(GL_LESS);
 
 	glEnable(GL_DITHER);

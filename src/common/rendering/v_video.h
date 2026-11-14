@@ -263,6 +263,8 @@ public:
 	virtual void AmbientOccludeScene(float m5) {}
 	// True when SSAO reads multisampled scene textures (sampler2DMS shader variants).
 	virtual bool SceneDataMultisampled();
+	// Sample count of the scene buffers actually rendered to (1 without MSAA).
+	virtual int SceneSampleCount();
 	virtual void FirstEye() {}
 	virtual void NextEye(int eyecount) {}
 	virtual void SetSceneRenderTarget(bool useSSAO) {}
@@ -323,6 +325,13 @@ void V_InitScreen();
 
 // Initializes graphics mode for the first time.
 void V_Init2 ();
+
+// MSAA: the sample count rendered for a request - the request clamped to the renderer's limit and
+// rounded down to a power of two, 0 when that leaves no multisampling.
+int V_MultisampleCount(int requested, int limit);
+// Publishes the highest sample count the active renderer can render the scene with: the
+// "Multisample" menu only offers counts up to it and gl_multisample is clamped to it.
+void V_SetMultisampleLimit(int limit, const char *path);
 
 void V_Shutdown ();
 

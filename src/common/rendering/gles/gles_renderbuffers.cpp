@@ -74,6 +74,34 @@ namespace OpenGLESRenderer
 		DeleteRenderBuffer(mSceneColorMSBuf);
 		mMSAAMode = MSAA_None;
 		mResolvePending = false;
+		mSceneSamples = 0;
+	}
+
+	//==========================================================================
+	//
+	// MSAA limit of the scene. The tile-based path comes first: EXT/IMG
+	// multisampled render-to-texture, GLES 2.0 extensions that a GLES 3.x
+	// context has as well. The samples only exist in tile memory and are
+	// resolved into the scene texture when a tile is written out, so its limit
+	// is what the GPU renders without extra memory traffic. Without it, GLES 3.0
+	// falls back to multisampled renderbuffers resolved by a blit; a GLES 2.0
+	// context without it has no MSAA.
+	//
+	//==========================================================================
+
+	int FGLRenderBuffers::MultisampleLimit()
+	{
+		if (gles.msrtt) return gles.msrttMaxSamples;
+		if (gles.msaaRenderbuffers) return gles.maxSamples;
+		return 0;
+	}
+
+	const char *FGLRenderBuffers::MultisamplePath()
+	{
+		if (gles.msrtt == 1) return "EXT_multisampled_render_to_texture, resolved in tile memory";
+		if (gles.msrtt == 2) return "IMG_multisampled_render_to_texture, resolved in tile memory";
+		if (gles.msaaRenderbuffers) return "multisampled renderbuffers, blit resolve";
+		return gles.esVersion > 0 ? "no multisampled render-to-texture extension" : "no multisampled render buffers";
 	}
 
 	void FGLRenderBuffers::DeleteTexture(PPGLTexture& tex)
@@ -125,13 +153,7 @@ namespace OpenGLESRenderer
 
 		// MSAA: render-to-texture (EXT/IMG, GLES 2.0 and 3.0), else multisampled renderbuffers
 		// with a blit resolve (GLES 3.0), else none.
-		int samples = gl_multisample >= 2 ? (int)gl_multisample : 0;
-		if (samples)
-		{
-			if (gles.msrtt) samples = std::min(samples, gles.msrttMaxSamples);
-			else if (gles.msaaRenderbuffers) samples = std::min(samples, gles.maxSamples);
-			else samples = 0;
-		}
+		int samples = V_MultisampleCount(gl_multisample, MultisampleLimit());
 
 		const bool resized = width != mWidth || height != mHeight;
 		if (resized)
@@ -142,7 +164,11 @@ namespace OpenGLESRenderer
 		}
 
 		if (resized || samples != mSamples)
+		{
 			CreateScene(width, height, samples);
+			rtStatsGLES.msaaSamples = mSceneSamples;
+			rtStatsGLES.msaaPath = mMSAAMode == MSAA_RenderToTexture ? MultisamplePath() : "multisampled renderbuffers, blit resolve";
+		}
 		mSamples = samples;
 
 		mWidth = width;
@@ -175,7 +201,9 @@ namespace OpenGLESRenderer
 	void FGLRenderBuffers::CreateScene(int width, int height, int samples)
 	{
 		ClearScene();
-		if (samples > 1 && gles.msrtt && CreateSceneRTT(width, height, samples)) return;
+		if (samples > 1 && gles.msrtt && CreateSceneRTT(width, height, V_MultisampleCount(samples, gles.msrttMaxSamples))) return;
+		// multisampled renderbuffers can have a lower limit than render-to-texture
+		if (gles.msaaRenderbuffers) samples = V_MultisampleCount(samples, gles.maxSamples);
 		if (samples > 1 && gles.msaaRenderbuffers && CreateSceneMultisample(width, height, samples)) return;
 
 		if(gles.depthStencilAvailable)
@@ -230,6 +258,7 @@ namespace OpenGLESRenderer
 		}
 		ClearFrameBuffer(true, true);
 		mMSAAMode = MSAA_RenderToTexture;
+		mSceneSamples = samples;
 		return true;
 	}
 
@@ -257,6 +286,7 @@ namespace OpenGLESRenderer
 		ClearFrameBuffer(true, true);
 		mResolveFB = CreateFrameBuffer("SceneResolveFB", mSceneTex);
 		mMSAAMode = MSAA_Renderbuffers;
+		mSceneSamples = samples;
 		return true;
 	}
 

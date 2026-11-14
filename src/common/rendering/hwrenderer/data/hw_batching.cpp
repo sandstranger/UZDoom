@@ -114,6 +114,8 @@ CCMD(r_rt_stats)
 			(unsigned long long)(s.peakBytes / 1024), (unsigned long long)(s.pooledFreeBytes / 1024));
 		Printf("  created %u, deleted %u, pool hits %u, misses %u\n", s.created, s.deleted, s.poolHits, s.poolMisses);
 		Printf("  last frame: %u frame buffer binds, %u MSAA resolves\n", s.frameFboBinds, s.frameResolves);
+		if (s.msaaSamples > 1) Printf("  MSAA %dx: %s\n", s.msaaSamples, s.msaaPath ? s.msaaPath : "");
+		else Printf("  MSAA off\n");
 	}
 }
 

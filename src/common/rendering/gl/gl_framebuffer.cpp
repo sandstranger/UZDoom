@@ -150,6 +150,9 @@ void OpenGLFrameBuffer::InitializeState()
 		gl_PrintStartupLog();
 	}
 
+	// The MSAA menu only offers the sample counts this device renders the scene with.
+	V_SetMultisampleLimit(FGLRenderBuffers::MultisampleLimit(), FGLRenderBuffers::MultisamplePath());
+
 	glDepthFunc(GL_LESS);
 
 	glEnable(GL_DITHER);
@@ -539,6 +542,11 @@ void OpenGLFrameBuffer::SetSaveBuffers(bool yes)
 bool OpenGLFrameBuffer::SceneDataMultisampled()
 {
 	return GLRenderer && GLRenderer->mBuffers ? GLRenderer->mBuffers->SceneDataMultisampled() : DFrameBuffer::SceneDataMultisampled();
+}
+
+int OpenGLFrameBuffer::SceneSampleCount()
+{
+	return GLRenderer && GLRenderer->mBuffers ? GLRenderer->mBuffers->GetSceneSamples() : DFrameBuffer::SceneSampleCount();
 }
 
 //===========================================================================
