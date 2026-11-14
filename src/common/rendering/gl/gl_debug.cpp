@@ -179,6 +179,9 @@ void FGLDebug::UpdateLoggingLevel()
 	const GLenum level = gl_debug_level;
 	if (level != mCurrentLevel)
 	{
+		// Non-debug contexts (all of them on Android) start with debug output disabled.
+		if (level > 0) glEnable(GL_DEBUG_OUTPUT);
+		else glDisable(GL_DEBUG_OUTPUT);
 		glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_HIGH, 0, nullptr, level > 0);
 		glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_MEDIUM, 0, nullptr, level > 1);
 		glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_LOW, 0, nullptr, level > 2);

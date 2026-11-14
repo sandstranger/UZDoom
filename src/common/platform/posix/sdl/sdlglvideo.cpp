@@ -685,14 +685,64 @@ void SystemGLFrameBuffer::SetVSync( bool vsync )
 #endif
 }
 
+#ifdef ANDROID
+//==========================================================================
+//
+// The first frames after the context is created: what each frame leaves
+// behind right before it is presented (bound frame buffer, viewport, color
+// write mask, GL errors raised since the previous check, window and screen
+// sizes) and whether the swap itself raised an EGL error. A frame that never
+// reaches the screen is visible in these lines.
+//
+//==========================================================================
+
+static int PresentDiagFrame = 0;
+static const int PresentDiagFrames = 10;
+
+static void LogStateBeforePresent(int frame, int windowW, int windowH, int screenW, int screenH)
+{
+	GLint fb = -1, viewport[4] = {};
+	GLboolean mask[4] = {};
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+	glGetIntegerv(GL_VIEWPORT, viewport);
+	glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+	FString errors;
+	for (int i = 0; i < 8; i++)
+	{
+		GLenum err = glGetError();
+		if (err == GL_NO_ERROR) break;
+		errors.AppendFormat(" 0x%04x", err);
+	}
+	Printf("present check %d: frame buffer %d, viewport %d,%d %dx%d, color mask %d%d%d%d, window %dx%d, screen %dx%d, GL errors:%s\n",
+		frame, fb, viewport[0], viewport[1], viewport[2], viewport[3], mask[0], mask[1], mask[2], mask[3],
+		windowW, windowH, screenW, screenH, errors.IsEmpty() ? " none" : errors.GetChars());
+}
+
+static void LogSwapResult(int frame, bool swappy)
+{
+	typedef int (*EGLGETERROR)(void);
+	static EGLGETERROR eglGetErrorPtr = (EGLGETERROR)SDL_GL_GetProcAddress("eglGetError");
+	const int err = eglGetErrorPtr ? eglGetErrorPtr() : 0x3000;
+	Printf("present check %d: swapped through %s, EGL %s (0x%04x)\n", frame, swappy ? "Swappy" : "SDL",
+		err == 0x3000 ? "ok" : "error", err);
+}
+#endif
+
 void SystemGLFrameBuffer::SwapBuffers()
 {
 #ifdef ANDROID
+	const bool diag = PresentDiagFrame < PresentDiagFrames;
+	const int frame = ++PresentDiagFrame;
+	if (diag) LogStateBeforePresent(frame, GetClientWidth(), GetClientHeight(), GetWidth(), GetHeight());
 	if(SwappySwapBuffers()){
+		if (diag) LogSwapResult(frame, true);
 		return;
 	}
-#endif
 	SDL_GL_SwapWindow(Priv::window);
+	if (diag) LogSwapResult(frame, false);
+#else
+	SDL_GL_SwapWindow(Priv::window);
+#endif
 }
 
 
