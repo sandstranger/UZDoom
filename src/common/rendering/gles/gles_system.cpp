@@ -19,6 +19,9 @@
 #include "tarray.h"
 #include "v_video.h"
 #include "printf.h"
+#ifdef __ANDROID__
+#include "SwappyController.h"
+#endif
 
 CVAR(Bool, gles_use_mapped_buffer, false, 0);
 CVAR(Bool, gles_force_glsl_v100, false, 0);
@@ -354,6 +357,14 @@ namespace OpenGLESRenderer
 			gles.pBufferStorage = GetProc("glBufferStorageEXT");
 			gles.bufferStorage = gles.pBufferStorage != nullptr;
 		}
+#ifdef __ANDROID__
+		// A capture tool reads every buffer back when a frame is captured, persistently mapped ones too.
+		if (gles.bufferStorage && AndroidGraphicsDebuggerAttached())
+		{
+			gles.bufferStorage = false;
+			Printf("Graphics debugger detected: persistent buffer mappings disabled\n");
+		}
+#endif
 		gles.integerAttribs = core3 && glVertexAttribIPointer;
 		gles.invalidateFramebuffer = es3 && glInvalidateFramebuffer;
 		gles.pDiscardFramebuffer = nullptr;

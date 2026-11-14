@@ -32,6 +32,9 @@
 #include "gl_interface.h"
 #ifdef __ANDROID__
 #include <SDL.h>
+#ifdef __ANDROID__
+#include "SwappyController.h"
+#endif
 #endif
 
 static TArray<FString>  m_Extensions;
@@ -195,6 +198,15 @@ static void LoadESCapabilities()
 		gl.pBufferStorage = GetESProc("glBufferStorageEXT");
 		gl.bufferstorage = gl.pBufferStorage != nullptr;
 	}
+#ifdef __ANDROID__
+	// A capture tool reads every buffer back when a frame is captured - from persistently mapped
+	// ones too (copies of mapped buffers, an unusual path for the driver): plain mappings there.
+	if (gl.bufferstorage && AndroidGraphicsDebuggerAttached())
+	{
+		gl.bufferstorage = false;
+		Printf("Graphics debugger detected: persistent buffer mappings disabled\n");
+	}
+#endif
 
 	glGetIntegerv(GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, &v);
 	gl.maxuniforms = v;
