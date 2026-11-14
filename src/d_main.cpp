@@ -3698,6 +3698,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 
 	int max_progress = TexMan.GuesstimateNumTextures();
 	int per_shader_progress = 0;//screen->GetShaderCount()? (max_progress / 10 / screen->GetShaderCount()) : 0;
+	int shader_progress = 0;	// the part of the start screen's bar for the shaders compiled at the end
 
 	bool norun = Args->CheckParm(FArg_norun);
 	bool nostartscreen = batchrun || restart || Args->CheckParm(FArg_join) || Args->CheckParm(FArg_host) || norun;
@@ -3981,7 +3982,8 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 		screen->UpdatePalette();
 	}
 
-	StartScreen = nostartscreen? nullptr : GetGameStartScreen(per_shader_progress > 0 ? max_progress * 10 / 9 : max_progress + 3);
+	if (!nostartscreen && screen != nullptr && screen->GetShaderCount() > 0) shader_progress = max(max_progress / 8, 1);
+	StartScreen = nostartscreen? nullptr : GetGameStartScreen(per_shader_progress > 0 ? max_progress * 10 / 9 : max_progress + 3 + shader_progress);
 	setmodeneeded = true;
 	if (StartScreen != nullptr) StartScreen->Render();
 
@@ -4017,17 +4019,33 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 		StartWindow->Progress(max_progress);
 		if (StartScreen)
 		{
-			StartScreen->Progress(max_progress);	// advance progress bar to the end.
-			StartScreen->Render(true);
-			StartScreen->Progress(max_progress);	// do this again because Progress advances the counter after redrawing.
+			// everything but the shaders
+			StartScreen->SetPosition(StartScreen->GetMaxPos() - shader_progress, true);
+		}
+
+		// The shaders are compiled with the start screen still up: it is presented again (and the
+		// events processed) between programs and its bar shows the programs done. It used to stay
+		// frozen for the whole compile, which on a phone without cached program binaries (first
+		// start after an install or update) took 20+ seconds.
+		{
+			const int shaderCount = max(screen->GetShaderCount(), 1);
+			int shadersDone = 0;
+			while(!screen->CompileNextShader())
+			{
+				shadersDone++;
+				if (StartScreen && shader_progress > 0)
+				{
+					StartScreen->SetPosition(StartScreen->GetMaxPos() - shader_progress +
+						int(int64_t(shader_progress) * min(shadersDone, shaderCount) / shaderCount));
+				}
+			}
+		}
+		if (StartScreen)
+		{
+			StartScreen->SetPosition(StartScreen->GetMaxPos(), true);	// advance progress bar to the end.
 			StartScreen->Render(true);
 			delete StartScreen;
 			StartScreen = NULL;
-		}
-
-		while(!screen->CompileNextShader())
-		{
-			// here we can do some visual updates later
 		}
 		twod->fullscreenautoaspect = gameinfo.fullscreenautoaspect;
 		// Initialize the size of the 2D drawer so that an attempt to access it outside the draw code won't crash.

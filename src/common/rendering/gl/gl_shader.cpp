@@ -42,9 +42,18 @@
 #include <memory>
 #if ANDROID
 #include "SDL.h"
+#include <algorithm>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <string_view>
+#include <thread>
+#include <unordered_map>
+#include <vector>
 #endif
 
 EXTERN_CVAR(Bool, r_skipmats)
+EXTERN_CVAR(Int, gl_ssao)
 #ifdef ANDROID
 EXTERN_CVAR(Bool, gl_customshader)
 extern bool gl_lite_shader;
@@ -73,32 +82,202 @@ namespace OpenGLRenderer
 
     typedef char* (*GLSLtoGLSLES_t)(const char*, GLenum, unsigned int, unsigned int, int*);
 	static void* ngGL4ESPTR = nullptr;
+	static GLSLtoGLSLES_t GLSLtoGLSLES_c = nullptr;
+
+	// On the render thread, before any worker can run a conversion.
+	static void LoadConverter()
+	{
+		if (GLSLtoGLSLES_c == nullptr)
+		{
+			if (ngGL4ESPTR == nullptr) ngGL4ESPTR = SDL_LoadObject("libng_gl4es.so");
+			if (ngGL4ESPTR != nullptr) GLSLtoGLSLES_c = (GLSLtoGLSLES_t)SDL_LoadFunction(ngGL4ESPTR, "GLSLtoGLSLES_c");
+			if (GLSLtoGLSLES_c == nullptr) I_FatalError("Unable to load the GLSL converter (libng_gl4es.so): %s\n", SDL_GetError());
+		}
+	}
+
+	// GLSL -> SPIR-V -> GLSL ES: CPU work only, no GL calls. NG-GL4ES's converter is reentrant
+	// (glslang with per-thread pools, a SPIRV-Tools optimizer per thread, a SPIRV-Cross context
+	// per call).
+	static std::string RunConverter(const char *source, bool isVertexShader)
+	{
+		int returnCode = 0;
+		char *glesShader = GLSLtoGLSLES_c(source, isVertexShader ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER,
+			NGGL4ES_TARGET_ESSL, NGGL4ES_SOURCE_GLSL, &returnCode);
+		if (glesShader == nullptr) return source;	// the driver reports what is wrong with it
+		std::string result = glesShader;
+		free(glesShader);
+		return result;
+	}
+
+	//==========================================================================
+	//
+	// Conversions done ahead on worker threads. When a shader collection starts
+	// compiling, the sources of all its programs that are not in the binary
+	// cache are queued (FShaderCollection::PrefetchSources); the render thread
+	// then only compiles and links, and takes queued conversions itself while it
+	// waits for one. The conversion was nearly all of the time the startup
+	// spent building programs (about 0.4 s per program on a phone CPU), with
+	// the start screen frozen meanwhile.
+	//
+	// The workers exit when the queue is empty and are joined when the
+	// collection is done: the converter's per-thread memory (glslang pools, the
+	// SPIR-V optimizer) does not stay around.
+	//
+	//==========================================================================
+
+	struct ConversionJob
+	{
+		std::string source;
+		std::string result;
+		bool vertex = false;
+		bool done = false;
+		int uses = 0;		// programs that will ask for this conversion
+	};
+
+	static std::mutex ConvLock;
+	static std::condition_variable ConvDone;
+	static std::deque<std::shared_ptr<ConversionJob>> ConvQueue;
+	static std::unordered_multimap<size_t, std::shared_ptr<ConversionJob>> ConvJobs;
+	static std::vector<std::thread> ConvWorkers;
+	static int ConvRunning = 0;
+
+	static size_t ConvHash(const char *source, bool vertex)
+	{
+		return std::hash<std::string_view>()(std::string_view(source)) * 2 + (vertex ? 1 : 0);
+	}
+
+	// ConvLock held.
+	static std::shared_ptr<ConversionJob> FindConversion(const char *source, bool vertex)
+	{
+		auto range = ConvJobs.equal_range(ConvHash(source, vertex));
+		for (auto it = range.first; it != range.second; ++it)
+		{
+			if (it->second->vertex == vertex && it->second->source == source) return it->second;
+		}
+		return nullptr;
+	}
+
+	// ConvLock held.
+	static void ForgetConversion(const std::shared_ptr<ConversionJob> &job)
+	{
+		auto range = ConvJobs.equal_range(ConvHash(job->source.c_str(), job->vertex));
+		for (auto it = range.first; it != range.second; ++it)
+		{
+			if (it->second == job)
+			{
+				ConvJobs.erase(it);
+				return;
+			}
+		}
+	}
+
+	// ConvLock held on entry and exit, released while converting.
+	static void RunQueuedConversion(std::unique_lock<std::mutex> &lock)
+	{
+		auto job = ConvQueue.front();
+		ConvQueue.pop_front();
+		lock.unlock();
+		std::string result = RunConverter(job->source.c_str(), job->vertex);
+		lock.lock();
+		job->result = std::move(result);
+		job->done = true;
+		ConvDone.notify_all();
+	}
+
+	static void ConversionWorker()
+	{
+		std::unique_lock<std::mutex> lock(ConvLock);
+		while (!ConvQueue.empty()) RunQueuedConversion(lock);
+		ConvRunning--;
+	}
+
+	static int MaxConversionWorkers()
+	{
+		// The render thread converts as well. A conversion of the main shader takes a few tens
+		// of MB while it runs: fewer threads on 32-bit builds.
+		const int cores = (int)std::thread::hardware_concurrency();
+		return clamp(cores - 1, 1, sizeof(void*) < 8 ? 2 : 4);
+	}
+
+	static void QueueShaderConversion(const FString &source, bool isVertexShader)
+	{
+		LoadConverter();
+		std::lock_guard<std::mutex> lock(ConvLock);
+		if (auto job = FindConversion(source.GetChars(), isVertexShader))
+		{
+			job->uses++;	// same source in another program (vertex shaders often are)
+			return;
+		}
+		auto job = std::make_shared<ConversionJob>();
+		job->source = source.GetChars();
+		job->vertex = isVertexShader;
+		job->uses = 1;
+		ConvJobs.emplace(ConvHash(source.GetChars(), isVertexShader), job);
+		ConvQueue.push_back(job);
+		if (ConvRunning < MaxConversionWorkers())
+		{
+			if (ConvRunning == 0)
+			{
+				// the earlier workers have all left their loop
+				for (auto &worker : ConvWorkers) worker.join();
+				ConvWorkers.clear();
+			}
+			ConvWorkers.emplace_back(ConversionWorker);
+			ConvRunning++;
+		}
+	}
+
+	// Joins the workers and drops what no program asked for (sources that came out different).
+	static void FinishShaderConversions()
+	{
+		std::vector<std::thread> workers;
+		{
+			std::lock_guard<std::mutex> lock(ConvLock);
+			ConvQueue.clear();
+			workers.swap(ConvWorkers);
+		}
+		for (auto &worker : workers) worker.join();
+		std::lock_guard<std::mutex> lock(ConvLock);
+		ConvJobs.clear();
+	}
 
     std::string ConvertShaderToGLES(const char* shaderSource, bool isVertexShader)
     {
-		static GLSLtoGLSLES_t GLSLtoGLSLES_c = nullptr;
-
-		if (GLSLtoGLSLES_c == nullptr) {
-			ngGL4ESPTR = SDL_LoadObject("libng_gl4es.so");
-			GLSLtoGLSLES_c =(GLSLtoGLSLES_t) SDL_LoadFunction(ngGL4ESPTR, "GLSLtoGLSLES_c");
-        }
-        const int glesVersion = NGGL4ESTargetESSL();
-        const unsigned int sourceGLVersion = NGGL4ES_SOURCE_GLSL;
-        const auto stage = isVertexShader ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER;
-        int returnCode = 0;
-        auto glesShader  = GLSLtoGLSLES_c(shaderSource, stage,glesVersion,sourceGLVersion,&returnCode);
-        std::string result = glesShader;
-        free(glesShader);
-        return result;
+		LoadConverter();
+		{
+			std::unique_lock<std::mutex> lock(ConvLock);
+			if (auto job = FindConversion(shaderSource, isVertexShader))
+			{
+				// Not started yet: this one first. Then help with the queue instead of waiting idle.
+				auto queued = std::find(ConvQueue.begin(), ConvQueue.end(), job);
+				if (queued != ConvQueue.end() && queued != ConvQueue.begin())
+				{
+					ConvQueue.erase(queued);
+					ConvQueue.push_front(job);
+				}
+				while (!job->done)
+				{
+					if (!ConvQueue.empty()) RunQueuedConversion(lock);
+					else ConvDone.wait(lock);
+				}
+				if (--job->uses > 0) return job->result;
+				std::string result = std::move(job->result);
+				ForgetConversion(job);
+				return result;
+			}
+		}
+		return RunConverter(shaderSource, isVertexShader);
     }
 
 	void UnloadNGGL4ESPTR()
 	{
+		FinishShaderConversions();
 		if (ngGL4ESPTR!= nullptr)
 		{
 			SDL_UnloadObject(ngGL4ESPTR);
 			ngGL4ESPTR = nullptr;
 		}
+		GLSLtoGLSLES_c = nullptr;
 	}
 #endif
 
@@ -653,6 +832,21 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		vp_comb.Substitute("gl_ClipDistance", "//");
 	}
 
+#ifdef ANDROID
+	if (sPrefetchOnly)
+	{
+		// Only start converting the sources of a program that is not in the binary cache; the
+		// program is built from the same sources when the collection compiles it.
+		uint32_t cachedFormat = 0;
+		if (!IsShaderCacheActive() || LoadCachedProgramBinary(vp_comb, fp_comb, cachedFormat).Size() == 0)
+		{
+			QueueShaderConversion(vp_comb, true);
+			QueueShaderConversion(fp_comb, false);
+		}
+		return false;
+	}
+#endif
+
 	hShader = glCreateProgram();
 	FGLDebug::LabelObject(GL_PROGRAM, hShader, name);
 
@@ -952,7 +1146,7 @@ bool FShader::Bind()
 //
 //==========================================================================
 
-FShader *FShaderCollection::Compile (const char *ShaderName, const char *ShaderPath, const char *LightModePath, const char *shaderdefines, bool usediscard, EPassType passType, AllShaderIndex type)
+static FString MaterialDefines(const char *shaderdefines, bool usediscard)
 {
 	FString defines;
 	if (shaderdefines) defines += shaderdefines;
@@ -963,6 +1157,81 @@ FShader *FShaderCollection::Compile (const char *ShaderName, const char *ShaderP
 	if(gl_lite_shader)
 		defines += "#define SHADER_LITE\n";
 #endif
+	return defines;
+}
+
+int FShaderCollection::ProgramCount() const
+{
+	int count = 0;
+	while (defaultshaders[count].ShaderName != nullptr) count++;
+	count += SHADER_NoTexture + MAX_EFFECTS;
+#ifdef ANDROID
+	if (gl_customshader)
+#endif
+		count += usershaders.Size();
+	return count;
+}
+
+#ifdef ANDROID
+bool FShader::sPrefetchOnly = false;
+
+//==========================================================================
+//
+// The same programs as CompileNextShader, with the same sources: Load() in
+// prefetch mode assembles them and queues their conversion.
+//
+//==========================================================================
+
+void FShaderCollection::PrefetchSources()
+{
+	if (!gEnableSpirvCross) return;
+
+	auto prefetch = [this](const char *name, const char *vp, const char *fp, const char *proc, const char *light, const FString &defines, int type)
+	{
+		FShader shader(name);
+		try
+		{
+			shader.Load(name, vp, fp, proc, light, defines.GetChars(), mPassType == GBUFFER_PASS, static_cast<AllShaderIndex>(type));
+		}
+		catch (CRecoverableError &)
+		{
+			// reported when the program itself is compiled
+		}
+	};
+
+	FShader::sPrefetchOnly = true;
+	for (int i = 0; defaultshaders[i].ShaderName != nullptr; i++)
+	{
+		prefetch(defaultshaders[i].ShaderName, "shaders/glsl/main.vp", "shaders/glsl/main.fp", defaultshaders[i].gettexelfunc,
+			defaultshaders[i].lightfunc, MaterialDefines(defaultshaders[i].Defines, true), i);
+	}
+	for (int i = 0; i < SHADER_NoTexture; i++)
+	{
+		prefetch(defaultshaders[i].ShaderName, "shaders/glsl/main.vp", "shaders/glsl/main.fp", defaultshaders[i].gettexelfunc,
+			defaultshaders[i].lightfunc, MaterialDefines(defaultshaders[i].Defines, false), i);
+	}
+	if (gl_customshader)
+	{
+		for (auto &shader : usershaders)
+		{
+			FString name = ExtractFileBase(shader.shader.GetChars());
+			FString defines = defaultshaders[shader.shaderType].Defines + shader.defines;
+			prefetch(name.GetChars(), "shaders/glsl/main.vp", "shaders/glsl/main.fp", shader.shader.GetChars(),
+				defaultshaders[shader.shaderType].lightfunc, MaterialDefines(defines.GetChars(), true), shader.shaderType);
+		}
+	}
+	for (int i = 0; i < MAX_EFFECTS; i++)
+	{
+		prefetch(effectshaders[i].ShaderName, effectshaders[i].vp, effectshaders[i].fp1, effectshaders[i].fp2, effectshaders[i].fp3,
+			FString(effectshaders[i].defines), i + FIRST_EFFECT_SHADER);
+	}
+	FShader::sPrefetchOnly = false;
+}
+#endif
+
+FShader *FShaderCollection::Compile (const char *ShaderName, const char *ShaderPath, const char *LightModePath, const char *shaderdefines, bool usediscard, EPassType passType, AllShaderIndex type)
+{
+	FString defines = MaterialDefines(shaderdefines, usediscard);
 
 	FShader *shader = NULL;
 	try
@@ -996,16 +1265,45 @@ FShaderManager::FShaderManager()
 
 bool FShaderManager::CompileNextShader()
 {
+	if (mCompilePass < 0) return true;
+	bool done = false;
 	if (mPassShaders[mCompilePass]->CompileNextShader())
 	{
 		mCompilePass++;
-		if (mCompilePass >= MAX_PASS_TYPES)
+		// The G-buffer pass is drawn only with SSAO; without it, it is compiled when first used.
+		if (mCompilePass >= MAX_PASS_TYPES || (mCompilePass == GBUFFER_PASS && gl_ssao == 0))
 		{
 			mCompilePass = -1;
-			return true;
+#ifdef ANDROID
+			FinishShaderConversions();
+#endif
+			done = true;
 		}
 	}
-	return false;
+	// Load() leaves no program bound: the start screen drawn between programs must rebind.
+	SetActiveShader(nullptr);
+	return done;
+}
+
+int FShaderManager::StartupProgramCount() const
+{
+	return (gl_ssao == 0 ? 1 : MAX_PASS_TYPES) * mPassShaders[NORMAL_PASS]->ProgramCount();
+}
+
+FShaderCollection *FShaderManager::CompiledCollection(EPassType passType)
+{
+	FShaderCollection *collection = mPassShaders[passType];
+	if (!collection->IsCompiled())
+	{
+		// SSAO turned on after the startup: the G-buffer pass is built on its first use.
+		Printf("Compiling the %s pass shaders...\n", passType == GBUFFER_PASS ? "G-buffer" : "scene");
+		while (!collection->CompileNextShader()) {}
+#ifdef ANDROID
+		FinishShaderConversions();
+#endif
+		SetActiveShader(nullptr);
+	}
+	return collection;
 }
 
 FShaderManager::~FShaderManager()
@@ -1029,7 +1327,7 @@ void FShaderManager::SetActiveShader(FShader *sh)
 FShader *FShaderManager::BindEffect(int effect, EPassType passType)
 {
 	if (passType < mPassShaders.Size() && mCompilePass == -1)
-		return mPassShaders[passType]->BindEffect(effect);
+		return CompiledCollection(passType)->BindEffect(effect);
 	else
 		return nullptr;
 }
@@ -1044,7 +1342,7 @@ FShader *FShaderManager::Get(unsigned int eff, bool alphateston, EPassType passT
 		eff = 0;
 
 	if (passType < mPassShaders.Size())
-		return mPassShaders[passType]->Get(eff, alphateston);
+		return CompiledCollection(passType)->Get(eff, alphateston);
 	else
 		return nullptr;
 }
@@ -1085,6 +1383,10 @@ FShaderCollection::~FShaderCollection()
 
 bool FShaderCollection::CompileNextShader()
 {
+	if (mCompileState == -1) return true;
+#ifdef ANDROID
+	if (mCompileState == 0 && mCompileIndex == 0) PrefetchSources();
+#endif
 	int i = mCompileIndex;
 	if (mCompileState == 0)
 	{ // regular shaders
@@ -1140,6 +1442,10 @@ bool FShaderCollection::CompileNextShader()
 		mCompileIndex++;
 		if (mCompileIndex >= MAX_EFFECTS)
 		{
+			// Get() hands out the shaders without alpha test only from here on. Nothing set this,
+			// so opaque geometry was always drawn with the alpha-testing (discarding) shaders,
+			// which costs early depth testing / hidden surface removal on tile-based GPUs.
+			mCompileState = -1;
 			return true;
 		}
 	}

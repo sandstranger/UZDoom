@@ -63,6 +63,9 @@ public:
 	virtual ~FStartScreen();
 	void Render(bool force = false);
 	bool Progress(int);
+	// Moves the bar to 'pos' of GetMaxPos() (never back) and redraws.
+	void SetPosition(int pos, bool force = false);
+	int GetMaxPos() const { return MaxPos; }
 	void NetProgress(int count);
 	virtual void LoadingStatus(const char *message, int colors) {}
 	virtual void AppendStatusLine(const char *status) {}

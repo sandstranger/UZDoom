@@ -70,6 +70,7 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 	int rh,rw;
 	int texformat = GL_RGBA8;// TexFormat[gl_texture_format];
 	bool deletebuffer=false;
+	bool noData = false;
 
 	/*
 	if (forcenocompression)
@@ -104,6 +105,7 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		mipmapped = false;
 		buffer=(unsigned char *)calloc(4,rw * (rh+1));
 		deletebuffer=true;
+		noData = true;
 		//texheight=-h;
 	}
 	else
@@ -148,6 +150,14 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 			sourcetype = GL_RED;
 			texformat = GL_R8;
+		}
+		else if (noData)
+		{
+			// Without data the texture is a copy or render target (wipe screens, camera
+			// textures): RGBA8 like the frame buffers it is copied from. A copy into a BGRA_EXT
+			// texture is not a valid GLES 3.0 copy (GL_INVALID_OPERATION, the wipes came out empty).
+			texformat = GL_RGBA8;
+			sourcetype = GL_RGBA;
 		}
 		else if (gl.bgra)
 		{

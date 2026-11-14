@@ -288,6 +288,11 @@ class FShader
 
 	FShader *BuildVariant(const FString &extraDefines, const char *what);
 
+#ifdef ANDROID
+	// FShaderCollection::PrefetchSources: Load() only starts converting the sources.
+	static bool sPrefetchOnly;
+#endif
+
 public:
 	FShader(const char *name)
 		: mName(name)
@@ -333,7 +338,11 @@ public:
 
 	void SetActiveShader(FShader *sh);
 	bool CompileNextShader();
+	// Programs CompileNextShader builds at startup (the G-buffer pass only with SSAO).
+	int StartupProgramCount() const;
 private:
+	// The collection of a pass, compiled first if it was left out at startup.
+	FShaderCollection *CompiledCollection(EPassType passType);
 
 	FShader *mActiveShader = nullptr;
 	TArray<FShaderCollection*> mPassShaders;
@@ -358,6 +367,12 @@ public:
 	FShader *Compile(const char *ShaderName, const char *ShaderPath, const char *LightModePath, const char *shaderdefines, bool usediscard, EPassType passType, AllShaderIndex type);
 	int Find(const char *mame);
 	bool CompileNextShader();
+	bool IsCompiled() const { return mCompileState == -1; }
+	int ProgramCount() const;
+#ifdef ANDROID
+	// Starts converting the sources of all programs of the collection on worker threads.
+	void PrefetchSources();
+#endif
 	FShader *BindEffect(int effect);
 
 	FShader *Get(unsigned int eff, bool alphateston)

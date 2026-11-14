@@ -645,6 +645,13 @@ bool FStartScreen::Progress(int advance)
 	return done;
 }
 
+void FStartScreen::SetPosition(int pos, bool force)
+{
+	pos = clamp(pos, 0, MaxPos);
+	if (pos > CurPos) DoProgress(pos - CurPos);
+	Render(force);
+}
+
 void FStartScreen::NetProgress(int count)
 {
 	DoNetProgress(count);

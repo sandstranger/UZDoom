@@ -158,7 +158,7 @@ void OpenGLFrameBuffer::InitializeState()
 	glEnable(GL_DITHER);
 	glDisable(GL_CULL_FACE);
 	glDisable(GL_POLYGON_OFFSET_FILL);
-	glEnable(GL_POLYGON_OFFSET_LINE);
+	if (gl.esversion == 0) glEnable(GL_POLYGON_OFFSET_LINE);	// no polygon modes in OpenGL ES (GL_INVALID_ENUM)
 	glEnable(GL_BLEND);
 	if (gl.esversion == 0) glEnable(GL_DEPTH_CLAMP);
 	glDisable(GL_DEPTH_TEST);
@@ -639,6 +639,11 @@ void OpenGLFrameBuffer::PostProcessScene(bool swscene, int fixedcm, float flash,
 bool OpenGLFrameBuffer::CompileNextShader()
 {
 	return GLRenderer->mShaderManager->CompileNextShader();
+}
+
+int OpenGLFrameBuffer::GetShaderCount()
+{
+	return GLRenderer && GLRenderer->mShaderManager ? GLRenderer->mShaderManager->StartupProgramCount() : 0;
 }
 
 //==========================================================================

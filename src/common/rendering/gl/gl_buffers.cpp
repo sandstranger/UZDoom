@@ -52,9 +52,14 @@ GLBuffer::~GLBuffer()
 {
 	if (mBufferId != 0)
 	{
-		glBindBuffer(mUseType, mBufferId);
-		glUnmapBuffer(mUseType);
-		glBindBuffer(mUseType, 0);
+		// glUnmapBuffer on a buffer that is not mapped is GL_INVALID_OPERATION (the 2D drawer's
+		// temporary buffers raised it every frame): only a mapped one is released first.
+		if (map != nullptr)
+		{
+			glBindBuffer(mUseType, mBufferId);
+			glUnmapBuffer(mUseType);
+			glBindBuffer(mUseType, 0);
+		}
 		glDeleteBuffers(1, &mBufferId);
 	}
 }
@@ -133,13 +138,15 @@ void *GLBuffer::Lock(unsigned int size)
 {
 	// This initializes this buffer as a static object with no data.
 	SetData(size, nullptr, BufferUsageType::Mappable);
-	return glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+	map = glMapBufferRange(mUseType, 0, size, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+	return map;
 }
 
 void GLBuffer::Unlock()
 {
 	Bind();
 	glUnmapBuffer(mUseType);
+	map = nullptr;
 	InvalidateBufferState();
 }
 
@@ -152,9 +159,9 @@ void GLBuffer::Resize(size_t newsize)
 		unsigned int oldbuffer = mBufferId;
 		size_t oldsize = buffersize;
 
-		// first unmap the old buffer
+		// first unmap the old buffer (if it is mapped at all: non-persistent buffers mostly aren't)
 		Bind();
-		glUnmapBuffer(mUseType);
+		if (map != nullptr) glUnmapBuffer(mUseType);
 
 		glGenBuffers(1, &mBufferId);
 		SetData(newsize, nullptr, BufferUsageType::Persistent);

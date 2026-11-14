@@ -47,6 +47,7 @@ public:
 	~OpenGLFrameBuffer();
 	int Backend() override { return 2; }
 	bool CompileNextShader() override;
+	int GetShaderCount() override;
 	void InitializeState() override;
 	void Update() override;
 
