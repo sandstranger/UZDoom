@@ -361,6 +361,12 @@ void gl_PrintStartupLog()
 		Printf("Max. uniform block size: %d\n", v);
 		glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &v);
 		Printf("Uniform block alignment: %d\n", v);
+		if (CheckExtension("GL_EXT_robustness") || CheckExtension("GL_KHR_robustness"))
+		{
+			v = 0;
+			glGetIntegerv(0x90F3 /* GL_CONTEXT_ROBUST_ACCESS_EXT */, &v);
+			Printf("Robust buffer access: %s\n", v ? "yes" : "no");
+		}
 	}
 }
 

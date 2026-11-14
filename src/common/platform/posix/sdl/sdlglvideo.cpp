@@ -244,6 +244,12 @@ namespace Priv
 		}
 #else
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+        // Robust buffer access (EGL_EXT_create_context_robustness): a buffer read out of range
+        // returns zeros instead of faulting the GPU job. On Mali a faulted job drops the frame
+        // (fences signaled with -EFAULT, black or garbage on screen); ANGLE's Vulkan backend
+        // already renders with robust buffer access. SDL creates the context without it if the
+        // driver refuses it.
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
         if (g_useOpenGLES) {
             if (USING_GLES_2) {
                 SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
