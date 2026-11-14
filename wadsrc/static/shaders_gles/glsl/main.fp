@@ -15,13 +15,42 @@
 **
 */
 
+// Vertex outputs a variant actually reads. A tile-based GPU stores every vertex output in memory
+// between the vertex and the fragment phase, used or not, so the ones a variant does not need are
+// not declared (and not computed). Colors and normals are mediump: half the storage, and enough
+// for values in [0, 1] / unit vectors. Texture coordinates, positions and distances keep the
+// default (highp where the stage has it). User shaders get all of them.
+#if defined(USER_SHADER) || (DEF_USE_GLOW_TOP_COLOR == 1) || (DEF_USE_GLOW_BOTTOM_COLOR == 1)
+#define VARYING_GLOW 1
+#else
+#define VARYING_GLOW 0
+#endif
+#if defined(USER_SHADER) || (DEF_USE_OBJECT_COLOR_2 == 1)
+#define VARYING_GRADIENT 1
+#else
+#define VARYING_GRADIENT 0
+#endif
+#if defined(USER_SHADER) || (DEF_DYNAMIC_LIGHTS_MOD == 1) || (DEF_DYNAMIC_LIGHTS_SUB == 1) || (DEF_DYNAMIC_LIGHTS_ADD == 1)
+#define VARYING_NORMAL 1
+#else
+#define VARYING_NORMAL 0
+#endif
+
 varying vec4 vTexCoord;
-varying vec4 vColor;
+varying mediump vec4 vColor;
 varying vec4 pixelpos;
+#if VARYING_GLOW
 varying vec3 glowdist;
-varying vec3 gradientdist;
-varying vec4 vWorldNormal;
-varying vec4 vEyeNormal;
+#endif
+#if VARYING_GRADIENT
+varying mediump vec3 gradientdist;
+#endif
+#if VARYING_NORMAL
+varying mediump vec4 vWorldNormal;
+#endif
+#ifdef USER_SHADER
+varying mediump vec4 vEyeNormal;
+#endif
 
 
 
@@ -331,7 +360,11 @@ float spotLightAttenuation(vec4 lightpos, vec3 spotdir, float lightCosInnerAngle
 
 vec3 ApplyNormalMap(vec2 texcoord)
 {
+#if VARYING_NORMAL
 	return normalize(vWorldNormal.xyz);
+#else
+	return vec3(0.0, 0.0, 1.0);	// only read by the dynamic lights, which this variant has none of
+#endif
 }
 
 //===========================================================================

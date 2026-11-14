@@ -901,7 +901,8 @@ void FShaderCollection::CompileShaders(EPassType passType)
 	for(unsigned i = 0; i < usershaders.Size(); i++)
 	{
 		FString name = ExtractFileBase(usershaders[i].shader);
-		FString defines = defaultshaders[usershaders[i].shaderType].Defines + usershaders[i].defines;
+		// USER_SHADER: main.vp/main.fp keep every vertex output (custom code may read any of them)
+		FString defines = FString("#define USER_SHADER\n") + defaultshaders[usershaders[i].shaderType].Defines + usershaders[i].defines;
 		FShader *shc = Compile(name, usershaders[i].shader, defaultshaders[usershaders[i].shaderType].lightfunc, defines, true, passType);
 		mMaterialShaders.Push(shc);
 	}
