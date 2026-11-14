@@ -234,6 +234,10 @@ namespace OpenGLESRenderer
 
 		gles.modelstring = (char*)glGetString(GL_RENDERER);
 		gles.vendorstring = (char*)glGetString(GL_VENDOR);
+		{
+			const char *v = (const char*)glGetString(GL_VERSION);
+			gles.angle = (gles.modelstring && strstr(gles.modelstring, "ANGLE")) || (v && strstr(v, "ANGLE"));
+		}
 
 
 		gl_customshader = false; // Disable user shaders for GLES renderer
@@ -389,10 +393,34 @@ namespace OpenGLESRenderer
 			}
 		}
 		gles.maxSamples = 0;
-		gles.msaaRenderbuffers = core3 && glRenderbufferStorageMultisample && glBlitFramebuffer;
+		gles.pRenderbufferStorageMultisample = gles.pBlitFramebuffer = nullptr;
+		if (core3 && glRenderbufferStorageMultisample && glBlitFramebuffer)
+		{
+			gles.pRenderbufferStorageMultisample = (void*)glRenderbufferStorageMultisample;
+			gles.pBlitFramebuffer = (void*)glBlitFramebuffer;
+		}
+		else if (gles.esVersion > 0 && gles.depthStencilAvailable && (CheckExtension("GL_OES_rgb8_rgba8") || CheckExtension("GL_ARM_rgba8")))
+		{
+			// GLES 2.0: multisampled renderbuffers and their resolve blit from the extensions that have them -
+			// ANGLE's GLES 2.0 contexts and Tegra (NV). Same enums as GLES 3.0 (GL_MAX_SAMPLES, the read/draw
+			// frame buffer targets). The scene is RGBA8 with packed depth/stencil: both need their extensions.
+			if (CheckExtension("GL_ANGLE_framebuffer_multisample") && CheckExtension("GL_ANGLE_framebuffer_blit"))
+			{
+				gles.pRenderbufferStorageMultisample = GetProc("glRenderbufferStorageMultisampleANGLE");
+				gles.pBlitFramebuffer = GetProc("glBlitFramebufferANGLE");
+			}
+			else if (CheckExtension("GL_NV_framebuffer_multisample") && CheckExtension("GL_NV_framebuffer_blit"))
+			{
+				gles.pRenderbufferStorageMultisample = GetProc("glRenderbufferStorageMultisampleNV");
+				gles.pBlitFramebuffer = GetProc("glBlitFramebufferNV");
+			}
+			if (!gles.pRenderbufferStorageMultisample || !gles.pBlitFramebuffer)
+				gles.pRenderbufferStorageMultisample = gles.pBlitFramebuffer = nullptr;
+		}
+		gles.msaaRenderbuffers = gles.pRenderbufferStorageMultisample && gles.pBlitFramebuffer;
 		if (gles.msaaRenderbuffers)
 		{
-			glGetIntegerv(GL_MAX_SAMPLES, &gles.maxSamples);
+			glGetIntegerv(0x8D57 /* GL_MAX_SAMPLES (= _ANGLE, _NV) */, &gles.maxSamples);
 			if (es3 && glGetInternalformativ)
 			{
 				// lowered to the largest count each scene format reports (a higher one is an
@@ -409,8 +437,8 @@ namespace OpenGLESRenderer
 		}
 		if (gles.maxSamples < 2) gles.msaaRenderbuffers = false, gles.maxSamples = 0;
 
-		Printf("GLES capabilities: BGRA textures %s, sync %s, invalidate %s, discard %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers %s (max %d)\n",
-			gles.bgraTextures ? "yes" : "no", gles.syncObjects ? "yes" : "no", gles.invalidateFramebuffer ? "yes" : "no",
+		Printf("GLES capabilities%s: BGRA textures %s, sync %s, invalidate %s, discard %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers %s (max %d)\n",
+			gles.angle ? " (ANGLE)" : "", gles.bgraTextures ? "yes" : "no", gles.syncObjects ? "yes" : "no", gles.invalidateFramebuffer ? "yes" : "no",
 			gles.pDiscardFramebuffer ? "yes" : "no", gles.msrtt == 1 ? "EXT" : gles.msrtt == 2 ? "IMG" : "no", gles.msrttMaxSamples,
 			gles.msaaRenderbuffers ? "yes" : "no", gles.maxSamples);
 

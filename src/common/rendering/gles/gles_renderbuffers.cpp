@@ -37,6 +37,7 @@ EXTERN_CVAR(Int, gl_debug_level)
 #include "hw_batching.h"
 #include <algorithm>
 EXTERN_CVAR(Int, gl_multisample)
+EXTERN_CVAR(Bool, gl_msaa_angle_rtt)	// gl_renderbuffers.cpp
 
 namespace OpenGLRenderer
 {
@@ -148,7 +149,7 @@ namespace OpenGLESRenderer
 		if (samples > 1 && renderToTexture)
 			((RBSMS)gles.pRenderbufferStorageMultisampleRTT)(GL_RENDERBUFFER, samples, format, width, height);	// the extension's own entry point
 		else if (samples > 1)
-			glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, format, width, height);
+			((RBSMS)gles.pRenderbufferStorageMultisample)(GL_RENDERBUFFER, samples, format, width, height);	// core, or ANGLE/NV on GLES 2.0
 		else
 			glRenderbufferStorage(GL_RENDERBUFFER, format, width, height);
 		TrackBytes((int64_t)TargetBytes(format, width, height, samples, renderToTexture));
@@ -238,17 +239,32 @@ namespace OpenGLESRenderer
 	//
 	//==========================================================================
 
+	// ANGLE on Vulkan lists EXT_multisampled_render_to_texture even where the Vulkan driver lacks
+	// VK_EXT_multisampled_render_to_single_sampled, and then emulates it: each render pass resolves the samples
+	// at its end and, when it starts by loading, first "unresolves" the texture back into a hidden multisampled
+	// image with a full-screen draw. With the post-process, 2D and capture passes that is several full-screen
+	// copies a frame - very slow even on a Snapdragon 8 Elite, while the native GLES driver resolves on chip.
+	// Multisampled renderbuffers resolved by a blit are what ANGLE turns into a render pass resolve attachment,
+	// so they are used there instead (gl_msaa_angle_rtt 1: its render-to-texture all the same).
+static bool UseMSRTT()
+	{
+		if (!gles.msrtt) return false;
+		if (gles.angle && gles.msaaRenderbuffers && !gl_msaa_angle_rtt) return false;
+		return true;
+	}
+
 	int FGLRenderBuffers::MultisampleLimit()
 	{
-		if (gles.msrtt) return gles.msrttMaxSamples;
+		if (UseMSRTT()) return gles.msrttMaxSamples;
 		if (gles.msaaRenderbuffers) return gles.maxSamples;
 		return 0;
 	}
 
 	const char *FGLRenderBuffers::MultisamplePath()
 	{
-		if (gles.msrtt == 1) return "EXT_multisampled_render_to_texture, resolved in tile memory";
-		if (gles.msrtt == 2) return "IMG_multisampled_render_to_texture, resolved in tile memory";
+		if (UseMSRTT() && gles.msrtt == 1) return "EXT_multisampled_render_to_texture, resolved in tile memory";
+		if (UseMSRTT() && gles.msrtt == 2) return "IMG_multisampled_render_to_texture, resolved in tile memory";
+		if (gles.msaaRenderbuffers && gles.angle && gles.msrtt) return "multisampled renderbuffers, blit resolve (ANGLE: its render-to-texture is emulated)";
 		if (gles.msaaRenderbuffers) return "multisampled renderbuffers, blit resolve";
 		return gles.esVersion > 0 ? "no multisampled render-to-texture extension" : "no multisampled render buffers";
 	}
@@ -356,7 +372,7 @@ namespace OpenGLESRenderer
 	void FGLRenderBuffers::CreateScene(int width, int height, int samples)
 	{
 		ClearScene();
-		if (samples > 1 && gles.msrtt && CreateSceneRTT(width, height, V_MultisampleCount(samples, gles.msrttMaxSamples))) return;
+		if (samples > 1 && UseMSRTT() && CreateSceneRTT(width, height, V_MultisampleCount(samples, gles.msrttMaxSamples))) return;
 		// multisampled renderbuffers can have a lower limit than render-to-texture
 		if (gles.msaaRenderbuffers) samples = V_MultisampleCount(samples, gles.maxSamples);
 		if (samples > 1 && gles.msaaRenderbuffers && CreateSceneMultisample(width, height, samples)) return;
@@ -452,7 +468,8 @@ namespace OpenGLESRenderer
 		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, mSceneFB.handle);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mResolveFB.handle);
-		glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		typedef void (APIENTRY *BLITFB)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
+		((BLITFB)gles.pBlitFramebuffer)(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);	// core, or ANGLE/NV
 		glBindFramebuffer(GL_FRAMEBUFFER, fb);
 		mResolvePending = false;
 		rtStatsGLES.resolves++;

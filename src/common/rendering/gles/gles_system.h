@@ -143,7 +143,10 @@ namespace OpenGLESRenderer
 		int msrttMaxSamples;
 		void *pFramebufferTexture2DMultisample;
 		void *pRenderbufferStorageMultisampleRTT;
-		bool msaaRenderbuffers;	// glRenderbufferStorageMultisample + glBlitFramebuffer (GLES 3.0)
+		bool msaaRenderbuffers;	// multisampled renderbuffers + blit resolve (GLES 3.0 core; GLES 2.0: ANGLE/NV extensions)
+		void *pRenderbufferStorageMultisample;	// their entry points: core on GLES 3.0, ...ANGLE/...NV on GLES 2.0
+		void *pBlitFramebuffer;
+		bool angle;				// the driver is ANGLE (GL_RENDERER names it)
 		int maxSamples;			// multisampled renderbuffers: highest count RGBA8 and depth/stencil both support
 	};
 

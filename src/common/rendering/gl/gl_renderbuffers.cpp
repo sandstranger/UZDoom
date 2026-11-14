@@ -38,6 +38,8 @@
 
 EXTERN_CVAR(Int, gl_debug_level)
 CVAR(Int, gl_multisample, 1, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
+// shared with the GLES renderer (gles_renderbuffers.cpp); see UseMSRTT
+CVAR(Bool, gl_msaa_angle_rtt, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 
 namespace OpenGLRenderer
 {
@@ -65,17 +67,32 @@ FGLRenderBuffers::FGLRenderBuffers()
 //
 //==========================================================================
 
+// ANGLE on Vulkan lists EXT_multisampled_render_to_texture even where the Vulkan driver lacks
+// VK_EXT_multisampled_render_to_single_sampled, and then emulates it: each render pass resolves the samples
+// at its end and, when it starts by loading, first "unresolves" the texture back into a hidden multisampled
+// image with a full-screen draw. With the post-process, 2D and capture passes that is several full-screen
+// copies a frame - very slow even on a Snapdragon 8 Elite, while the native GLES driver resolves on chip.
+// Multisampled renderbuffers resolved by a blit are what ANGLE turns into a render pass resolve attachment,
+// so they are used there instead (gl_msaa_angle_rtt 1: its render-to-texture all the same).
+static bool UseMSRTT()
+{
+	if (gl.esversion == 0 || !gl.msrtt) return false;
+	if (gl.angle && gl.msaaMaxSamples >= 2 && !gl_msaa_angle_rtt) return false;
+	return true;
+}
+
 int FGLRenderBuffers::MultisampleLimit()
 {
-	if (gl.esversion > 0 && gl.msrtt) return gl.msrttMaxSamples;
+	if (UseMSRTT()) return gl.msrttMaxSamples;
 	return gl.msaaMaxSamples;
 }
 
 const char *FGLRenderBuffers::MultisamplePath()
 {
 	if (gl.esversion == 0) return "multisampled render buffers";
-	if (gl.msrtt == 1) return "render-to-texture (EXT), resolved in tile memory";
-	if (gl.msrtt == 2) return "render-to-texture (IMG), resolved in tile memory";
+	if (UseMSRTT() && gl.msrtt == 1) return "render-to-texture (EXT), resolved in tile memory";
+	if (UseMSRTT() && gl.msrtt == 2) return "render-to-texture (IMG), resolved in tile memory";
+	if (gl.angle && gl.msrtt) return "multisampled renderbuffers, blit resolve (ANGLE: its render-to-texture is emulated)";
 	return "multisampled renderbuffers, blit resolve";
 }
 
@@ -1408,7 +1425,7 @@ int FGLRenderBuffers::NextEye(int eyeCount)
 void FGLRenderBuffers::CreateSceneES(int width, int height, int samples, bool needsSceneTextures)
 {
 	ClearScene();
-	if (samples > 1 && !needsSceneTextures && gl.msrtt)
+	if (samples > 1 && !needsSceneTextures && UseMSRTT())
 	{
 		int s = V_MultisampleCount(samples, gl.msrttMaxSamples);
 		mSceneDepthStencilBuf = CreateRenderBufferRTT("SceneDepthStencil", GL_DEPTH24_STENCIL8, width, height, s);

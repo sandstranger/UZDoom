@@ -198,8 +198,8 @@ static void LoadESCapabilities()
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	bindless = false;
 
-	Printf("OpenGL ES %d.%d context, renderer limited to GLES 3.0; float16 targets %s, float32 targets %s, float32 filtering %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers max %d\n",
-		gl.esphysical / 100, (gl.esphysical / 10) % 10, gl.colorbuffer16f ? "yes" : "no", gl.colorbuffer32f ? "yes" : "no", gl.floatlinear ? "yes" : "no",
+	Printf("OpenGL ES %d.%d context%s, renderer limited to GLES 3.0; float16 targets %s, float32 targets %s, float32 filtering %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers max %d\n",
+		gl.esphysical / 100, (gl.esphysical / 10) % 10, gl.angle ? " (ANGLE)" : "", gl.colorbuffer16f ? "yes" : "no", gl.colorbuffer32f ? "yes" : "no", gl.floatlinear ? "yes" : "no",
 		gl.msrtt == 1 ? "EXT" : gl.msrtt == 2 ? "IMG" : "no", gl.msrttMaxSamples, gl.msaaMaxSamples);
 }
 
@@ -218,6 +218,7 @@ void gl_LoadExtensions()
 	gl.pFramebufferTexture2DMultisample = gl.pRenderbufferStorageMultisampleRTT = nullptr;
 	gl.vendorstring = (char*)glGetString(GL_VENDOR);
 	gl.modelstring = (char*)glGetString(GL_RENDERER);
+	gl.angle = (gl.modelstring && strstr(gl.modelstring, "ANGLE")) || (glversion && strstr(glversion, "ANGLE"));
 	if (glversion && strncmp(glversion, "OpenGL ES ", 10) == 0)
 	{
 		int major = 0, minor = 0;
