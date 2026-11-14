@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <mutex>
+#include <vector>
 #include "buffers.h"
 
 #ifdef _MSC_VER
@@ -46,9 +48,18 @@ protected:
 
 	bool isData = false;
 	char *memory = nullptr;
+	bool mMapped = false;	// glUnmapBuffer on a buffer that is not mapped is GL_INVALID_OPERATION
+
+	// staged vertex data (IBuffer::SetStaging)
+	char *mStaging = nullptr;
+	size_t mCapacity = 0;	// GPU storage of a staged buffer
+	std::mutex mDirtyLock;
+	std::vector<std::pair<size_t, size_t>> mDirty;	// written ranges not on the GPU yet
+	void FlushStaged();
 
 	GLBuffer(int usetype);
 	~GLBuffer();
+	bool SetStaging(void *staging) override;
 	void SetData(size_t size, const void *data, BufferUsageType usage) override;
 	void SetSubData(size_t offset, size_t size, const void *data) override;
 	void Map() override;

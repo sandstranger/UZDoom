@@ -99,6 +99,13 @@ public:
 
 	virtual void Upload(size_t start, size_t size) {} // For unmappable buffers
 
+	// Vertex data written through a CPU staging copy (backends without persistent mapping):
+	// Memory() is 'staging' (at least the buffer's size, shared by several buffers is fine),
+	// Upload(start, size) marks a written range and Unmap() copies the marked ranges into GPU
+	// storage that grows with the data actually uploaded instead of the full buffer size.
+	// Must be called before SetData. Returns false where the backend keeps its own scheme.
+	virtual bool SetStaging(void *staging) { return false; }
+
 	virtual void Map() {}		// Only needed by old OpenGL but this needs to be in the interface.
 	virtual void Unmap() {}
 	void *Memory() { return map; }

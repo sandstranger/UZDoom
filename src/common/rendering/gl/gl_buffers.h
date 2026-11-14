@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <mutex>
+#include <vector>
 #include "buffers.h"
 #include "gl_load.h"
 
@@ -45,8 +47,17 @@ protected:
 	bool nomap = true;
 	GLsync mGLSync = 0;
 
+	// staged vertex data (IBuffer::SetStaging)
+	char *mStaging = nullptr;
+	size_t mCapacity = 0;	// GPU storage of a staged buffer
+	std::mutex mDirtyLock;
+	std::vector<std::pair<size_t, size_t>> mDirty;	// written ranges not on the GPU yet
+	void FlushStaged();
+
 	GLBuffer(int usetype);
 	~GLBuffer();
+	bool SetStaging(void *staging) override;
+	void Upload(size_t start, size_t size) override;
 	void SetData(size_t size, const void *data, BufferUsageType usage) override;
 	void SetSubData(size_t offset, size_t size, const void *data) override;
 #ifdef __ANDROID__

@@ -73,11 +73,22 @@ FFlatVertexBuffer::FFlatVertexBuffer(int width, int height, int pipelineNbr):
 	mIndexBuffer->SetData(4, data, BufferUsageType::Static); // On Vulkan this may not be empty, so set some dummy defaults to avoid crashes.
 
 
+	const unsigned int bytesize = BUFFER_SIZE * sizeof(FFlatVertex);
+
+	// Backends without persistent mapping (OpenGL ES) stage the vertex data in one CPU copy for
+	// all pipeline buffers and give each GPU buffer only what the frames use. Otherwise every
+	// pipeline buffer is BUFFER_SIZE vertices of GPU memory: 64 MB each, 256 MB with 4 of them.
+	mStaging = malloc(bytesize);	// a large allocation: pages are committed when written
+
 	for (int n = 0; n < mPipelineNbr; n++)
 	{
 		mVertexBufferPipeline[n] = screen->CreateVertexBuffer();
 
-		unsigned int bytesize = BUFFER_SIZE * sizeof(FFlatVertex);
+		if (mStaging && !mVertexBufferPipeline[n]->SetStaging(mStaging))
+		{
+			free(mStaging);	// the backend keeps its own scheme (persistent mapping)
+			mStaging = nullptr;
+		}
 		mVertexBufferPipeline[n]->SetData(bytesize, nullptr, BufferUsageType::Persistent);
 
 		static const FVertexBufferAttribute format[] = {
@@ -112,6 +123,8 @@ FFlatVertexBuffer::~FFlatVertexBuffer()
 	delete mIndexBuffer;
 	mIndexBuffer = nullptr;
 	mVertexBuffer = nullptr;
+	free(mStaging);
+	mStaging = nullptr;
 }
 
 //==========================================================================
@@ -167,9 +180,11 @@ void FFlatVertexBuffer::Copy(int start, int count)
 	{
 		mVertexBuffer = mVertexBufferPipeline[n];
 		Map();
-		memcpy(GetBuffer(start), &vbo_shadowdata[0], count * sizeof(FFlatVertex));
-		Unmap();
+		// [start], not [0]: OutputResized (Copy(4, 4)) wrote the uniform quad over the fullscreen
+		// quad, which left ClearScreen drawing nothing after the first resize
+		memcpy(GetBuffer(start), &vbo_shadowdata[start], count * sizeof(FFlatVertex));
 		mVertexBuffer->Upload(start * sizeof(FFlatVertex), count * sizeof(FFlatVertex));
+		Unmap();
 	}
 
 	mVertexBuffer = old;

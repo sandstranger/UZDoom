@@ -97,6 +97,10 @@ public:
 
 	unsigned int mMapStart;
 
+	// CPU copy of the vertex data shared by all pipeline buffers on backends that stage their
+	// uploads (IBuffer::SetStaging); only the pages that are written get committed.
+	void *mStaging = nullptr;
+
 	static const unsigned int BUFFER_SIZE = 2000000;
 	static const unsigned int BUFFER_SIZE_TO_USE = BUFFER_SIZE-500;
 
@@ -157,8 +161,9 @@ public:
 
 	void Unmap()
 	{
-		mVertexBuffer->Unmap();
+		// the written range first: a staged buffer copies it to the GPU when it is unmapped
 		mVertexBuffer->Upload(mMapStart * sizeof(FFlatVertex), (mCurIndex - mMapStart) * sizeof(FFlatVertex));
+		mVertexBuffer->Unmap();
 	}
 
 	void DropSync()
