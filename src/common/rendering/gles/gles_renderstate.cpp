@@ -877,12 +877,14 @@ void FGLRenderState::BeginStreamFrame()
 	void *&fence = mStreamFences[mStreamFrame];
 	if (fence)
 	{
-		// The region was last written STREAM_FRAMES frames ago: normally long done. If the GPU is
-		// still on it after a second this frame streams through the orphaned buffers instead and
-		// the fence is kept for the next time around.
-		GLenum status = glClientWaitSync((GLsync)fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
-		for (int i = 0; i < 20 && status == GL_TIMEOUT_EXPIRED; i++)
-			status = glClientWaitSync((GLsync)fence, GL_SYNC_FLUSH_COMMANDS_BIT, 50 * 1000 * 1000);
+		// The region was last written STREAM_FRAMES frames ago. Its fence is polled, never waited
+		// for: a region the GPU is still on is left alone this frame (the data streams through the
+		// orphaned buffers) and polled again the next time around. A wait here would only stall
+		// the CPU for a GPU that is behind anyway, the swap already paces the frames.
+		// No GL_SYNC_FLUSH_COMMANDS_BIT: the fence went to the GPU with the swap of its own frame
+		// (EndStreamFrame comes before SwapBuffers), and a flush on a tiler ends the render pass
+		// in progress - every tile stored and loaded again - for nothing.
+		const GLenum status = glClientWaitSync((GLsync)fence, 0, 0);
 		if (status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED)
 		{
 			glDeleteSync((GLsync)fence);
