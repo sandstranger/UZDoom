@@ -117,7 +117,9 @@ CUSTOM_CVAR(Int, vid_preferbackend, BACKEND_DEFAULT, CVAR_ARCHIVE | CVAR_GLOBALC
 		break;
 	}
 
-	vid_shadersupport = self != BACKEND_OPENGLES;
+	// The OpenGL ES backend applies the image calibration too (gamma, contrast, saturation,
+	// black and white point in its present shader, shaders_gles/pp/present.fp): the menu stays.
+	vid_shadersupport = true;
 
 	static bool notice = false;
 	if (notice) Printf("Changing the video backend requires a restart for " GAMENAME ".\n");
