@@ -23,7 +23,6 @@
 #include "cmdlib.h"
 #include "md5.h"
 #include "gl_shader.h"
-#include "framespikes.h"
 #include "hw_shaderpatcher.h"
 #include "shaderuniforms.h"
 #include "hw_viewpointuniforms.h"
@@ -67,6 +66,13 @@ void setSpirvCrossState(const bool enableSpirvCross) {
 }
 }
 #endif
+
+#include <chrono>
+
+static int64_t ShaderTimeUs()
+{
+	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 namespace OpenGLRenderer
 {
@@ -515,7 +521,6 @@ void FShader::RecordVariantUse(const char *kind) const
 
 bool FShader::Load(const char * name, const char * vert_prog_lump, const char * frag_prog_lump, const char * proc_prog_lump, const char * light_fragprog, const char * defines, bool isGBuffer, AllShaderIndex type)
 {
-	FrameSpikes::Scope spikeBuild(FrameSpikes::ProgramBuilds);
 	FString error;
 
 	if (!mParamsStored)
@@ -889,21 +894,18 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		linked = (status == GL_TRUE);
 		if (!linked)
 			RejectCachedProgramBinary(vp_comb, fp_comb);
-		else
-			spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
 	}
 
 	if (!linked && sCacheOnly)
 	{
 		// only looked up in the cache (variant prewarm): not there, nothing is compiled now
-		spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
 		glDeleteProgram(hShader);
 		sLivePrograms--;
 		hShader = 0;
 		return false;
 	}
 	const bool cacheRejected = !linked && binary.Size() > 0;
-	const int64_t compileStart = FrameSpikes::NowUs();
+	const int64_t compileStart = ShaderTimeUs();
 
 	if (!linked)
 	{
@@ -1031,7 +1033,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		const char *what = strstr(d, "INSTANCED_QUADS") ? " (instanced quads)" : strstr(d, "INSTANCED_MODELS") ? " (instanced models)" : "";
 		const char *clip = strstr(d, "CLIP_EMULATION") ? " (clip emulation)" : "";
 		Printf("Shader compiled while playing: %s%s%s, %.0f ms, binary cache: %s\n", name, clip, what,
-			(FrameSpikes::NowUs() - compileStart) / 1000.0, cacheRejected ? "rejected by the driver" : "not in it");
+			(ShaderTimeUs() - compileStart) / 1000.0, cacheRejected ? "rejected by the driver" : "not in it");
 	}
 
 	muDesaturation.Init(hShader, "uDesaturationFactor");

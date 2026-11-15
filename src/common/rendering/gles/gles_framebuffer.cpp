@@ -49,7 +49,6 @@
 #include "hw_cvars.h"
 #include "hw_batching.h"
 #include "hw_programcache.h"
-#include "framespikes.h"
 
 EXTERN_CVAR (Bool, vid_vsync)
 EXTERN_CVAR(Int, gl_tonemap)
@@ -59,10 +58,6 @@ EXTERN_CVAR(Int, gl_pipeline_depth);
 EXTERN_CVAR(Bool, gl_sort_textures);
 
 extern bool vid_hdr_active;
-
-#ifdef __ANDROID__
-namespace OpenGLRenderer { void ReportFrameSpike(); }	// gl_framebuffer.cpp: the frame spike log of both backends
-#endif
 
 namespace OpenGLESRenderer
 {
@@ -281,10 +276,7 @@ void OpenGLFrameBuffer::Swap()
 	gl_RenderState.EndStreamFrame();	// fence of the instance/index stream region this frame wrote
 
 	FPSLimit();
-	{
-		FrameSpikes::Scope spikeSwap(FrameSpikes::Swap);
-		SwapBuffers();
-	}
+	SwapBuffers();
 
 	mVertexData->NextPipelineBuffer();
 	mVertexData->WaitSync();
@@ -294,9 +286,6 @@ void OpenGLFrameBuffer::Swap()
 	camtexcount = 0;
 	FHardwareTexture::UnbindAll();
 	gl_RenderState.ClearLastMaterial();
-#ifdef __ANDROID__
-	OpenGLRenderer::ReportFrameSpike();
-#endif
 }
 
 //==========================================================================

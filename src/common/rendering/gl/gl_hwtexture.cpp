@@ -33,7 +33,6 @@
 #include "gl_renderstate.h"
 #include "gl_samplers.h"
 #include "gl_hwtexture.h"
-#include "framespikes.h"
 
 namespace OpenGLRenderer
 {
@@ -347,8 +346,7 @@ bool FHardwareTexture::BindOrCreate(FTexture *tex, int texunit, int clampmode, i
 		}
 		int w = 0, h = 0;
 
-		// Create this texture (decoded and uploaded: first sight of it, unless precached)
-		FrameSpikes::Scope spikeCreate(FrameSpikes::TextureCreates);
+		// Create this texture
 
 		FTextureBuffer texbuffer;
 

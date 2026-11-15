@@ -51,7 +51,6 @@
 #include "hw_cvars.h"
 #include "hw_batching.h"
 #include "gl_shader.h"
-#include "framespikes.h"
 #ifdef __ANDROID__
 #include <malloc.h>
 #include <unistd.h>
@@ -495,66 +494,6 @@ namespace
 }
 
 
-#ifdef __ANDROID__
-//==========================================================================
-//
-// Frame spikes (Android): a frame of 50 ms or more and 2.5 times the running average gets one line
-// with what it spent its time on - textures created (decoded and uploaded), programs built, sounds
-// loaded, the swap. Two lines a second at most. The GLES backend calls it too.
-//
-//==========================================================================
-
-CVAR(Bool, gl_frame_spikes, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-
-void ReportFrameSpike()
-{
-	static int64_t lastEnd = 0, average = 16667, lastReport = 0;
-	static unsigned suppressed = 0;
-
-	const int64_t now = FrameSpikes::NowUs();
-	const int64_t frame = lastEnd ? now - lastEnd : 0;
-	lastEnd = now;
-
-	int64_t calls[FrameSpikes::CounterCount], us[FrameSpikes::CounterCount], slowest[FrameSpikes::CounterCount];
-	for (int i = 0; i < FrameSpikes::CounterCount; i++)
-	{
-		calls[i] = FrameSpikes::Counters[i].calls.exchange(0, std::memory_order_relaxed);
-		us[i] = FrameSpikes::Counters[i].us.exchange(0, std::memory_order_relaxed);
-		slowest[i] = FrameSpikes::Counters[i].slowestUs.exchange(0, std::memory_order_relaxed);
-	}
-	if (frame <= 0) return;
-
-	if (gl_frame_spikes && frame >= 50000 && frame * 2 >= average * 5)
-	{
-		if (now - lastReport >= 500000)
-		{
-			static const char *const names[FrameSpikes::CounterCount] = { "textures created", "programs compiled", "programs from cache", "sounds loaded", "swap" };
-			FString line;
-			line.Format("Frame spike: %.1f ms", frame / 1000.0);
-			for (int i = 0; i < FrameSpikes::CounterCount; i++)
-			{
-				if (calls[i] == 0) continue;
-				char item[128];
-				snprintf(item, sizeof(item), " | %s %lldx %.1f ms (slowest %.1f)", names[i], (long long)calls[i], us[i] / 1000.0, slowest[i] / 1000.0);
-				line += item;
-			}
-			if (suppressed)
-			{
-				char item[64];
-				snprintf(item, sizeof(item), " | %u more spikes not reported", suppressed);
-				line += item;
-				suppressed = 0;
-			}
-			Printf("%s\n", line.GetChars());
-			lastReport = now;
-		}
-		else suppressed++;
-	}
-	// each frame moves the average a twentieth of the way
-	average += (frame - average) / 20;
-}
-#endif
-
 static void ReportMemory()
 {
 	if (gl_mem_report <= 0) return;
@@ -639,10 +578,7 @@ void OpenGLFrameBuffer::Swap()
 		if (swapbefore) glFinish();
 #endif		
 		FPSLimit();
-		{
-			FrameSpikes::Scope spikeSwap(FrameSpikes::Swap);
-			SwapBuffers();
-		}
+		SwapBuffers();
 #ifndef ANDROID		
 		if (!swapbefore) glFinish();
 #endif		
@@ -651,10 +587,7 @@ void OpenGLFrameBuffer::Swap()
 	{
 		mVertexData->DropSync();
 		FPSLimit();
-		{
-			FrameSpikes::Scope spikeSwap(FrameSpikes::Swap);
-			SwapBuffers();
-		}
+		SwapBuffers();
 
 		mVertexData->NextPipelineBuffer();
 		mVertexData->WaitSync();
@@ -673,7 +606,6 @@ void OpenGLFrameBuffer::Swap()
 	mDebug->Update();
 #ifdef __ANDROID__
 	ReportMemory();
-	ReportFrameSpike();
 #endif
 }
 

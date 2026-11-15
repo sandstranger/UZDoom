@@ -35,9 +35,15 @@
 #include "gles_renderer.h"
 #include "hw_programcache.h"
 #include "hw_batching.h"
-#include "framespikes.h"
 #include <map>
 #include <memory>
+
+#include <chrono>
+
+static int64_t ShaderTimeUs()
+{
+	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 namespace OpenGLESRenderer
 {
@@ -191,7 +197,6 @@ void FShader::LoadVariant()
 bool FShader::Load(const char * name, const char * vert_prog_lump_, const char * frag_prog_lump_, const char * proc_prog_lump_, const char * light_fragprog_, const char * defines)
 {
 	ShaderVariantData* shaderData = new ShaderVariantData();
-	FrameSpikes::Scope spikeBuild(FrameSpikes::ProgramBuilds);
 	mLastFromCache = false;
 	mLastCacheRejected = false;
 	mLastBuildMs = 0;
@@ -533,8 +538,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		linked = (status == GL_TRUE);
 		if (!linked)
 			RejectCachedProgramBinary(vp_comb, fp_comb);
-		else
-			spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
 	}
 	mLastFromCache = linked;
 	mLastCacheRejected = !linked && binary.Size() > 0;
@@ -542,12 +545,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 	if (!linked && sCacheOnly)
 	{
 		// only looked up in the binary cache (variant prewarm): not there, nothing is compiled now
-		spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
 		glDeleteProgram(shaderData->hShader);
 		delete shaderData;
 		return false;
 	}
-	const int64_t compileStart = FrameSpikes::NowUs();
+	const int64_t compileStart = ShaderTimeUs();
 
 	if (!linked)
 	{
@@ -637,7 +639,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		shaderData->hFragProg = 0;
 	}
 	if (!mLastFromCache)
-		mLastBuildMs = (FrameSpikes::NowUs() - compileStart) / 1000.0;
+		mLastBuildMs = (ShaderTimeUs() - compileStart) / 1000.0;
 
 	shaderData->muProjectionMatrix.Init(shaderData->hShader, "ProjectionMatrix");
 	shaderData->muViewMatrix.Init(shaderData->hShader, "ViewMatrix");
@@ -984,7 +986,7 @@ void FShaderManager::PrewarmVariants()
 		FShader::sStartupDone = true;
 		return;
 	}
-	const int64_t start = FrameSpikes::NowUs();
+	const int64_t start = ShaderTimeUs();
 	const TArray<FString> recorded = ProgramBinaryCache::RecordedVariants(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars());
 	int loaded = 0;
 	FShader::sCacheOnly = true;
@@ -994,7 +996,7 @@ void FShaderManager::PrewarmVariants()
 	FShader::sStartupDone = true;
 	glUseProgram(0);
 	mActiveShader = nullptr;
-	Printf("Shader variants: %d recorded, %d loaded from the binary cache in %.0f ms\n", (int)recorded.Size(), loaded, (FrameSpikes::NowUs() - start) / 1000.0);
+	Printf("Shader variants: %d recorded, %d loaded from the binary cache in %.0f ms\n", (int)recorded.Size(), loaded, (ShaderTimeUs() - start) / 1000.0);
 	ProgramBinaryCache::PrintStats();
 }
 
