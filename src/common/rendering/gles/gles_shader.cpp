@@ -35,6 +35,7 @@
 #include "gles_renderer.h"
 #include "hw_programcache.h"
 #include "hw_batching.h"
+#include "framespikes.h"
 #include <map>
 #include <memory>
 
@@ -190,6 +191,10 @@ void FShader::LoadVariant()
 bool FShader::Load(const char * name, const char * vert_prog_lump_, const char * frag_prog_lump_, const char * proc_prog_lump_, const char * light_fragprog_, const char * defines)
 {
 	ShaderVariantData* shaderData = new ShaderVariantData();
+	FrameSpikes::Scope spikeBuild(FrameSpikes::ProgramBuilds);
+	mLastFromCache = false;
+	mLastCacheRejected = false;
+	mLastBuildMs = 0;
 
 	FString vert_prog_lump = vert_prog_lump_;
 	FString frag_prog_lump = frag_prog_lump_;
@@ -528,7 +533,21 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		linked = (status == GL_TRUE);
 		if (!linked)
 			RejectCachedProgramBinary(vp_comb, fp_comb);
+		else
+			spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
 	}
+	mLastFromCache = linked;
+	mLastCacheRejected = !linked && binary.Size() > 0;
+
+	if (!linked && sCacheOnly)
+	{
+		// only looked up in the binary cache (variant prewarm): not there, nothing is compiled now
+		spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
+		glDeleteProgram(shaderData->hShader);
+		delete shaderData;
+		return false;
+	}
+	const int64_t compileStart = FrameSpikes::NowUs();
 
 	if (!linked)
 	{
@@ -617,6 +636,8 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		shaderData->hVertProg = 0;
 		shaderData->hFragProg = 0;
 	}
+	if (!mLastFromCache)
+		mLastBuildMs = (FrameSpikes::NowUs() - compileStart) / 1000.0;
 
 	shaderData->muProjectionMatrix.Init(shaderData->hShader, "ProjectionMatrix");
 	shaderData->muViewMatrix.Init(shaderData->hShader, "ViewMatrix");
@@ -726,6 +747,158 @@ FShader::~FShader()
 //
 //==========================================================================
 
+bool FShader::sCacheOnly = false;
+bool FShader::sStartupDone = false;
+
+static FString VariantConfig(const ShaderFlavourData &flavour)
+{
+	FString variantConfig = "\n";
+
+	variantConfig.AppendFormat("#define MAXIMUM_LIGHT_VECTORS %d\n", gles.numlightvectors);
+	variantConfig.AppendFormat("#define DEF_TEXTURE_MODE %d\n", flavour.textureMode);
+	variantConfig.AppendFormat("#define DEF_TEXTURE_FLAGS %d\n", flavour.texFlags);
+	variantConfig.AppendFormat("#define DEF_BLEND_FLAGS %d\n", flavour.blendFlags & 0x7);
+	variantConfig.AppendFormat("#define DEF_FOG_2D %d\n", flavour.twoDFog);
+	variantConfig.AppendFormat("#define DEF_FOG_ENABLED %d\n", flavour.fogEnabled);
+	variantConfig.AppendFormat("#define DEF_FOG_RADIAL %d\n", flavour.fogEquationRadial);
+	variantConfig.AppendFormat("#define DEF_FOG_COLOURED %d\n", flavour.colouredFog);
+	variantConfig.AppendFormat("#define DEF_USE_U_LIGHT_LEVEL %d\n", flavour.useULightLevel);
+
+	variantConfig.AppendFormat("#define DEF_DO_DESATURATE %d\n", flavour.doDesaturate);
+
+	variantConfig.AppendFormat("#define DEF_DYNAMIC_LIGHTS_MOD %d\n", flavour.dynLightsMod);
+	variantConfig.AppendFormat("#define DEF_DYNAMIC_LIGHTS_SUB %d\n", flavour.dynLightsSub);
+	variantConfig.AppendFormat("#define DEF_DYNAMIC_LIGHTS_ADD %d\n", flavour.dynLightsAdd);
+
+	variantConfig.AppendFormat("#define DEF_USE_OBJECT_COLOR_2 %d\n", flavour.useObjectColor2);
+	variantConfig.AppendFormat("#define DEF_USE_GLOW_TOP_COLOR %d\n", flavour.useGlowTopColor);
+	variantConfig.AppendFormat("#define DEF_USE_GLOW_BOTTOM_COLOR %d\n", flavour.useGlowBottomColor);
+
+	variantConfig.AppendFormat("#define DEF_USE_COLOR_MAP %d\n", flavour.useColorMap);
+	variantConfig.AppendFormat("#define DEF_BUILD_LIGHTING %d\n", flavour.buildLighting);
+	variantConfig.AppendFormat("#define DEF_BANDED_SW_LIGHTING %d\n", flavour.bandedSwLight);
+
+	variantConfig.AppendFormat("#define USE_GLSL_V100 %d\n", gles.forceGLSLv100);
+
+#ifdef NPOT_EMULATION
+	variantConfig.AppendFormat("#define DEF_NPOT_EMULATION %d\n", flavour.npotEmulation);
+#endif
+
+	variantConfig.AppendFormat("#define DEF_HAS_SPOTLIGHT %d\n", flavour.hasSpotLight);
+	variantConfig.AppendFormat("#define DEF_PALETTE_INTERPOLATE %d\n", flavour.paletteInterpolate);
+	if (flavour.instancing && gles.essl300)
+		variantConfig << "#define INSTANCING\n" << (flavour.instancing == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
+	return variantConfig;
+}
+
+// A flavour as it is written to the list of the variants used (variants.txt), every field in full
+static const int FlavourFieldCount = 22;
+
+static void FlavourToInts(const ShaderFlavourData &f, int *v)
+{
+	int i = 0;
+	v[i++] = f.textureMode; v[i++] = f.texFlags; v[i++] = f.blendFlags; v[i++] = f.twoDFog;
+	v[i++] = f.fogEnabled; v[i++] = f.fogEquationRadial; v[i++] = f.colouredFog; v[i++] = f.doDesaturate;
+	v[i++] = f.dynLightsMod; v[i++] = f.dynLightsSub; v[i++] = f.dynLightsAdd; v[i++] = f.useULightLevel;
+	v[i++] = f.useObjectColor2; v[i++] = f.useGlowTopColor; v[i++] = f.useGlowBottomColor; v[i++] = f.useColorMap;
+	v[i++] = f.buildLighting; v[i++] = f.bandedSwLight;
+#ifdef NPOT_EMULATION
+	v[i++] = f.npotEmulation;
+#else
+	v[i++] = 0;
+#endif
+	v[i++] = f.hasSpotLight; v[i++] = f.paletteInterpolate; v[i++] = f.instancing;
+	assert(i == FlavourFieldCount);
+}
+
+static void FlavourFromInts(const int *v, ShaderFlavourData &f)
+{
+	int i = 0;
+	f.textureMode = v[i++]; f.texFlags = v[i++]; f.blendFlags = v[i++]; f.twoDFog = v[i++] != 0;
+	f.fogEnabled = v[i++] != 0; f.fogEquationRadial = v[i++] != 0; f.colouredFog = v[i++] != 0; f.doDesaturate = v[i++] != 0;
+	f.dynLightsMod = v[i++] != 0; f.dynLightsSub = v[i++] != 0; f.dynLightsAdd = v[i++] != 0; f.useULightLevel = v[i++] != 0;
+	f.useObjectColor2 = v[i++] != 0; f.useGlowTopColor = v[i++] != 0; f.useGlowBottomColor = v[i++] != 0; f.useColorMap = v[i++] != 0;
+	f.buildLighting = v[i++] != 0; f.bandedSwLight = v[i++] != 0;
+#ifdef NPOT_EMULATION
+	f.npotEmulation = v[i++] != 0;
+#else
+	i++;
+#endif
+	f.hasSpotLight = v[i++] != 0; f.paletteInterpolate = v[i++] != 0; f.instancing = v[i++];
+	assert(i == FlavourFieldCount);
+}
+
+// "p<pass>|<hash of the sources and base defines>|<name>|": the shader a recorded flavour belongs to
+// (a material shader with and without alpha test has the same name, other defines)
+FString FShader::VariantPrefix() const
+{
+	uint32_t hash = 2166136261u;
+	for (const FString *s : { &mVertProg, &mFragProg, &mFragProg2, &mLightProg, &mDefinesBase })
+	{
+		for (const char *c = s->GetChars(); c && *c; c++)
+			hash = (hash ^ uint8_t(*c)) * 16777619u;
+		hash = (hash ^ 0xffu) * 16777619u;	// keeps ("ab","c") and ("a","bc") apart
+	}
+	FString id;
+	id.Format("p%d|%08x|%s|", mPassType, hash, mName.GetChars());
+	return id;
+}
+
+FShader::ShaderVariantData *FShader::BuildVariant(const ShaderFlavourData &flavour)
+{
+	if (!Load(mName.GetChars(), mVertProg.GetChars(), mFragProg.GetChars(), mFragProg2.GetChars(), mLightProg.GetChars(), (mDefinesBase + VariantConfig(flavour)).GetChars()))
+		return nullptr;	// sCacheOnly: not in the cache (cur unchanged)
+	return cur;
+}
+
+void FShader::RecordVariantUse(const ShaderFlavourData &flavour) const
+{
+	if (!IsShaderCacheActive())
+		return;
+	int v[FlavourFieldCount];
+	FlavourToInts(flavour, v);
+	FString line = VariantPrefix();
+	for (int i = 0; i < FlavourFieldCount; i++)
+		line.AppendFormat(i ? " %d" : "%d", v[i]);
+	ProgramBinaryCache::RecordVariant(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars(), line);
+}
+
+int FShader::PrewarmVariants(const TArray<FString> &recorded)
+{
+	const FString prefix = VariantPrefix();
+	int loaded = 0;
+	for (auto &line : recorded)
+	{
+		if (line.Len() <= prefix.Len() || strncmp(line.GetChars(), prefix.GetChars(), prefix.Len()) != 0)
+			continue;
+		int v[FlavourFieldCount];
+		int n = 0;
+		const char *p = line.GetChars() + prefix.Len();
+		while (n < FlavourFieldCount)
+		{
+			char *end = nullptr;
+			const long value = strtol(p, &end, 10);
+			if (end == p)
+				break;
+			v[n++] = (int)value;
+			p = end;
+		}
+		if (n != FlavourFieldCount || *p != 0)
+			continue;	// written by another build
+		ShaderFlavourData flavour;
+		FlavourFromInts(v, flavour);
+		const uint32_t tag = CreateShaderTag(flavour);
+		if (variants.find(tag) != variants.end())
+			continue;
+		if (ShaderVariantData *data = BuildVariant(flavour))
+		{
+			variants.insert(std::make_pair(tag, data));
+			loaded++;
+		}
+	}
+	return loaded;
+}
+
 bool FShader::Bind(ShaderFlavourData& flavour)
 {
 	uint32_t tag = CreateShaderTag(flavour);
@@ -734,47 +907,17 @@ bool FShader::Bind(ShaderFlavourData& flavour)
 
 	if (pos == variants.end())
 	{
-		FString variantConfig = "\n";
-
-		variantConfig.AppendFormat("#define MAXIMUM_LIGHT_VECTORS %d\n", gles.numlightvectors);
-		variantConfig.AppendFormat("#define DEF_TEXTURE_MODE %d\n", flavour.textureMode);
-		variantConfig.AppendFormat("#define DEF_TEXTURE_FLAGS %d\n", flavour.texFlags);
-		variantConfig.AppendFormat("#define DEF_BLEND_FLAGS %d\n", flavour.blendFlags & 0x7);
-		variantConfig.AppendFormat("#define DEF_FOG_2D %d\n", flavour.twoDFog);
-		variantConfig.AppendFormat("#define DEF_FOG_ENABLED %d\n", flavour.fogEnabled);
-		variantConfig.AppendFormat("#define DEF_FOG_RADIAL %d\n", flavour.fogEquationRadial);
-		variantConfig.AppendFormat("#define DEF_FOG_COLOURED %d\n", flavour.colouredFog);
-		variantConfig.AppendFormat("#define DEF_USE_U_LIGHT_LEVEL %d\n", flavour.useULightLevel);
-
-		variantConfig.AppendFormat("#define DEF_DO_DESATURATE %d\n", flavour.doDesaturate);
-
-		variantConfig.AppendFormat("#define DEF_DYNAMIC_LIGHTS_MOD %d\n", flavour.dynLightsMod);
-		variantConfig.AppendFormat("#define DEF_DYNAMIC_LIGHTS_SUB %d\n", flavour.dynLightsSub);
-		variantConfig.AppendFormat("#define DEF_DYNAMIC_LIGHTS_ADD %d\n", flavour.dynLightsAdd);
-
-		variantConfig.AppendFormat("#define DEF_USE_OBJECT_COLOR_2 %d\n", flavour.useObjectColor2);
-		variantConfig.AppendFormat("#define DEF_USE_GLOW_TOP_COLOR %d\n", flavour.useGlowTopColor);
-		variantConfig.AppendFormat("#define DEF_USE_GLOW_BOTTOM_COLOR %d\n", flavour.useGlowBottomColor);
-
-		variantConfig.AppendFormat("#define DEF_USE_COLOR_MAP %d\n", flavour.useColorMap);
-		variantConfig.AppendFormat("#define DEF_BUILD_LIGHTING %d\n", flavour.buildLighting);
-		variantConfig.AppendFormat("#define DEF_BANDED_SW_LIGHTING %d\n", flavour.bandedSwLight);
-
-		variantConfig.AppendFormat("#define USE_GLSL_V100 %d\n", gles.forceGLSLv100);
-
-#ifdef NPOT_EMULATION
-		variantConfig.AppendFormat("#define DEF_NPOT_EMULATION %d\n", flavour.npotEmulation);
-#endif
-
-		variantConfig.AppendFormat("#define DEF_HAS_SPOTLIGHT %d\n", flavour.hasSpotLight);
-		variantConfig.AppendFormat("#define DEF_PALETTE_INTERPOLATE %d\n", flavour.paletteInterpolate);
-		if (flavour.instancing && gles.essl300)
-			variantConfig << "#define INSTANCING\n" << (flavour.instancing == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
-
-		//Printf("Shader: %s, %08x %s", mFragProg2.GetChars(), tag, variantConfig.GetChars());
-
-		Load(mName.GetChars(), mVertProg.GetChars(), mFragProg.GetChars(), mFragProg2.GetChars(), mLightProg.GetChars(), (mDefinesBase + variantConfig).GetChars());
-		variants.insert(std::make_pair(tag, cur));
+		ShaderVariantData *data = BuildVariant(flavour);
+		variants.insert(std::make_pair(tag, data));
+		cur = data;
+		RecordVariantUse(flavour);
+		if (sStartupDone && !mLastFromCache)
+		{
+			// a frame waited for this one
+			Printf("Shader compiled while playing: %s, flavour %08x%s, %.0f ms, binary cache: %s\n", mName.GetChars(), tag,
+				flavour.instancing == 1 ? " (instanced quads)" : flavour.instancing == 2 ? " (instanced models)" : "",
+				mLastBuildMs, mLastCacheRejected ? "rejected by the driver" : "not in it");
+		}
 	}
 	else
 	{
@@ -799,6 +942,7 @@ FShader *FShaderCollection::Compile (const char *ShaderName, const char *ShaderP
 	if (!usediscard) defines += "#define NO_ALPHATEST\n";
 
 	FShader *shader = new FShader(ShaderName);
+	shader->mPassType = passType;
 	shader->Configure(ShaderName, "shaders_gles/glsl/main.vp", "shaders_gles/glsl/main.fp", ShaderPath, LightModePath, defines.GetChars());
 	return shader;
 }
@@ -831,6 +975,27 @@ void FShaderManager::SetActiveShader(FShader::ShaderVariantData *sh)
 		glUseProgram(sh!= NULL? sh->GetHandle() : 0);
 		mActiveShader = sh;
 	}
+}
+
+void FShaderManager::PrewarmVariants()
+{
+	if (!IsShaderCacheActive())
+	{
+		FShader::sStartupDone = true;
+		return;
+	}
+	const int64_t start = FrameSpikes::NowUs();
+	const TArray<FString> recorded = ProgramBinaryCache::RecordedVariants(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars());
+	int loaded = 0;
+	FShader::sCacheOnly = true;
+	for (auto collection : mPassShaders)
+		loaded += collection->PrewarmVariants(recorded);
+	FShader::sCacheOnly = false;
+	FShader::sStartupDone = true;
+	glUseProgram(0);
+	mActiveShader = nullptr;
+	Printf("Shader variants: %d recorded, %d loaded from the binary cache in %.0f ms\n", (int)recorded.Size(), loaded, (FrameSpikes::NowUs() - start) / 1000.0);
+	ProgramBinaryCache::PrintStats();
 }
 
 FShader *FShaderManager::BindEffect(int effect, EPassType passType, ShaderFlavourData &flavour)
@@ -911,6 +1076,7 @@ void FShaderCollection::CompileShaders(EPassType passType)
 	for(int i=0;i<MAX_EFFECTS;i++)
 	{
 		FShader *eff = new FShader(effectshaders[i].ShaderName);
+		eff->mPassType = passType;
 		if (!eff->Configure(effectshaders[i].ShaderName, effectshaders[i].vp, effectshaders[i].fp1,
 						effectshaders[i].fp2, effectshaders[i].fp3, effectshaders[i].defines))
 		{
@@ -971,6 +1137,18 @@ int FShaderCollection::Find(const char * shn)
 //
 //
 //==========================================================================
+
+int FShaderCollection::PrewarmVariants(const TArray<FString> &recorded)
+{
+	int loaded = 0;
+	for (auto shader : mMaterialShaders)
+		if (shader) loaded += shader->PrewarmVariants(recorded);
+	for (auto shader : mMaterialShadersNAT)
+		if (shader) loaded += shader->PrewarmVariants(recorded);
+	for (auto shader : mEffectShaders)
+		if (shader) loaded += shader->PrewarmVariants(recorded);
+	return loaded;
+}
 
 FShader *FShaderCollection::BindEffect(int effect, ShaderFlavourData& flavour)
 {

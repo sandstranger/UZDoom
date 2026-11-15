@@ -500,13 +500,13 @@ namespace
 //
 // Frame spikes (Android): a frame of 50 ms or more and 2.5 times the running average gets one line
 // with what it spent its time on - textures created (decoded and uploaded), programs built, sounds
-// loaded, the swap. Two lines a second at most.
+// loaded, the swap. Two lines a second at most. The GLES backend calls it too.
 //
 //==========================================================================
 
 CVAR(Bool, gl_frame_spikes, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
-static void ReportFrameSpike()
+void ReportFrameSpike()
 {
 	static int64_t lastEnd = 0, average = 16667, lastReport = 0;
 	static unsigned suppressed = 0;

@@ -288,6 +288,12 @@ class FShader
 	FString mFragProg2;
 	FString mLightProg;
 	FString mDefinesBase;
+	int mPassType = 0;
+
+	// what the last Load did (for the log of programs a frame waited for)
+	bool mLastFromCache = false;
+	bool mLastCacheRejected = false;
+	double mLastBuildMs = 0;
 
 	/////
 public: class ShaderVariantData
@@ -432,7 +438,16 @@ public:
 
 	bool Bind(ShaderFlavourData& flavour);
 
+	// Every flavour is a program of its own, built the first time something is drawn with it. The
+	// flavours used are recorded next to the program binaries; the next start loads them from the
+	// binary cache (PrewarmVariants) instead of a frame in the game compiling or loading them.
+	static bool sCacheOnly;		// Load: looked up in the binary cache only, nothing compiled (the prewarm)
+	static bool sStartupDone;	// from now on a program compiled from source is logged (a frame waited for it)
 
+	FString VariantPrefix() const;
+	ShaderVariantData *BuildVariant(const ShaderFlavourData &flavour);	// nullptr: sCacheOnly and not in the cache
+	void RecordVariantUse(const ShaderFlavourData &flavour) const;
+	int PrewarmVariants(const TArray<FString> &recorded);
 };
 
 //==========================================================================
@@ -450,6 +465,7 @@ public:
 	FShader *Get(unsigned int eff, bool alphateston, EPassType passType);
 
 	void SetActiveShader(FShader::ShaderVariantData *sh);
+	void PrewarmVariants();
 private:
 
 	FShader::ShaderVariantData *mActiveShader = nullptr;
@@ -473,6 +489,7 @@ public:
 	FShader *Compile(const char *ShaderName, const char *ShaderPath, const char *LightModePath, const char *shaderdefines, bool usediscard, EPassType passType);
 	int Find(const char *mame);
 	FShader *BindEffect(int effect, ShaderFlavourData& flavour);
+	int PrewarmVariants(const TArray<FString> &recorded);
 
 	FShader *Get(unsigned int eff, bool alphateston)
 	{
