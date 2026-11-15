@@ -39,6 +39,12 @@ namespace ProgramBinaryCache
 	void ProcessPendingTrim();
 	bool TrimRequested();
 	void PrintStats();
+
+	// Program variants built on first use (instanced, clip emulation), recorded next to the binaries
+	// of the driver so that the next start loads them from the cache instead of the first frame that
+	// needs one compiling it.
+	void RecordVariant(const char *ns, const char *driver, const FString &id);
+	TArray<FString> RecordedVariants(const char *ns, const char *driver);
 }
 
 extern "C" void UZDoom_SetShaderCacheDirectory(const char *path);

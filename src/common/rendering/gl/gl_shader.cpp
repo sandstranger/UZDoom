@@ -491,6 +491,28 @@ flat in float vInstDesaturation;
 #endif
 )";
 
+bool FShader::sCacheOnly = false;
+bool FShader::sStartupDone = false;
+
+// "<kind>|<hash of the defines>|<name>" of the shader the variant belongs to (a material shader with
+// or without alpha test: the same name, other defines). kind: q/m instanced quads/models, c clip
+// emulation, cq/cm instanced variants of the clip variant.
+FString FShader::VariantId(const char *kind) const
+{
+	uint32_t hash = 2166136261u;
+	for (const char *c = mDefines.GetChars(); c && *c; c++)
+		hash = (hash ^ uint8_t(*c)) * 16777619u;
+	FString id;
+	id.Format("%s|%08x|%s", kind, hash, mName.GetChars());
+	return id;
+}
+
+void FShader::RecordVariantUse(const char *kind) const
+{
+	const FShader *root = mParent ? mParent : this;
+	ProgramBinaryCache::RecordVariant(ProgramCacheNamespace(), ProgramCacheDriver().GetChars(), root->VariantId(kind));
+}
+
 bool FShader::Load(const char * name, const char * vert_prog_lump, const char * frag_prog_lump, const char * proc_prog_lump, const char * light_fragprog, const char * defines, bool isGBuffer, AllShaderIndex type)
 {
 	FrameSpikes::Scope spikeBuild(FrameSpikes::ProgramBuilds);
@@ -871,6 +893,18 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 			spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
 	}
 
+	if (!linked && sCacheOnly)
+	{
+		// only looked up in the cache (variant prewarm): not there, nothing is compiled now
+		spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
+		glDeleteProgram(hShader);
+		sLivePrograms--;
+		hShader = 0;
+		return false;
+	}
+	const bool cacheRejected = !linked && binary.Size() > 0;
+	const int64_t compileStart = FrameSpikes::NowUs();
+
 	if (!linked)
 	{
 		hVertProg = glCreateShader(GL_VERTEX_SHADER);
@@ -988,6 +1022,16 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 	{
 		hVertProg = 0;
 		hFragProg = 0;
+	}
+
+	if (!linked && sStartupDone)
+	{
+		// a frame waited for this one
+		const char *d = defines ? defines : "";
+		const char *what = strstr(d, "INSTANCED_QUADS") ? " (instanced quads)" : strstr(d, "INSTANCED_MODELS") ? " (instanced models)" : "";
+		const char *clip = strstr(d, "CLIP_EMULATION") ? " (clip emulation)" : "";
+		Printf("Shader compiled while playing: %s%s%s, %.0f ms, binary cache: %s\n", name, clip, what,
+			(FrameSpikes::NowUs() - compileStart) / 1000.0, cacheRejected ? "rejected by the driver" : "not in it");
 	}
 
 	muDesaturation.Init(hShader, "uDesaturationFactor");
@@ -1120,7 +1164,15 @@ FShader *FShader::GetInstancedVariant(int variant)
 	FString defines;
 	defines << "#define INSTANCING\n" << (variant == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
 	FShader *shader = BuildVariant(defines, "Instanced");	// nullptr: drawn without instancing
-	if (shader) shader->mIsClipVariant = mIsClipVariant;
+	if (shader == nullptr && sCacheOnly)
+		return nullptr;		// not in the cache: built on first use
+	if (shader)
+	{
+		shader->mIsClipVariant = mIsClipVariant;
+		shader->mParent = mParent;
+		if (!sCacheOnly)
+			RecordVariantUse(mIsClipVariant ? (variant == 1 ? "cq" : "cm") : (variant == 1 ? "q" : "m"));
+	}
 	mInstanced[slot] = shader;
 	mInstancedFailed[slot] = shader == nullptr;
 	return shader;
@@ -1136,10 +1188,47 @@ FShader *FShader::GetClipVariant()
 	if (mFragLump.CompareNoCase("shaders/glsl/main.fp") != 0) return this;
 
 	FShader *shader = BuildVariant("#define CLIP_EMULATION\n", "Clip emulation");
-	if (shader) shader->mIsClipVariant = true;
+	if (shader == nullptr && sCacheOnly)
+		return this;		// not in the cache: built on first use
+	if (shader)
+	{
+		shader->mIsClipVariant = true;
+		shader->mParent = this;
+		if (!sCacheOnly)
+			RecordVariantUse("c");
+	}
 	mClipVariant = shader;
 	mClipVariantFailed = shader == nullptr;
 	return shader ? shader : this;
+}
+
+int FShader::PrewarmVariants(const TArray<FString> &recorded)
+{
+	if (!mParamsStored || mIsClipVariant || recorded.Size() == 0)
+		return 0;
+	auto used = [&](const char *kind)
+	{
+		const FString id = VariantId(kind);
+		for (auto &entry : recorded)
+			if (entry.Compare(id) == 0) return true;
+		return false;
+	};
+	int loaded = 0;
+	sCacheOnly = true;
+	if (used("q") && GetInstancedVariant(1)) loaded++;
+	if (used("m") && GetInstancedVariant(2)) loaded++;
+	if (used("c") || used("cq") || used("cm"))
+	{
+		FShader *clip = GetClipVariant();
+		if (clip != this)
+		{
+			loaded++;
+			if (used("cq") && clip->GetInstancedVariant(1)) loaded++;
+			if (used("cm") && clip->GetInstancedVariant(2)) loaded++;
+		}
+	}
+	sCacheOnly = false;
+	return loaded;
 }
 
 bool FShader::Bind()
@@ -1271,6 +1360,16 @@ FShaderManager::FShaderManager()
 		mPassShaders.Push(new FShaderCollection((EPassType)passType));
 }
 
+int FShaderCollection::PrewarmVariants(const TArray<FString> &recorded)
+{
+	int loaded = 0;
+	for (auto shader : mMaterialShaders)
+		if (shader) loaded += shader->PrewarmVariants(recorded);
+	for (auto shader : mMaterialShadersNAT)
+		if (shader) loaded += shader->PrewarmVariants(recorded);
+	return loaded;
+}
+
 bool FShaderManager::CompileNextShader()
 {
 	if (mCompilePass < 0) return true;
@@ -1284,6 +1383,13 @@ bool FShaderManager::CompileNextShader()
 			mCompilePass = -1;
 #ifdef ANDROID
 			FinishShaderConversions();
+			// the variants earlier runs built on first use come from the binary cache now
+			{
+				const TArray<FString> recorded = ProgramBinaryCache::RecordedVariants(ProgramCacheNamespace(), ProgramCacheDriver().GetChars());
+				const int prewarmed = mPassShaders[NORMAL_PASS]->PrewarmVariants(recorded);
+				Printf("Shader variants: %d recorded, %d loaded from the binary cache\n", (int)recorded.Size(), prewarmed);
+			}
+			FShader::sStartupDone = true;
 			// how many of the startup programs came from the binary cache (and how many were compiled)
 			ProgramBinaryCache::PrintStats();
 #endif

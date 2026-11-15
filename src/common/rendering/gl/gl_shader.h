@@ -290,6 +290,10 @@ private:
 	FShader *mClipVariant = nullptr;	// CLIP_EMULATION
 	bool mClipVariantFailed = false;
 	bool mIsClipVariant = false;
+	FShader *mParent = nullptr;		// the shader a clip variant was built from
+
+	FString VariantId(const char *kind) const;
+	void RecordVariantUse(const char *kind) const;
 
 	FShader *BuildVariant(const FString &extraDefines, const char *what);
 
@@ -308,6 +312,15 @@ public:
 	~FShader();
 
 	bool Load(const char * name, const char * vert_prog_lump, const char * fragprog, const char * fragprog2, const char * light_fragprog, const char *defines, bool isGBuffer, AllShaderIndex type);
+
+	// While set, variants are only looked up in the program binary cache: nothing is compiled
+	// (the startup prewarm of the variants recorded in earlier runs).
+	static bool sCacheOnly;
+	// The startup programs are done: a program compiled from now on is logged (a frame waited for it).
+	static bool sStartupDone;
+
+	// Loads the variants of this shader that earlier runs used (recorded) from the binary cache.
+	int PrewarmVariants(const TArray<FString> &recorded);
 
 	// variant 1: instanced sprite quads, 2: instanced models. Built on first use; nullptr if it
 	// cannot be built (the caller then draws without instancing).
@@ -379,6 +392,7 @@ public:
 	void PrefetchSources();
 #endif
 	FShader *BindEffect(int effect);
+	int PrewarmVariants(const TArray<FString> &recorded);
 
 	FShader *Get(unsigned int eff, bool alphateston)
 	{

@@ -327,6 +327,51 @@ namespace ProgramBinaryCache
 		Counters.rejects++;
 	}
 
+	void RecordVariant(const char *ns, const char *driver, const FString &id)
+	{
+		if (!r_programcache || id.IsEmpty())
+			return;
+		const std::string path = DriverDirectory(ns, driver) + "/variants.txt";
+		if (FILE *f = fopen(path.c_str(), "a"))
+		{
+			fprintf(f, "%s\n", id.GetChars());
+			fclose(f);
+		}
+	}
+
+	TArray<FString> RecordedVariants(const char *ns, const char *driver)
+	{
+		TArray<FString> list;
+		if (!r_programcache)
+			return list;
+		const std::string path = DriverDirectory(ns, driver) + "/variants.txt";
+		FILE *f = fopen(path.c_str(), "r");
+		if (!f)
+			return list;
+		char line[512];
+		while (fgets(line, sizeof(line), f))
+		{
+			size_t n = strlen(line);
+			while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r'))
+				line[--n] = 0;
+			if (n == 0)
+				continue;
+			bool known = false;
+			for (auto &entry : list)
+			{
+				if (entry.Compare(line) == 0)
+				{
+					known = true;
+					break;
+				}
+			}
+			if (!known)
+				list.Push(line);
+		}
+		fclose(f);
+		return list;
+	}
+
 	void TrimMemory(bool all)
 	{
 		size_t before = LruBytes;
