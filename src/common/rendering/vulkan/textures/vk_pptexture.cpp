@@ -37,6 +37,7 @@ VkPPTexture::VkPPTexture(VulkanRenderDevice* fb, PPTexture *texture) : fb(fb)
 	case PixelFormat::R32f: format = VK_FORMAT_R32_SFLOAT; pixelsize = 4; break;
 	case PixelFormat::Rg16f: format = VK_FORMAT_R16G16_SFLOAT; pixelsize = 4; break;
 	case PixelFormat::Rgba16_snorm: format = VK_FORMAT_R16G16B16A16_SNORM; pixelsize = 8; break;
+	case PixelFormat::Rgb11f: format = VK_FORMAT_B10G11R11_UFLOAT_PACK32; pixelsize = 4; break;
 	}
 
 	ImageBuilder imgbuilder;
@@ -47,6 +48,12 @@ VkPPTexture::VkPPTexture(VulkanRenderDevice* fb, PPTexture *texture) : fb(fb)
 	else
 		imgbuilder.Usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 	imgbuilder.DebugName("VkPPTexture");
+	if (texture->Format == PixelFormat::Rgb11f && !imgbuilder.IsFormatSupported(fb->device.get()))
+	{	// packed float is not a color attachment format every device has, 16 bit float RGBA is
+		format = VK_FORMAT_R16G16B16A16_SFLOAT;
+		pixelsize = 8;
+		imgbuilder.Format(format);
+	}
 	if (!imgbuilder.IsFormatSupported(fb->device.get()))
 		I_FatalError("Vulkan device does not support the image format required by a postprocess texture\n");
 	TexImage.Image = imgbuilder.Create(fb->device.get());

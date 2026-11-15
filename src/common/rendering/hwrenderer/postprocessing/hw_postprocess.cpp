@@ -62,8 +62,10 @@ void PPBloom::UpdateTextures(int width, int height)
 		blevel.Viewport.top = 0;
 		blevel.Viewport.width = (bloomWidth + 1) / 2;
 		blevel.Viewport.height = (bloomHeight + 1) / 2;
-		blevel.VTexture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::Rgba16f };
-		blevel.HTexture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::Rgba16f };
+		// Bloom is non-negative RGB (bloomextract clamps at 0, the alpha is never read) blended into
+		// nothing: packed floats keep its range at half the bytes a pass of the chain reads and writes
+		blevel.VTexture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::Rgb11f };
+		blevel.HTexture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::Rgb11f };
 
 		bloomWidth = blevel.Viewport.width;
 		bloomHeight = blevel.Viewport.height;

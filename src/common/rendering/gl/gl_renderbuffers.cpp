@@ -397,6 +397,7 @@ PPGLTexture FGLRenderBuffers::Create2DTexture(const char *name, GLuint format, i
 		case GL_RG32F:		if (!gl.colorbuffer32f) format = gl.colorbuffer16f ? GL_RG16F : GL_RG8; break;
 		case GL_RGBA32F:	if (!gl.colorbuffer32f) format = gl.colorbuffer16f ? GL_RGBA16F : GL_RGBA8; break;
 		case GL_RGBA16:		format = GL_RGBA8; break;	// no 16-bit normalized formats in GLES 3.0
+		case GL_R11F_G11F_B10F:	if (!gl.colorbuffer32f) format = gl.colorbuffer16f ? GL_RGBA16F : GL_RGBA8; break;	// renderable with EXT_color_buffer_float
 		default: break;
 		}
 	}
@@ -435,6 +436,7 @@ PPGLTexture FGLRenderBuffers::Create2DTexture(const char *name, GLuint format, i
 	case GL_RG32F:				dataformat = GL_RG; datatype = GL_FLOAT; break;
 	case GL_RG16F:				dataformat = GL_RG; datatype = GL_FLOAT; break;
 	case GL_RGB10_A2:			dataformat = GL_RGBA; datatype = GL_UNSIGNED_INT_2_10_10_10_REV; break;
+	case GL_R11F_G11F_B10F:		dataformat = GL_RGB; datatype = GL_FLOAT; break;
 	case GL_DEPTH_COMPONENT24:	dataformat = GL_DEPTH_COMPONENT; datatype = gl.esversion > 0 ? GL_UNSIGNED_INT : GL_FLOAT; break;	// GLES: only UNSIGNED_INT is valid
 	case GL_STENCIL_INDEX8:		dataformat = GL_STENCIL_INDEX; datatype = GL_INT; break;
 	case GL_DEPTH24_STENCIL8:	dataformat = GL_DEPTH_STENCIL; datatype = GL_UNSIGNED_INT_24_8; break;
@@ -1157,6 +1159,7 @@ PPGLTextureBackend *GLPPRenderState::GetGLTexture(PPTexture *texture)
 		case PixelFormat::R32f: glformat = GL_R32F; break;
 		case PixelFormat::Rg16f: glformat = GL_RG16F; break;
 		case PixelFormat::Rgba16_snorm: glformat = GL_RGBA16_SNORM; break;
+		case PixelFormat::Rgb11f: glformat = GL_R11F_G11F_B10F; break;
 		}
 
 		if (texture->Data)
