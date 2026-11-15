@@ -203,6 +203,15 @@ void FShaderProgram::Link(const char *name)
 				SaveCachedProgramBinary(mShaderSources[Vertex], mShaderSources[Fragment], binary, binaryFormat);
 			}
 		}
+		// The linked program keeps all it needs: the shader objects would only hold on to their
+		// source and their compiled form (under ANGLE a copy of the SPIR-V) as long as the program lives.
+		for (auto &handle : mShaders)
+		{
+			if (handle == 0) continue;
+			glDetachShader(mProgram, handle);
+			glDeleteShader(handle);
+			handle = 0;
+		}
 	}
 
 	// This is only for old OpenGL which didn't allow to set the binding from within the shader.

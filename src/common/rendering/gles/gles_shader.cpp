@@ -619,12 +619,15 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 				SaveCachedProgramBinary(vp_comb, fp_comb, binary, binaryFormat);
 			}
 		}
+		// The linked program keeps all it needs: the shader objects would only hold on to their
+		// source and their compiled form (under ANGLE a copy of the SPIR-V) as long as the program lives.
+		glDetachShader(shaderData->hShader, shaderData->hVertProg);
+		glDetachShader(shaderData->hShader, shaderData->hFragProg);
+		glDeleteShader(shaderData->hVertProg);
+		glDeleteShader(shaderData->hFragProg);
 	}
-	else
-	{
-		shaderData->hVertProg = 0;
-		shaderData->hFragProg = 0;
-	}
+	shaderData->hVertProg = 0;
+	shaderData->hFragProg = 0;
 
 	shaderData->muProjectionMatrix.Init(shaderData->hShader, "ProjectionMatrix");
 	shaderData->muViewMatrix.Init(shaderData->hShader, "ViewMatrix");

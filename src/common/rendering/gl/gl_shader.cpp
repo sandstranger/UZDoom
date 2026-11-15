@@ -1010,12 +1010,15 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 				SaveCachedProgramBinary(vp_comb, fp_comb, binary, binaryFormat);
 			}
 		}
+		// The linked program keeps all it needs: the shader objects would only hold on to their
+		// source and their compiled form (under ANGLE a copy of the SPIR-V) as long as the program lives.
+		glDetachShader(hShader, hVertProg);
+		glDetachShader(hShader, hFragProg);
+		glDeleteShader(hVertProg);
+		glDeleteShader(hFragProg);
 	}
-	else
-	{
-		hVertProg = 0;
-		hFragProg = 0;
-	}
+	hVertProg = 0;
+	hFragProg = 0;
 
 	muDesaturation.Init(hShader, "uDesaturationFactor");
 	muFogEnabled.Init(hShader, "uFogEnabled");
