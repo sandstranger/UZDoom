@@ -32,7 +32,8 @@ enum class PixelFormat
 	R32f,
 	Rg16f,
 	Rgba16_snorm,
-	Rgb11f	// packed float RGB, no alpha: half the memory traffic of Rgba16f (renderers fall back to it)
+	Rgb11f,	// packed float RGB, no alpha: half the memory traffic of Rgba16f (renderers fall back to it)
+	R16f
 };
 
 enum class PostProcessUniformType

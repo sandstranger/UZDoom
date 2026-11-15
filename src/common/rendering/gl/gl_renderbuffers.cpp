@@ -1155,11 +1155,16 @@ PPGLTextureBackend *GLPPRenderState::GetGLTexture(PPTexture *texture)
 		{
 		default:
 		case PixelFormat::Rgba8: glformat = GL_RGBA8; break;
-		case PixelFormat::Rgba16f: glformat = GL_RGBA16F; break;
+		// GLES: the pipeline textures are RGBA8 (see PipelineTexture), so a half float post-process texture would
+		// hold nothing more than their 8 bits - and glCopyTexSubImage2D cannot copy normalized data into a float
+		// texture there (GL_INVALID_OPERATION): the custom shaders' previous frame (PPCustomShaders, the one user
+		// left now that the bloom is Rgb11f) was never copied at all.
+		case PixelFormat::Rgba16f: glformat = gl.esversion > 0 ? GL_RGBA8 : GL_RGBA16F; break;
 		case PixelFormat::R32f: glformat = GL_R32F; break;
 		case PixelFormat::Rg16f: glformat = GL_RG16F; break;
 		case PixelFormat::Rgba16_snorm: glformat = GL_RGBA16_SNORM; break;
 		case PixelFormat::Rgb11f: glformat = GL_R11F_G11F_B10F; break;
+		case PixelFormat::R16f: glformat = GL_R16F; break;
 		}
 
 		if (texture->Data)

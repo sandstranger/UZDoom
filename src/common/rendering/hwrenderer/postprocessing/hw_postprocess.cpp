@@ -523,7 +523,10 @@ void PPCameraExposure::UpdateTextures(int width, int height)
 		blevel.Viewport.top = 0;
 		blevel.Viewport.width = width;
 		blevel.Viewport.height = height;
-		blevel.Texture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::R32f };
+		// The brightest channel of the scene, averaged down to one pixel: half floats hold it with
+		// precision to spare at half the bytes (the first level is a quarter of the screen). The 1x1
+		// CameraTexture the adaptation blends into over time stays R32f.
+		blevel.Texture = { blevel.Viewport.width, blevel.Viewport.height, PixelFormat::R16f };
 		ExposureLevels.push_back(std::move(blevel));
 
 		i++;
