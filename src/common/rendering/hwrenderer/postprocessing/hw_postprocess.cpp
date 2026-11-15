@@ -934,6 +934,23 @@ void PPCustomShaders::Run(PPRenderState *renderstate, FString target)
 
 void PPCustomShaders::UpdateLastInputTexture(PPRenderState *renderstate)
 {
+	// Only for custom shaders that run: nothing else reads the last input, and keeping it is a copy
+	// of the whole scene every frame.
+	bool anyEnabled = false;
+	if (gl_custompost)
+	{
+		for (auto &shader : mShaders)
+		{
+			if (shader->Desc->Enabled)
+			{
+				anyEnabled = true;
+				break;
+			}
+		}
+	}
+	if (!anyEnabled)
+		return;
+
 	int width = renderstate->Viewport.width;
 	int height = renderstate->Viewport.height;
 

@@ -472,7 +472,21 @@ PPGLTexture FGLRenderBuffers::Create2DTexture(const char *name, GLuint format, i
 	tex.nearestOnly = (depthFormat && gl.esversion > 0) || (float32 && !gl.floatlinear);
 	const GLint filter = tex.nearestOnly ? GL_NEAREST : GL_LINEAR;
 
-	glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, dataformat, datatype, data);
+	if (data == nullptr && gl.esversion > 0 && glTexStorage2D != nullptr)
+	{
+		// OpenGL ES: storage of its own right away (immutable). ANGLE creates the image of a texture
+		// made by glTexImage2D only when the texture is first used - until then every copy into it
+		// (glCopyTexSubImage2D) is kept as a staged update holding a temporary image of its own. The
+		// custom post-process shaders' last input got a full screen copied into it every frame, and
+		// nothing may ever sample it: GPU memory grew by the screen size a frame until the process
+		// was killed. Render targets are never respecified (the pool hands one out only for the
+		// same size and format), so immutable storage fits them.
+		glTexStorage2D(GL_TEXTURE_2D, 1, format, width, height);
+	}
+	else
+	{
+		glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, dataformat, datatype, data);
+	}
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
