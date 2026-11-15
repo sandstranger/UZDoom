@@ -490,66 +490,6 @@ flat in float vInstDesaturation;
 #endif
 )";
 
-//==========================================================================
-//
-// Mod shaders copy the relief parallax mapping loop
-//
-//     while (currentLayerDepth < currentDepthMapValue) { ...; currentLayerDepth += layerDepth; }
-//
-// (Doom CE's psx.fp on every flat and wall of its Parallax addon). It ends after 8..16 steps
-// only while its numbers are finite: a NaN view vector (screen-space derivatives that make the
-// TBN degenerate, depending on the view) turns the layer step into NaN, and a GPU compiler that
-// inverts the condition runs the loop forever. On Mali the GPU job of the whole scene is then
-// killed - the world comes out black while the weapon and HUD, drawn in later passes, remain.
-// The loop gets an iteration bound far above its real step count.
-//
-//==========================================================================
-
-static FString GuardRunawayLoops(FString source)
-{
-	int guards = 0;
-	ptrdiff_t pos = 0;
-	while ((pos = source.IndexOf("while", pos)) >= 0)
-	{
-		const size_t len = source.Len();
-		const size_t at = (size_t)pos;
-		pos += 5;
-		if (at > 0 && (isalnum((unsigned char)source[at - 1]) || source[at - 1] == '_'))
-			continue;
-		size_t open = at + 5;
-		while (open < len && isspace((unsigned char)source[open])) open++;
-		if (open >= len || source[open] != '(')
-			continue;
-		size_t close = 0;
-		int depth = 0;
-		for (size_t i = open; i < len; i++)
-		{
-			if (source[i] == '(') depth++;
-			else if (source[i] == ')' && --depth == 0) { close = i; break; }
-		}
-		if (close == 0)
-			break;
-		size_t next = close + 1;
-		while (next < len && isspace((unsigned char)source[next])) next++;
-		if (next < len && source[next] == ';')
-			continue;	// the end of a do-while
-
-		const FString condition = source.Mid(open + 1, close - open - 1);
-		FString compact;
-		for (size_t i = 0; i < condition.Len(); i++)
-			if (!isspace((unsigned char)condition[i])) compact += condition[i];
-		if (compact.Compare("currentLayerDepth<currentDepthMapValue") != 0)
-			continue;
-
-		FString guarded;
-		guarded.Format("for (int uzLoopGuard%d = 0; uzLoopGuard%d < 64 && (%s); uzLoopGuard%d++)", guards, guards, condition.GetChars(), guards);
-		source = source.Left(at) + guarded + source.Mid(close + 1);
-		pos = (ptrdiff_t)(at + guarded.Len());
-		guards++;
-	}
-	return source;
-}
-
 bool FShader::sCacheOnly = false;
 bool FShader::sStartupDone = false;
 
@@ -871,7 +811,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 				}
 			}
 
-			fp_comb << RemoveLegacyUserUniforms(GuardRunawayLoops(pp_data)).GetChars();
+			fp_comb << RemoveLegacyUserUniforms(pp_data).GetChars();
 			fp_comb.Substitute("gl_TexCoord[0]", "vTexCoord");	// fix old custom shaders.
 
 			if (pp_data.IndexOf("ProcessLight") < 0)
