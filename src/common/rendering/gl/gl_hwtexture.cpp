@@ -56,6 +56,7 @@ TexFilter_s TexFilter[] = {
 unsigned int FHardwareTexture::lastbound[FHardwareTexture::MAX_TEXTURES];
 size_t FHardwareTexture::sLiveTextures = 0;
 size_t FHardwareTexture::sTextureBytes = 0;
+size_t FHardwareTexture::sTextureUploads = 0;
 
 //===========================================================================
 //
@@ -182,6 +183,7 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, buffer);
 
 	{
+		sTextureUploads++;
 		size_t bytes = size_t(rw) * size_t(rh) * size_t(glTextureBytes >= 1 && glTextureBytes <= 4 ? glTextureBytes : 4);
 		if (mipmap && TexFilter[gl_texture_filter].mipmapping) bytes += bytes / 3;
 		sTextureBytes = sTextureBytes - mTrackedBytes + bytes;

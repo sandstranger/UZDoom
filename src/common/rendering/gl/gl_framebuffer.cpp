@@ -318,46 +318,31 @@ namespace
 	const GLenum PERFMON_RESULT_SIZE_AMD = 0x8BC5;
 	const GLenum PERFMON_RESULT_AMD = 0x8BC6;
 
-	struct AngleCounter
-	{
-		const char *name;	// ANGLE's name (ANGLE_VK_PERF_COUNTERS_X)
-		const char *label;
-		int index;
-		uint64_t last;
-	};
-
-	AngleCounter AngleCounters[] =
-	{
-		{ "pipelineCreationCacheMisses", "pipelines created", -1, 0 },
-		{ "monolithicPipelineCreation", "monolithic pipelines", -1, 0 },
-		{ "descriptorSetCacheTotalSize", "descriptor sets cached", -1, 0 },
-		{ "descriptorSetAllocations", "descriptor set allocations", -1, 0 },
-		{ "framebufferCacheSize", "framebuffers cached", -1, 0 },
-		{ "pendingSubmissionGarbageObjects", "garbage pending", -1, 0 },
-		{ "buffersGhosted", "buffers ghosted", -1, 0 },
-		{ "allocateNewBufferBlockCalls", "new buffer blocks", -1, 0 },
-		{ "bufferSuballocationCalls", "buffer suballocations", -1, 0 },
-		{ "mutableTexturesUploaded", "mutable texture uploads", -1, 0 },
-		{ "deviceMemoryImageAllocationFallbacks", "image memory fallbacks", -1, 0 },
-		{ "renderPasses", "render passes", -1, 0 },
-	};
+	// ANGLE's Vulkan counters (ANGLE_VK_PERF_COUNTERS_X): the ones that are sizes are shown as they
+	// are, of all others only those that changed since the last line, with the change
+	const char *const AngleGauges[] = { "descriptorSetCacheTotalSize", "framebufferCacheSize", "pendingSubmissionGarbageObjects" };
 
 	struct MemReportState
 	{
 		bool initialized = false;
 		PFN_GetPerfMonitorCounterDataAMD getData = nullptr;
 		uint64_t lastTime = 0;
-		size_t lastRss = 0, lastHeap = 0, lastTextures = 0, lastBuffers = 0;
+		uint64_t lastRss = 0;
+		size_t lastHeap = 0, lastTextures = 0, lastBuffers = 0, lastUploads = 0;
+		unsigned lastRtCreated = 0, lastRtDeleted = 0;
+		TArray<FString> names;
+		TArray<uint64_t> last;
 		TArray<uint8_t> results;
 	};
 	MemReportState MemReport;
 
-	long long MB(size_t bytes)
+	long long MB(uint64_t bytes)
 	{
 		return (long long)(bytes / (1024 * 1024));
 	}
 
-	size_t ProcessRss()
+	// 64 bits: on Mali the driver counts the GPU memory of the process in its RSS, beyond 4 GB on ARMv7
+	uint64_t ProcessRss()
 	{
 		unsigned long pages = 0, resident = 0;
 		if (FILE *f = fopen("/proc/self/statm", "r"))
@@ -365,7 +350,7 @@ namespace
 			if (fscanf(f, "%lu %lu", &pages, &resident) != 2) resident = 0;
 			fclose(f);
 		}
-		return size_t(resident) * size_t(sysconf(_SC_PAGESIZE));
+		return uint64_t(resident) * uint64_t(sysconf(_SC_PAGESIZE));
 	}
 
 	// MediaTek's Mali driver lists the GPU memory of each process; not readable everywhere
@@ -410,13 +395,14 @@ namespace
 		// ANGLE: one group ("vulkan"), monitor 0 only; while a monitor is begun the counters are kept up to date
 		GLint numCounters = 0, maxActive = 0;
 		counters(0, &numCounters, &maxActive, 0, nullptr);
+		if (numCounters <= 0 || numCounters > 1024) return;
 		for (GLint i = 0; i < numCounters; i++)
 		{
 			char name[96] = {};
 			GLsizei length = 0;
 			counterString(0, (GLuint)i, (GLsizei)sizeof(name) - 1, &length, name);
-			for (auto &c : AngleCounters)
-				if (strcmp(c.name, name) == 0) c.index = i;
+			MemReport.names.Push(name);
+			MemReport.last.Push(0);
 		}
 		begin(0);
 		while (glGetError() != GL_NO_ERROR) {}
@@ -425,35 +411,47 @@ namespace
 
 	FString AngleCountersText()
 	{
-		FString text;
-		if (!MemReport.getData) return text;
+		FString gauges, changed;
+		if (!MemReport.getData) return gauges;
 		GLuint size = 0;
 		GLint written = 0;
 		MemReport.getData(0, PERFMON_RESULT_SIZE_AMD, (GLsizei)sizeof(size), &size, &written);
-		if (size == 0 || size > (1u << 20)) return text;
+		if (size == 0 || size > (1u << 20)) return gauges;
 		MemReport.results.Resize(size);
 		written = 0;
 		MemReport.getData(0, PERFMON_RESULT_AMD, (GLsizei)size, (GLuint *)MemReport.results.Data(), &written);
 		struct Triplet { uint32_t group, counter; uint64_t value; };
 		const Triplet *t = (const Triplet *)MemReport.results.Data();
 		const int count = written > 0 ? int(size_t(written) / sizeof(Triplet)) : 0;
-		for (auto &c : AngleCounters)
+		for (int i = 0; i < count; i++)
 		{
-			if (c.index < 0) continue;
-			for (int i = 0; i < count; i++)
+			const unsigned index = t[i].counter;
+			if (t[i].group != 0 || index >= MemReport.names.Size()) continue;
+			const uint64_t v = t[i].value;
+			const long long delta = (long long)(v - MemReport.last[index]);
+			MemReport.last[index] = v;
+			const char *name = MemReport.names[index].GetChars();
+			bool gauge = false;
+			for (const char *g : AngleGauges) gauge |= strcmp(g, name) == 0;
+			char item[128];
+			if (gauge)
 			{
-				if (t[i].group != 0 || int(t[i].counter) != c.index) continue;
-				const uint64_t v = t[i].value;
-				char item[96];
-				snprintf(item, sizeof(item), "%s%s %llu (%+lld)", text.IsEmpty() ? "" : ", ", c.label,
-					(unsigned long long)v, (long long)(v - c.last));
-				text += item;
-				c.last = v;
-				break;
+				snprintf(item, sizeof(item), "%s%s %llu (%+lld)", gauges.IsEmpty() ? "" : ", ", name, (unsigned long long)v, delta);
+				gauges += item;
+			}
+			else if (delta != 0)
+			{
+				snprintf(item, sizeof(item), "%s%s %+lld", changed.IsEmpty() ? "" : ", ", name, delta);
+				changed += item;
 			}
 		}
 		while (glGetError() != GL_NO_ERROR) {}
-		return text;
+		if (changed.IsNotEmpty())
+		{
+			gauges += " | changed: ";
+			gauges += changed;
+		}
+		return gauges;
 	}
 }
 
@@ -469,7 +467,7 @@ static void ReportMemory()
 	if (MemReport.lastTime != 0 && now - MemReport.lastTime < uint64_t(gl_mem_report) * 1000) return;
 	MemReport.lastTime = now;
 
-	const size_t rss = ProcessRss();
+	const uint64_t rss = ProcessRss();
 	const size_t heap = mallinfo().uordblks;
 	const size_t textures = FHardwareTexture::sTextureBytes;
 	const size_t buffers = GLBuffer::sBufferBytes;
@@ -485,10 +483,12 @@ static void ReportMemory()
 		line += mali;
 		line += "]";
 	}
-	snprintf(text, sizeof(text), " | textures %llu, %lld MB (%+lld), buffers %llu, %lld MB (%+lld), programs %d, render targets %lld MB (pooled %lld MB)",
+	snprintf(text, sizeof(text), " | textures %llu, %lld MB (%+lld), uploads %+lld, buffers %llu, %lld MB (%+lld), programs %d, render targets %lld MB (pooled %lld MB), created %+d, deleted %+d",
 		(unsigned long long)FHardwareTexture::sLiveTextures, MB(textures), MB(textures) - MB(MemReport.lastTextures),
+		(long long)(FHardwareTexture::sTextureUploads - MemReport.lastUploads),
 		(unsigned long long)GLBuffer::sLiveBuffers, MB(buffers), MB(buffers) - MB(MemReport.lastBuffers),
-		FShader::sLivePrograms, MB(rtStatsGL.bytes), MB(rtStatsGL.pooledFreeBytes));
+		FShader::sLivePrograms, MB(rtStatsGL.bytes), MB(rtStatsGL.pooledFreeBytes),
+		int(rtStatsGL.created - MemReport.lastRtCreated), int(rtStatsGL.deleted - MemReport.lastRtDeleted));
 	line += text;
 	FString angle = AngleCountersText();
 	if (angle.IsNotEmpty())
@@ -502,6 +502,9 @@ static void ReportMemory()
 	MemReport.lastHeap = heap;
 	MemReport.lastTextures = textures;
 	MemReport.lastBuffers = buffers;
+	MemReport.lastUploads = FHardwareTexture::sTextureUploads;
+	MemReport.lastRtCreated = rtStatsGL.created;
+	MemReport.lastRtDeleted = rtStatsGL.deleted;
 }
 #endif
 

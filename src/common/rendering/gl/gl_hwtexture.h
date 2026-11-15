@@ -54,6 +54,7 @@ public:
 	// Live texture objects and the bytes of their uploads (estimated: 4 bytes a texel, mipmaps 1/3 more)
 	static size_t sLiveTextures;
 	static size_t sTextureBytes;
+	static size_t sTextureUploads;	// CreateTexture calls (first uploads and updates)
 
 	static int GetTexDimension(int value)
 	{
