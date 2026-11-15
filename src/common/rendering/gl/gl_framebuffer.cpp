@@ -322,12 +322,20 @@ namespace
 	// are, of all others only those that changed since the last line, with the change
 	const char *const AngleGauges[] = { "descriptorSetCacheTotalSize", "framebufferCacheSize", "pendingSubmissionGarbageObjects" };
 
+	struct Mappings
+	{
+		unsigned maliCount = 0;
+		uint64_t maliBytes = 0;
+		uint64_t total = 0;
+	};
+
 	struct MemReportState
 	{
 		bool initialized = false;
 		PFN_GetPerfMonitorCounterDataAMD getData = nullptr;
 		uint64_t lastTime = 0;
 		uint64_t lastRss = 0;
+		Mappings lastMappings;
 		size_t lastHeap = 0, lastTextures = 0, lastBuffers = 0, lastUploads = 0;
 		unsigned lastRtCreated = 0, lastRtDeleted = 0;
 		TArray<FString> names;
@@ -353,12 +361,42 @@ namespace
 		return uint64_t(resident) * uint64_t(sysconf(_SC_PAGESIZE));
 	}
 
+	// The address space of the process and what of it the Mali driver mapped (/dev/mali0): GPU memory
+	// the CPU can reach (host visible buffers, staging, mapped images). GPU memory that grows while
+	// these stay flat is GPU-only (images, pipelines, command memory).
+	Mappings ProcessMappings()
+	{
+		Mappings m;
+		FILE *f = fopen("/proc/self/maps", "r");
+		if (!f) return m;
+		char line[512];
+		while (fgets(line, sizeof(line), f))
+		{
+			unsigned long long lo = 0, hi = 0;
+			if (sscanf(line, "%llx-%llx", &lo, &hi) != 2 || hi < lo) continue;
+			m.total += hi - lo;
+			if (strstr(line, "mali") != nullptr)
+			{
+				m.maliCount++;
+				m.maliBytes += hi - lo;
+			}
+		}
+		fclose(f);
+		return m;
+	}
+
 	// MediaTek's Mali driver lists the GPU memory of each process; not readable everywhere
 	FString MaliProcessMemory()
 	{
+		static bool denied = false;
 		FString result;
+		if (denied) return result;
 		FILE *f = fopen("/proc/mtk_mali/gpu_memory", "r");
-		if (!f) return result;
+		if (!f)
+		{
+			denied = true;
+			return result;
+		}
 		char line[256];
 		char pid[16];
 		snprintf(pid, sizeof(pid), "%d", (int)getpid());
@@ -476,6 +514,12 @@ static void ReportMemory()
 	snprintf(text, sizeof(text), "Memory: RSS %lld MB (%+lld), native heap %lld MB (%+lld)",
 		MB(rss), MB(rss) - MB(MemReport.lastRss), MB(heap), MB(heap) - MB(MemReport.lastHeap));
 	FString line = text;
+	const Mappings maps = ProcessMappings();
+	snprintf(text, sizeof(text), ", address space %lld MB (%+lld), mali mappings %u (%+d), %lld MB (%+lld)",
+		MB(maps.total), MB(maps.total) - MB(MemReport.lastMappings.total),
+		maps.maliCount, int(maps.maliCount) - int(MemReport.lastMappings.maliCount),
+		MB(maps.maliBytes), MB(maps.maliBytes) - MB(MemReport.lastMappings.maliBytes));
+	line += text;
 	FString mali = MaliProcessMemory();
 	if (mali.IsNotEmpty())
 	{
@@ -499,6 +543,7 @@ static void ReportMemory()
 	Printf("%s\n", line.GetChars());
 
 	MemReport.lastRss = rss;
+	MemReport.lastMappings = maps;
 	MemReport.lastHeap = heap;
 	MemReport.lastTextures = textures;
 	MemReport.lastBuffers = buffers;
