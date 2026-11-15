@@ -48,6 +48,8 @@ private:
 	GLboolean blendEnabled;
 	GLboolean scissorEnabled;
 	GLboolean depthEnabled;
+	GLboolean cullFaceEnabled;
+	GLboolean stencilEnabled;
 	GLboolean multisampleEnabled;
 	GLint currentProgram;
 	GLint blendEquationRgb;

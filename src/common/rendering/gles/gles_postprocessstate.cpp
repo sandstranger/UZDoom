@@ -42,6 +42,12 @@ FGLPostProcessState::FGLPostProcessState()
 	glGetBooleanv(GL_BLEND, &blendEnabled);
 	glGetBooleanv(GL_SCISSOR_TEST, &scissorEnabled);
 	glGetBooleanv(GL_DEPTH_TEST, &depthEnabled);
+	// The render state applies culling with the next draw that goes through it (SetCulling only
+	// marks it): after a model the scene may end with GL_CULL_FACE still on, and a post-process
+	// pass would then cull its own screen triangle - nothing drawn into a target whose contents
+	// were just invalidated (a pass before the weapon sprites left the world black).
+	glGetBooleanv(GL_CULL_FACE, &cullFaceEnabled);
+	glGetBooleanv(GL_STENCIL_TEST, &stencilEnabled);
 	glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
 	glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
 	glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
@@ -53,6 +59,8 @@ FGLPostProcessState::FGLPostProcessState()
 	glDisable(GL_DEPTH_TEST);
 	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_BLEND);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_STENCIL_TEST);
 }
 
 void FGLPostProcessState::SaveTextureBindings(unsigned int numUnits)
@@ -92,6 +100,11 @@ FGLPostProcessState::~FGLPostProcessState()
 		glEnable(GL_DEPTH_TEST);
 	else
 		glDisable(GL_DEPTH_TEST);
+
+	if (cullFaceEnabled)
+		glEnable(GL_CULL_FACE);
+	if (stencilEnabled)
+		glEnable(GL_STENCIL_TEST);
 
 
 	glBlendEquationSeparate(blendEquationRgb, blendEquationAlpha);
