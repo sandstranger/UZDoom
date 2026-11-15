@@ -38,13 +38,6 @@
 #include <map>
 #include <memory>
 
-#include <chrono>
-
-static int64_t ShaderTimeUs()
-{
-	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
 namespace OpenGLESRenderer
 {
 
@@ -197,9 +190,6 @@ void FShader::LoadVariant()
 bool FShader::Load(const char * name, const char * vert_prog_lump_, const char * frag_prog_lump_, const char * proc_prog_lump_, const char * light_fragprog_, const char * defines)
 {
 	ShaderVariantData* shaderData = new ShaderVariantData();
-	mLastFromCache = false;
-	mLastCacheRejected = false;
-	mLastBuildMs = 0;
 
 	FString vert_prog_lump = vert_prog_lump_;
 	FString frag_prog_lump = frag_prog_lump_;
@@ -539,8 +529,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		if (!linked)
 			RejectCachedProgramBinary(vp_comb, fp_comb);
 	}
-	mLastFromCache = linked;
-	mLastCacheRejected = !linked && binary.Size() > 0;
 
 	if (!linked && sCacheOnly)
 	{
@@ -549,7 +537,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		delete shaderData;
 		return false;
 	}
-	const int64_t compileStart = ShaderTimeUs();
 
 	if (!linked)
 	{
@@ -638,8 +625,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		shaderData->hVertProg = 0;
 		shaderData->hFragProg = 0;
 	}
-	if (!mLastFromCache)
-		mLastBuildMs = (ShaderTimeUs() - compileStart) / 1000.0;
 
 	shaderData->muProjectionMatrix.Init(shaderData->hShader, "ProjectionMatrix");
 	shaderData->muViewMatrix.Init(shaderData->hShader, "ViewMatrix");
@@ -913,13 +898,6 @@ bool FShader::Bind(ShaderFlavourData& flavour)
 		variants.insert(std::make_pair(tag, data));
 		cur = data;
 		RecordVariantUse(flavour);
-		if (sStartupDone && !mLastFromCache)
-		{
-			// a frame waited for this one
-			Printf("Shader compiled while playing: %s, flavour %08x%s, %.0f ms, binary cache: %s\n", mName.GetChars(), tag,
-				flavour.instancing == 1 ? " (instanced quads)" : flavour.instancing == 2 ? " (instanced models)" : "",
-				mLastBuildMs, mLastCacheRejected ? "rejected by the driver" : "not in it");
-		}
 	}
 	else
 	{
@@ -986,18 +964,14 @@ void FShaderManager::PrewarmVariants()
 		FShader::sStartupDone = true;
 		return;
 	}
-	const int64_t start = ShaderTimeUs();
 	const TArray<FString> recorded = ProgramBinaryCache::RecordedVariants(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars());
-	int loaded = 0;
 	FShader::sCacheOnly = true;
 	for (auto collection : mPassShaders)
-		loaded += collection->PrewarmVariants(recorded);
+		collection->PrewarmVariants(recorded);
 	FShader::sCacheOnly = false;
 	FShader::sStartupDone = true;
 	glUseProgram(0);
 	mActiveShader = nullptr;
-	Printf("Shader variants: %d recorded, %d loaded from the binary cache in %.0f ms\n", (int)recorded.Size(), loaded, (ShaderTimeUs() - start) / 1000.0);
-	ProgramBinaryCache::PrintStats();
 }
 
 FShader *FShaderManager::BindEffect(int effect, EPassType passType, ShaderFlavourData &flavour)

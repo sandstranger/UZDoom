@@ -67,13 +67,6 @@ void setSpirvCrossState(const bool enableSpirvCross) {
 }
 #endif
 
-#include <chrono>
-
-static int64_t ShaderTimeUs()
-{
-	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
 namespace OpenGLRenderer
 {
 
@@ -964,8 +957,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		hShader = 0;
 		return false;
 	}
-	const bool cacheRejected = !linked && binary.Size() > 0;
-	const int64_t compileStart = ShaderTimeUs();
 
 	if (!linked)
 	{
@@ -1084,16 +1075,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 	{
 		hVertProg = 0;
 		hFragProg = 0;
-	}
-
-	if (!linked && sStartupDone)
-	{
-		// a frame waited for this one
-		const char *d = defines ? defines : "";
-		const char *what = strstr(d, "INSTANCED_QUADS") ? " (instanced quads)" : strstr(d, "INSTANCED_MODELS") ? " (instanced models)" : "";
-		const char *clip = strstr(d, "CLIP_EMULATION") ? " (clip emulation)" : "";
-		Printf("Shader compiled while playing: %s%s%s, %.0f ms, binary cache: %s\n", name, clip, what,
-			(ShaderTimeUs() - compileStart) / 1000.0, cacheRejected ? "rejected by the driver" : "not in it");
 	}
 
 	muDesaturation.Init(hShader, "uDesaturationFactor");
@@ -1446,14 +1427,8 @@ bool FShaderManager::CompileNextShader()
 #ifdef ANDROID
 			FinishShaderConversions();
 			// the variants earlier runs built on first use come from the binary cache now
-			{
-				const TArray<FString> recorded = ProgramBinaryCache::RecordedVariants(ProgramCacheNamespace(), ProgramCacheDriver().GetChars());
-				const int prewarmed = mPassShaders[NORMAL_PASS]->PrewarmVariants(recorded);
-				Printf("Shader variants: %d recorded, %d loaded from the binary cache\n", (int)recorded.Size(), prewarmed);
-			}
+			mPassShaders[NORMAL_PASS]->PrewarmVariants(ProgramBinaryCache::RecordedVariants(ProgramCacheNamespace(), ProgramCacheDriver().GetChars()));
 			FShader::sStartupDone = true;
-			// how many of the startup programs came from the binary cache (and how many were compiled)
-			ProgramBinaryCache::PrintStats();
 #endif
 			done = true;
 		}

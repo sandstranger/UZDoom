@@ -290,11 +290,6 @@ class FShader
 	FString mDefinesBase;
 	int mPassType = 0;
 
-	// what the last Load did (for the log of programs a frame waited for)
-	bool mLastFromCache = false;
-	bool mLastCacheRejected = false;
-	double mLastBuildMs = 0;
-
 	/////
 public: class ShaderVariantData
 	{
