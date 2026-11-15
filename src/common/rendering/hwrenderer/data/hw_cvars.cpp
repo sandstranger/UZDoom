@@ -136,6 +136,15 @@ CUSTOM_CVARD(Int, gl_texture_filter, 6, CVAR_ARCHIVE|CVAR_GLOBALCONFIG|CVAR_NOIN
 }
 
 CVAR(Bool, gl_precache, false, CVAR_ARCHIVE)
+#ifdef __ANDROID__
+// The textures of the level (walls, flats, sky, the sprites of its actors) are loaded with the level
+// instead of when they are first seen: a first step into a new room or a first shot decoded and
+// uploaded them in the middle of a frame (with material layers: several textures each). A new name,
+// so that the gl_precache = false every existing config holds does not turn it off.
+CVAR(Bool, gl_precache_level, true, CVAR_ARCHIVE)
+#else
+CVAR(Bool, gl_precache_level, false, CVAR_ARCHIVE)
+#endif
 
 
 CUSTOM_CVAR(Int, gl_shadowmap_filter, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)

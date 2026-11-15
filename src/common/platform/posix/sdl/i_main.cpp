@@ -244,18 +244,6 @@ int main (int argc, char **argv)
 
 	Args = new FArgs(argc, argv);
 
-#ifdef __ANDROID__
-	// -anglememreport: ANGLE logs the GPU memory of every Vulkan object type at each present
-	// (logMemoryReportStats, through VK_EXT_device_memory_report: "GPU Memory Totals" and
-	// "- Type=..." lines, tag ANGLE). ANGLE reads its feature overrides from the environment
-	// when it initializes the display, long after this.
-	for (int i = 1; i < argc; i++)
-	{
-		if (argv[i] && stricmp(argv[i], "-anglememreport") == 0)
-			setenv("ANGLE_FEATURE_OVERRIDES_ENABLED", "logMemoryReportStats", 1);
-	}
-#endif
-
 #ifdef PROGDIR
 	progdir = PROGDIR;
 #else

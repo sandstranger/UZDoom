@@ -23,6 +23,7 @@
 #include "cmdlib.h"
 #include "md5.h"
 #include "gl_shader.h"
+#include "framespikes.h"
 #include "hw_shaderpatcher.h"
 #include "shaderuniforms.h"
 #include "hw_viewpointuniforms.h"
@@ -492,6 +493,7 @@ flat in float vInstDesaturation;
 
 bool FShader::Load(const char * name, const char * vert_prog_lump, const char * frag_prog_lump, const char * proc_prog_lump, const char * light_fragprog, const char * defines, bool isGBuffer, AllShaderIndex type)
 {
+	FrameSpikes::Scope spikeBuild(FrameSpikes::ProgramBuilds);
 	FString error;
 
 	if (!mParamsStored)

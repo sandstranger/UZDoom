@@ -33,6 +33,7 @@
 #include "d_main.h"
 
 EXTERN_CVAR(Bool, gl_precache)
+EXTERN_CVAR(Bool, gl_precache_level)
 
 //==========================================================================
 //
@@ -257,7 +258,7 @@ void hw_PrecacheTexture(uint8_t *texhitlist, TMap<PClassActor*, bool> &actorhitl
 		paira->Key->CleanUnused();
 	}
 
-	if (gl_precache)
+	if (gl_precache || gl_precache_level)
 	{
 		cycle_t precache;
 		precache.Reset();

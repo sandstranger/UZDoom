@@ -26,6 +26,7 @@
 #include <stdlib.h>
 
 #include "c_cvars.h"
+#include "framespikes.h"
 #include "gamestate.h"
 #include "i_soundinternal.h"
 #include "m_haptics.h"
@@ -717,6 +718,8 @@ void SoundEngine::RestartChannel(FSoundChan *chan)
 sfxinfo_t *SoundEngine::LoadSound(sfxinfo_t *sfx)
 {
 	if (GSnd->IsNull()) return sfx;
+	// read and decoded on first play, unless the level precached it
+	FrameSpikes::Scope spikeLoad(FrameSpikes::SoundLoads, !sfx->data.isValid());
 
 	while (!sfx->data.isValid())
 	{
