@@ -59,6 +59,9 @@ struct RenderContext
 
 extern RenderContext gl;
 
+// An OpenGL ES extension entry point (Android, through SDL), nullptr elsewhere or when missing
+void *gl_GetESProcAddress(const char *name);
+
 EXTERN_FARG(glversion);
 
 #endif

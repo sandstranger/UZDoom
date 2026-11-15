@@ -51,6 +51,13 @@ protected:
 	// staged vertex data (IBuffer::SetStaging)
 	char *mStaging = nullptr;
 	size_t mCapacity = 0;	// GPU storage of a staged buffer
+	size_t mTrackedBytes = 0;	// counted in sBufferBytes
+	void TrackStorage(size_t bytes) { sBufferBytes = sBufferBytes - mTrackedBytes + bytes; mTrackedBytes = bytes; }
+public:
+	// Live buffer objects and their storage (the memory report)
+	static size_t sLiveBuffers;
+	static size_t sBufferBytes;
+protected:
 	std::mutex mDirtyLock;
 	std::vector<std::pair<size_t, size_t>> mDirty;	// written ranges not on the GPU yet (staged), or not flushed yet (explicit flush)
 	void FlushStaged();

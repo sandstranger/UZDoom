@@ -118,6 +118,11 @@ static void *GetESProc(const char *name)
 #endif
 }
 
+void *gl_GetESProcAddress(const char *name)
+{
+	return GetESProc(name);
+}
+
 // Multisampled renderbuffers: GL_MAX_SAMPLES, lowered to the largest count glGetInternalformativ
 // reports for any of the scene formats (RGBA8 color, RGBA8/RGB10_A2 G-buffer attachments,
 // packed depth/stencil) - a count above it is an error for that format.

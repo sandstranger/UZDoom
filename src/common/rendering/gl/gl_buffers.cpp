@@ -48,14 +48,20 @@ static inline void InvalidateBufferState()
 	gl_RenderState.ResetVertexBuffer();	// force rebinding of buffers on next Apply call.
 }
 
+size_t GLBuffer::sLiveBuffers = 0;
+size_t GLBuffer::sBufferBytes = 0;
+
 GLBuffer::GLBuffer(int usetype)
 	: mUseType(usetype)
 {
 	glGenBuffers(1, &mBufferId);
+	sLiveBuffers++;
 }
 
 GLBuffer::~GLBuffer()
 {
+	sLiveBuffers--;
+	TrackStorage(0);
 	if (mBufferId != 0)
 	{
 		// glUnmapBuffer on a buffer that is not mapped is GL_INVALID_OPERATION (the 2D drawer's
@@ -233,6 +239,7 @@ void GLBuffer::FlushStaged()
 		capacity = std::min((capacity + 0xffff) & ~size_t(0xffff), buffersize);
 		glBufferData(mUseType, capacity, nullptr, GL_DYNAMIC_DRAW);
 		mCapacity = capacity;
+		TrackStorage(capacity);
 		// New storage holds nothing: all of it up to this upload goes in (the level geometry and
 		// what the frame has written so far). Draws issued before keep the old storage.
 		dirty.clear();
@@ -341,6 +348,7 @@ void GLBuffer::SetData(size_t size, const void *data, BufferUsageType usage)
 		map = nullptr;
 	}
 	buffersize = size;
+	TrackStorage(size);
 	InvalidateBufferState();
 }
 

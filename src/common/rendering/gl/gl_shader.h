@@ -226,6 +226,11 @@ class FShader
 	friend class FShaderCollection;
 	friend class FGLRenderState;
 
+public:
+	static int sLivePrograms;	// linked programs alive (the memory report)
+
+private:
+
 	unsigned int hShader;
 	unsigned int hVertProg;
 	unsigned int hFragProg;

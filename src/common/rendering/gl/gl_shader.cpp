@@ -848,6 +848,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 #endif
 
 	hShader = glCreateProgram();
+	if (hShader != 0) sLivePrograms++;
 	FGLDebug::LabelObject(GL_PROGRAM, hShader, name);
 
 	uint32_t binaryFormat = 0;
@@ -1060,8 +1061,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 //
 //==========================================================================
 
+int FShader::sLivePrograms = 0;
+
 FShader::~FShader()
 {
+	if (hShader != 0) sLivePrograms--;
 	for (auto variant : mInstanced) delete variant;
 	delete mClipVariant;
 	glDeleteProgram(hShader);

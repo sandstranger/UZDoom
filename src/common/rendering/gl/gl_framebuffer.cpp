@@ -50,6 +50,13 @@
 #include "flatvertices.h"
 #include "hw_cvars.h"
 #include "hw_batching.h"
+#include "gl_shader.h"
+#ifdef __ANDROID__
+#include <malloc.h>
+#include <unistd.h>
+#include <cstdio>
+#include <cstring>
+#endif
 #include "hw_programcache.h"
 #include "gl_renderbuffers.h"
 
@@ -289,6 +296,215 @@ const char* OpenGLFrameBuffer::DeviceName() const
 
 CVAR(Bool, gl_finishbeforeswap, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 
+#ifdef __ANDROID__
+//==========================================================================
+//
+// Memory report (Android): every gl_mem_report seconds one line in the log with the
+// process memory, what this renderer holds and, under ANGLE, ANGLE's own caches
+// (GL_AMD_performance_monitor exposes its Vulkan counters). Two lines a minute apart
+// show which of them grows.
+//
+//==========================================================================
+
+CVAR(Int, gl_mem_report, 5, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)	// seconds, 0: off
+
+namespace
+{
+	typedef void (APIENTRY *PFN_BeginPerfMonitorAMD)(GLuint monitor);
+	typedef void (APIENTRY *PFN_GetPerfMonitorCountersAMD)(GLuint group, GLint *numCounters, GLint *maxActiveCounters, GLsizei counterSize, GLuint *counters);
+	typedef void (APIENTRY *PFN_GetPerfMonitorCounterStringAMD)(GLuint group, GLuint counter, GLsizei bufSize, GLsizei *length, GLchar *counterString);
+	typedef void (APIENTRY *PFN_GetPerfMonitorCounterDataAMD)(GLuint monitor, GLenum pname, GLsizei dataSize, GLuint *data, GLint *bytesWritten);
+
+	const GLenum PERFMON_RESULT_SIZE_AMD = 0x8BC5;
+	const GLenum PERFMON_RESULT_AMD = 0x8BC6;
+
+	struct AngleCounter
+	{
+		const char *name;	// ANGLE's name (ANGLE_VK_PERF_COUNTERS_X)
+		const char *label;
+		int index;
+		uint64_t last;
+	};
+
+	AngleCounter AngleCounters[] =
+	{
+		{ "pipelineCreationCacheMisses", "pipelines created", -1, 0 },
+		{ "monolithicPipelineCreation", "monolithic pipelines", -1, 0 },
+		{ "descriptorSetCacheTotalSize", "descriptor sets cached", -1, 0 },
+		{ "descriptorSetAllocations", "descriptor set allocations", -1, 0 },
+		{ "framebufferCacheSize", "framebuffers cached", -1, 0 },
+		{ "pendingSubmissionGarbageObjects", "garbage pending", -1, 0 },
+		{ "buffersGhosted", "buffers ghosted", -1, 0 },
+		{ "allocateNewBufferBlockCalls", "new buffer blocks", -1, 0 },
+		{ "bufferSuballocationCalls", "buffer suballocations", -1, 0 },
+		{ "mutableTexturesUploaded", "mutable texture uploads", -1, 0 },
+		{ "deviceMemoryImageAllocationFallbacks", "image memory fallbacks", -1, 0 },
+		{ "renderPasses", "render passes", -1, 0 },
+	};
+
+	struct MemReportState
+	{
+		bool initialized = false;
+		PFN_GetPerfMonitorCounterDataAMD getData = nullptr;
+		uint64_t lastTime = 0;
+		size_t lastRss = 0, lastHeap = 0, lastTextures = 0, lastBuffers = 0;
+		TArray<uint8_t> results;
+	};
+	MemReportState MemReport;
+
+	long long MB(size_t bytes)
+	{
+		return (long long)(bytes / (1024 * 1024));
+	}
+
+	size_t ProcessRss()
+	{
+		unsigned long pages = 0, resident = 0;
+		if (FILE *f = fopen("/proc/self/statm", "r"))
+		{
+			if (fscanf(f, "%lu %lu", &pages, &resident) != 2) resident = 0;
+			fclose(f);
+		}
+		return size_t(resident) * size_t(sysconf(_SC_PAGESIZE));
+	}
+
+	// MediaTek's Mali driver lists the GPU memory of each process; not readable everywhere
+	FString MaliProcessMemory()
+	{
+		FString result;
+		FILE *f = fopen("/proc/mtk_mali/gpu_memory", "r");
+		if (!f) return result;
+		char line[256];
+		char pid[16];
+		snprintf(pid, sizeof(pid), "%d", (int)getpid());
+		const size_t pidLength = strlen(pid);
+		while (fgets(line, sizeof(line), f))
+		{
+			// the line with our pid as a word of its own
+			for (char *p = strstr(line, pid); p != nullptr; p = strstr(p + 1, pid))
+			{
+				const bool start = p == line || p[-1] == ' ' || p[-1] == '\t';
+				const char end = p[pidLength];
+				if (start && (end == ' ' || end == '\t' || end == '\n' || end == '\0'))
+				{
+					result = line;
+					result.StripLeftRight();
+					break;
+				}
+			}
+			if (result.IsNotEmpty()) break;
+		}
+		fclose(f);
+		return result;
+	}
+
+	void InitAngleCounters()
+	{
+		if (!gl.modelstring || strstr(gl.modelstring, "ANGLE") == nullptr) return;
+		auto begin = (PFN_BeginPerfMonitorAMD)gl_GetESProcAddress("glBeginPerfMonitorAMD");
+		auto counters = (PFN_GetPerfMonitorCountersAMD)gl_GetESProcAddress("glGetPerfMonitorCountersAMD");
+		auto counterString = (PFN_GetPerfMonitorCounterStringAMD)gl_GetESProcAddress("glGetPerfMonitorCounterStringAMD");
+		auto getData = (PFN_GetPerfMonitorCounterDataAMD)gl_GetESProcAddress("glGetPerfMonitorCounterDataAMD");
+		if (!begin || !counters || !counterString || !getData) return;
+
+		// ANGLE: one group ("vulkan"), monitor 0 only; while a monitor is begun the counters are kept up to date
+		GLint numCounters = 0, maxActive = 0;
+		counters(0, &numCounters, &maxActive, 0, nullptr);
+		for (GLint i = 0; i < numCounters; i++)
+		{
+			char name[96] = {};
+			GLsizei length = 0;
+			counterString(0, (GLuint)i, (GLsizei)sizeof(name) - 1, &length, name);
+			for (auto &c : AngleCounters)
+				if (strcmp(c.name, name) == 0) c.index = i;
+		}
+		begin(0);
+		while (glGetError() != GL_NO_ERROR) {}
+		MemReport.getData = getData;
+	}
+
+	FString AngleCountersText()
+	{
+		FString text;
+		if (!MemReport.getData) return text;
+		GLuint size = 0;
+		GLint written = 0;
+		MemReport.getData(0, PERFMON_RESULT_SIZE_AMD, (GLsizei)sizeof(size), &size, &written);
+		if (size == 0 || size > (1u << 20)) return text;
+		MemReport.results.Resize(size);
+		written = 0;
+		MemReport.getData(0, PERFMON_RESULT_AMD, (GLsizei)size, (GLuint *)MemReport.results.Data(), &written);
+		struct Triplet { uint32_t group, counter; uint64_t value; };
+		const Triplet *t = (const Triplet *)MemReport.results.Data();
+		const int count = written > 0 ? int(size_t(written) / sizeof(Triplet)) : 0;
+		for (auto &c : AngleCounters)
+		{
+			if (c.index < 0) continue;
+			for (int i = 0; i < count; i++)
+			{
+				if (t[i].group != 0 || int(t[i].counter) != c.index) continue;
+				const uint64_t v = t[i].value;
+				char item[96];
+				snprintf(item, sizeof(item), "%s%s %llu (%+lld)", text.IsEmpty() ? "" : ", ", c.label,
+					(unsigned long long)v, (long long)(v - c.last));
+				text += item;
+				c.last = v;
+				break;
+			}
+		}
+		while (glGetError() != GL_NO_ERROR) {}
+		return text;
+	}
+}
+
+static void ReportMemory()
+{
+	if (gl_mem_report <= 0) return;
+	if (!MemReport.initialized)
+	{
+		MemReport.initialized = true;
+		InitAngleCounters();
+	}
+	const uint64_t now = I_msTime();
+	if (MemReport.lastTime != 0 && now - MemReport.lastTime < uint64_t(gl_mem_report) * 1000) return;
+	MemReport.lastTime = now;
+
+	const size_t rss = ProcessRss();
+	const size_t heap = mallinfo().uordblks;
+	const size_t textures = FHardwareTexture::sTextureBytes;
+	const size_t buffers = GLBuffer::sBufferBytes;
+
+	char text[512];
+	snprintf(text, sizeof(text), "Memory: RSS %lld MB (%+lld), native heap %lld MB (%+lld)",
+		MB(rss), MB(rss) - MB(MemReport.lastRss), MB(heap), MB(heap) - MB(MemReport.lastHeap));
+	FString line = text;
+	FString mali = MaliProcessMemory();
+	if (mali.IsNotEmpty())
+	{
+		line += ", GPU [";
+		line += mali;
+		line += "]";
+	}
+	snprintf(text, sizeof(text), " | textures %llu, %lld MB (%+lld), buffers %llu, %lld MB (%+lld), programs %d, render targets %lld MB (pooled %lld MB)",
+		(unsigned long long)FHardwareTexture::sLiveTextures, MB(textures), MB(textures) - MB(MemReport.lastTextures),
+		(unsigned long long)GLBuffer::sLiveBuffers, MB(buffers), MB(buffers) - MB(MemReport.lastBuffers),
+		FShader::sLivePrograms, MB(rtStatsGL.bytes), MB(rtStatsGL.pooledFreeBytes));
+	line += text;
+	FString angle = AngleCountersText();
+	if (angle.IsNotEmpty())
+	{
+		line += " | ANGLE: ";
+		line += angle;
+	}
+	Printf("%s\n", line.GetChars());
+
+	MemReport.lastRss = rss;
+	MemReport.lastHeap = heap;
+	MemReport.lastTextures = textures;
+	MemReport.lastBuffers = buffers;
+}
+#endif
+
 void OpenGLFrameBuffer::Swap()
 {
 	BatchStatsEndFrame();
@@ -339,6 +555,9 @@ void OpenGLFrameBuffer::Swap()
 	FHardwareTexture::UnbindAll();
 	gl_RenderState.ClearLastMaterial();
 	mDebug->Update();
+#ifdef __ANDROID__
+	ReportMemory();
+#endif
 }
 
 //==========================================================================

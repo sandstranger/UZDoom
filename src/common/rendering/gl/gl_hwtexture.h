@@ -51,6 +51,10 @@ public:
 
 	static unsigned int lastbound[MAX_TEXTURES];
 
+	// Live texture objects and the bytes of their uploads (estimated: 4 bytes a texel, mipmaps 1/3 more)
+	static size_t sLiveTextures;
+	static size_t sTextureBytes;
+
 	static int GetTexDimension(int value)
 	{
 		if (value > gl.max_texturesize) return gl.max_texturesize;
@@ -65,6 +69,7 @@ private:
 
 	unsigned int glTexID = 0;
 	unsigned int glBufferID = 0;
+	size_t mTrackedBytes = 0;	// counted in sTextureBytes
 	int glTextureBytes;
 	bool mipmapped = false;
 #ifdef ANDROID
