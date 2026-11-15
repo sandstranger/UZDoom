@@ -14,7 +14,8 @@ namespace FrameSpikes
 	enum Counter
 	{
 		TextureCreates,
-		ProgramBuilds,
+		ProgramBuilds,			// compiled and linked from source
+		ProgramCacheLoads,		// loaded from the program binary cache
 		SoundLoads,
 		Swap,
 		CounterCount
@@ -53,6 +54,9 @@ namespace FrameSpikes
 	public:
 		explicit Scope(Counter counter, bool active = true) : mCounter(counter), mStart(active ? NowUs() : -1) {}
 		~Scope() { if (mStart >= 0) Record(mCounter, NowUs() - mStart); }
+
+		// what the timed work turned out to be
+		void SetCounter(Counter counter) { mCounter = counter; }
 
 		Scope(const Scope &) = delete;
 		Scope &operator=(const Scope &) = delete;

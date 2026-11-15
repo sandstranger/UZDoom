@@ -314,6 +314,35 @@ void S_Start()
 //
 //==========================================================================
 
+#ifdef __ANDROID__
+// Sounds that game code starts by name (A_StartSound from weapon and player states, door and lift
+// sequences, pickups) are not among the ones the level's actors declare: each was read and decoded on
+// its first play - the first shot, door, pickup or step. These groups are loaded with the level.
+CVAR(Bool, snd_precache_common, true, CVAR_ARCHIVE)
+
+static void MarkCommonSounds()
+{
+	static const char *const prefixes[] = { "weapons/", "misc/", "doors/", "plats/", "switches/", "player/" };
+	const unsigned count = soundEngine->GetNumSounds();
+	for (unsigned i = 1; i < count; i++)
+	{
+		const FSoundID id = FSoundID::fromInt(i);
+		const sfxinfo_t *sfx = soundEngine->GetSfx(id);
+		if (sfx == nullptr) continue;
+		const char *name = sfx->name.GetChars();
+		if (name == nullptr) continue;
+		for (const char *prefix : prefixes)
+		{
+			if (strnicmp(name, prefix, strlen(prefix)) == 0)
+			{
+				soundEngine->MarkUsed(id);
+				break;
+			}
+		}
+	}
+}
+#endif
+
 void S_PrecacheLevel(FLevelLocals* Level)
 {
 	if (GSnd && Level == primaryLevel)
@@ -341,6 +370,9 @@ void S_PrecacheLevel(FLevelLocals* Level)
 		{
 			soundEngine->MarkUsed(snd);
 		}
+#ifdef __ANDROID__
+		if (snd_precache_common) MarkCommonSounds();
+#endif
 		soundEngine->CacheMarkedSounds();
 	}
 }

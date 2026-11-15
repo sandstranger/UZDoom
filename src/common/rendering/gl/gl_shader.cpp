@@ -867,6 +867,8 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 		linked = (status == GL_TRUE);
 		if (!linked)
 			RejectCachedProgramBinary(vp_comb, fp_comb);
+		else
+			spikeBuild.SetCounter(FrameSpikes::ProgramCacheLoads);
 	}
 
 	if (!linked)
@@ -1282,6 +1284,8 @@ bool FShaderManager::CompileNextShader()
 			mCompilePass = -1;
 #ifdef ANDROID
 			FinishShaderConversions();
+			// how many of the startup programs came from the binary cache (and how many were compiled)
+			ProgramBinaryCache::PrintStats();
 #endif
 			done = true;
 		}

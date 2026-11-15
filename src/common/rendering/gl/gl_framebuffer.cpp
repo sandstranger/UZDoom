@@ -528,7 +528,7 @@ static void ReportFrameSpike()
 	{
 		if (now - lastReport >= 500000)
 		{
-			static const char *const names[FrameSpikes::CounterCount] = { "textures created", "programs built", "sounds loaded", "swap" };
+			static const char *const names[FrameSpikes::CounterCount] = { "textures created", "programs compiled", "programs from cache", "sounds loaded", "swap" };
 			FString line;
 			line.Format("Frame spike: %.1f ms", frame / 1000.0);
 			for (int i = 0; i < FrameSpikes::CounterCount; i++)
