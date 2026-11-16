@@ -253,10 +253,13 @@ static bool UseMSRTT()
 		return true;
 	}
 
+	// 4x at most, whatever the driver reports: on a tile-based GPU 4 samples per pixel fit the tile memory at
+	// full tile size, 8x and 16x shrink the tiles and multiply the passes over the screen.
 	int FGLRenderBuffers::MultisampleLimit()
 	{
-		if (UseMSRTT()) return gles.msrttMaxSamples;
-		if (gles.msaaRenderbuffers) return gles.maxSamples;
+		const int MAX_SAMPLES = 4;
+		if (UseMSRTT()) return std::min(gles.msrttMaxSamples, MAX_SAMPLES);
+		if (gles.msaaRenderbuffers) return std::min(gles.maxSamples, MAX_SAMPLES);
 		return 0;
 	}
 
