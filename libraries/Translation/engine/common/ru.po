@@ -1167,6 +1167,9 @@ msgstr "Режим тонового отображения"
 msgid "GLPREFMNU_LENS"
 msgstr "Эффект искажения линзы"
 
+msgid "GLPREFMNU_GLES_POSTPROCESS"
+msgstr "Постобработка в OpenGL ES 3.0"
+
 msgid "GLPREFMNU_FXAA"
 msgstr "Качество FXAA"
 

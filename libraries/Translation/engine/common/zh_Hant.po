@@ -1148,6 +1148,9 @@ msgstr "色調映射模式"
 msgid "GLPREFMNU_LENS"
 msgstr "透鏡失真效果"
 
+msgid "GLPREFMNU_GLES_POSTPROCESS"
+msgstr "OpenGL ES 3.0 後期處理"
+
 msgid "GLPREFMNU_FXAA"
 msgstr "FXAA 品質"
 

@@ -150,6 +150,10 @@ namespace OpenGLESRenderer
 		void *pBlitFramebuffer;
 		bool angle;				// the driver is ANGLE (GL_RENDERER names it)
 		int maxSamples;			// multisampled renderbuffers: highest count RGBA8 and depth/stencil both support
+		// Post-process render targets (GLES 3.0 mode)
+		bool colorbuffer16f;	// R16F/RG16F/RGBA16F are color-renderable (EXT_color_buffer_half_float/_float)
+		bool colorbuffer32f;	// R32F/RG32F/RGBA32F/R11F_G11F_B10F are color-renderable (EXT_color_buffer_float)
+		bool floatlinear;		// 32-bit float textures can be sampled with linear filtering (OES_texture_float_linear)
 	};
 
 	extern RenderContextGLES gles;

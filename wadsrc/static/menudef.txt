@@ -1454,6 +1454,7 @@ OptionMenu "VR3DMenu" protected
 OptionMenu "PostProcessMenu" protected
 {
 	Title "$GLMNU_POSTPROCESS"
+	Option "$GLPREFMNU_GLES_POSTPROCESS", gles_postprocess,           OnOff
 	Option "$GLPREFMNU_BLOOM",           gl_bloom,                    OnOff
 	Option "$GLPREFMNU_LENS",            gl_lens,                     OnOff
 	Option "$GLPREFMNU_SSAO",            gl_ssao,                     SSAOModes

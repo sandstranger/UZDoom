@@ -444,10 +444,17 @@ namespace OpenGLESRenderer
 		}
 		if (gles.maxSamples < 2) gles.msaaRenderbuffers = false, gles.maxSamples = 0;
 
-		Printf("GLES capabilities%s: BGRA textures %s, sync %s, invalidate %s, discard %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers %s (max %d)\n",
+		// Post-process render targets (GLES 3.0 mode): the float formats that can be rendered to
+		// (core in GLES 3.2) and filtered.
+		gles.colorbuffer32f = es3 && (gles.esVersion >= 320 || CheckExtension("GL_EXT_color_buffer_float"));
+		gles.colorbuffer16f = es3 && (gles.colorbuffer32f || CheckExtension("GL_EXT_color_buffer_half_float"));
+		gles.floatlinear = CheckExtension("GL_OES_texture_float_linear");
+
+		Printf("GLES capabilities%s: BGRA textures %s, sync %s, invalidate %s, discard %s, MSAA render-to-texture %s (max %d), MSAA renderbuffers %s (max %d), float render targets 16f %s 32f %s, float linear %s\n",
 			gles.angle ? " (ANGLE)" : "", gles.bgraTextures ? "yes" : "no", gles.syncObjects ? "yes" : "no", gles.invalidateFramebuffer ? "yes" : "no",
 			gles.pDiscardFramebuffer ? "yes" : "no", gles.msrtt == 1 ? "EXT" : gles.msrtt == 2 ? "IMG" : "no", gles.msrttMaxSamples,
-			gles.msaaRenderbuffers ? "yes" : "no", gles.maxSamples);
+			gles.msaaRenderbuffers ? "yes" : "no", gles.maxSamples, gles.colorbuffer16f ? "yes" : "no", gles.colorbuffer32f ? "yes" : "no",
+			gles.floatlinear ? "yes" : "no");
 
 		setGlVersion(glVersion);
 	}

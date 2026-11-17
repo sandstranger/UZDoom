@@ -66,6 +66,8 @@ public:
 	void PrecacheMaterial(FMaterial *mat, int translation) override;
 	void BeginFrame() override;
 	void SetViewportRects(IntRect *bounds) override;
+	void BlurScene(float amount) override;
+	void UpdatePalette() override;
 	IVertexBuffer *CreateVertexBuffer() override;
 	IIndexBuffer *CreateIndexBuffer() override;
 	IDataBuffer *CreateDataBuffer(int bindingpoint, bool ssbo, bool needsresize) override;

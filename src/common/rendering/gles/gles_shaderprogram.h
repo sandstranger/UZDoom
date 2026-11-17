@@ -47,6 +47,17 @@ public:
 	void Link(const char *name);
 	void SetUniformBufferLocation(int index, const char *name);
 
+	// Post-process effects (GLES 3.0): the sources are desktop GLSL (the GL renderer's shaders and
+	// the mods' custom ones), converted to GLSL ES 3.00 by NG-GL4ES (glslang + SPIRV-Cross) if it
+	// can be loaded, else patched like the GL renderer does without it. A shader that fails is not
+	// fatal: Failed() tells, and the effect is left out. Set before Compile.
+	void SetDesktopGLSL(bool on) { mDesktopGLSL = on; }
+	bool Failed() const { return mFailed; }
+	// Their uniforms are plain uniforms, set from the effect's uniform data (after Link).
+	void SetPPUniforms(const std::vector<UniformFieldDesc> &fields);
+	void ApplyPPUniforms(const TArray<uint8_t> &data);	// the program bound
+	int mTimeDeltaLoc = -1, mTimeLoc = -1, mTimeGameLoc = -1;
+
 	void Bind();
 
 	GLuint Handle() { return mProgram; }
@@ -59,7 +70,9 @@ private:
 	FShaderProgram &operator=(const FShaderProgram &) = delete;
 
 	void CompileShader(ShaderType type);
+	bool CompileSource(GLuint handle, const FString &source);
 	FString PatchShader(ShaderType type, const FString &code, const char *defines, int maxGlslVersion);
+	FString PatchDesktopShader(ShaderType type, const FString &code, const char *defines, int maxGlslVersion, bool forConverter, TArray<std::pair<FString, int>> &bindings);
 
 	void CreateShader(ShaderType type);
 	FString GetShaderInfoLog(GLuint handle);
@@ -70,6 +83,11 @@ private:
 	FString mShaderSources[NumShaderTypes];
 	FString mShaderNames[NumShaderTypes];
 	TArray<std::pair<FString, int>> samplerstobind;
+
+	bool mDesktopGLSL = false;
+	bool mFailed = false;
+	FString mFallbackSources[NumShaderTypes];	// converter path: the same shader patched to GLSL ES 3.00 instead
+	std::vector<std::pair<UniformFieldDesc, int>> mPPUniforms;
 };
 
 template<typename T>

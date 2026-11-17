@@ -36,14 +36,27 @@
 
 #include "hw_vrmodes.h"
 #include "v_draw.h"
+#include "gles_renderstate.h"
+
+#include "i_time.h"
+#include "g_levellocals.h"
 
 extern bool vid_hdr_active;
 
+// The GL renderer's post-process effects on the OpenGL ES 3.0 path: bloom, exposure, tonemap,
+// lens distortion, FXAA, menu blur and the mods' custom post-process shaders (GLDEFS
+// HardwareShader PostProcess). Off: the scene goes to the screen as it is.
+CVAR(Bool, gles_postprocess, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 namespace OpenGLESRenderer
 {
 
 int gl_dither_bpc = -1;
+
+bool UsePostProcess()
+{
+	return gles.glesMode == GLES_MODE_GLES3 && gles_postprocess;
+}
 
 void FGLRenderer::RenderScreenQuad()
 {
@@ -54,10 +67,47 @@ void FGLRenderer::RenderScreenQuad()
 
 void FGLRenderer::PostProcessScene(int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D)
 {
+	if (!UsePostProcess())
+	{
 #ifndef NO_RENDER_BUFFER
-	mBuffers->BindCurrentFB();
+		mBuffers->BindCurrentFB();
 #endif
+		if (afterBloomDrawEndScene2D) afterBloomDrawEndScene2D();
+		return;
+	}
+
+	// the scene's batched draws first: the effects read what it drew
+	if (gl_RenderState.HasPendingBatches()) gl_RenderState.FlushBatches(BB_Immediate);
+
+	int sceneWidth = mBuffers->GetSceneWidth();
+	int sceneHeight = mBuffers->GetSceneHeight();
+
+	GLPPRenderState renderstate(mBuffers);
+
+	renderstate.TimeDelta = static_cast<float>(GetDeltaTime());
+	renderstate.Time = static_cast<float>(screen->FrameTime / 1000.0);
+	renderstate.TimeGame = static_cast<float>(primaryLevel->LocalWorldTimer / (double)GameTicRate);
+
+	hw_postprocess.Pass1(&renderstate, fixedcm, sceneWidth, sceneHeight);
+	mBuffers->BindCurrentFB();
 	if (afterBloomDrawEndScene2D) afterBloomDrawEndScene2D();
+	// The special colormap (invulnerability) and the flash are applied by the scene shaders
+	// already (SetSpecialColormap): not a second time here.
+	hw_postprocess.Pass2(&renderstate, CM_DEFAULT, 1.f, sceneWidth, sceneHeight);
+}
+
+void FGLRenderer::BlurScene(float gameinfobluramount)
+{
+	if (!UsePostProcess()) return;
+
+	if (gl_RenderState.HasPendingBatches()) gl_RenderState.FlushBatches(BB_Immediate);
+	GLPPRenderState renderstate(mBuffers);
+	hw_postprocess.bloom.RenderBlur(&renderstate, mBuffers->GetSceneWidth(), mBuffers->GetSceneHeight(), gameinfobluramount);
+}
+
+void FGLRenderer::ClearTonemapPalette()
+{
+	hw_postprocess.tonemap.ClearTonemapPalette();
 }
 
 
@@ -86,6 +136,14 @@ void FGLRenderer::CopyToBackbuffer(const IntRect *bounds, bool applyGamma)
 #endif
 	screen->Draw2D();	// draw all pending 2D stuff before copying the buffer
 	twod->Clear();
+
+	if (UsePostProcess())
+	{
+		// the mods' custom post-process shaders for the whole screen, 2D included
+		if (gl_RenderState.HasPendingBatches()) gl_RenderState.FlushBatches(BB_Immediate);
+		GLPPRenderState renderstate(mBuffers);
+		hw_postprocess.customShaders.Run(&renderstate, "screen");
+	}
 
 	FGLPostProcessState savedState;
 	savedState.SaveTextureBindings(2);

@@ -1167,6 +1167,9 @@ msgstr "Tonemap Mode"
 msgid "GLPREFMNU_LENS"
 msgstr "Lens distortion effect"
 
+msgid "GLPREFMNU_GLES_POSTPROCESS"
+msgstr "Post-processing on OpenGL ES 3.0"
+
 msgid "GLPREFMNU_FXAA"
 msgstr "FXAA Quality"
 

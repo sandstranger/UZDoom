@@ -95,6 +95,18 @@ namespace OpenGLRenderer
 		}
 	}
 
+	// The GLES renderer's post-process shaders: the converter if it can be loaded, else they are
+	// patched to GLSL ES directly (no fatal error).
+	bool TryLoadShaderConverter()
+	{
+		if (GLSLtoGLSLES_c == nullptr)
+		{
+			if (ngGL4ESPTR == nullptr) ngGL4ESPTR = SDL_LoadObject("libng_gl4es.so");
+			if (ngGL4ESPTR != nullptr) GLSLtoGLSLES_c = (GLSLtoGLSLES_t)SDL_LoadFunction(ngGL4ESPTR, "GLSLtoGLSLES_c");
+		}
+		return GLSLtoGLSLES_c != nullptr;
+	}
+
 	// GLSL -> SPIR-V -> GLSL ES: CPU work only, no GL calls. NG-GL4ES's converter is reentrant
 	// (glslang with per-thread pools, a SPIRV-Tools optimizer per thread, a SPIRV-Cross context
 	// per call).

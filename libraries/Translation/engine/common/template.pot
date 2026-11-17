@@ -1167,6 +1167,9 @@ msgstr ""
 msgid "GLPREFMNU_LENS"
 msgstr ""
 
+msgid "GLPREFMNU_GLES_POSTPROCESS"
+msgstr ""
+
 msgid "GLPREFMNU_FXAA"
 msgstr ""
 

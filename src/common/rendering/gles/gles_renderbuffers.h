@@ -34,6 +34,7 @@ class PPGLTexture
 public:
 	void Bind(int index, int filter = GL_NEAREST, int wrap = GL_CLAMP_TO_EDGE)
 	{
+		if (nearestOnly) filter = GL_NEAREST;	// a linear filter would make it incomplete (sampled as black)
 		glActiveTexture(GL_TEXTURE0 + index);
 		glBindTexture(GL_TEXTURE_2D, handle);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
@@ -50,9 +51,11 @@ public:
 private:
 	GLuint handle = 0;
 	bool pooled = false;	// a render target from GLESRenderTargetPool
+	bool nearestOnly = false;	// 32-bit float without OES_texture_float_linear
 
 	friend class FGLRenderBuffers;
 	friend class PPGLTextureBackend;
+	friend class GLPPRenderState;
 };
 
 class PPGLFrameBuffer
@@ -70,6 +73,7 @@ private:
 
 	friend class FGLRenderBuffers;
 	friend class PPGLTextureBackend;
+	friend class GLPPRenderState;
 };
 
 class PPGLRenderBuffer
@@ -98,30 +102,60 @@ public:
 	static void ReleaseRenderbuffer(GLuint handle, GLenum format, int width, int height, int samples, bool renderToTexture);
 	static void FrameEnd();
 	static void Trim(bool all);
+	static uint64_t Frame();
 };
 
+// A texture of the post-process effects (PPTexture) and its frame buffer. Not pooled: these
+// have formats of their own (float ones among them).
 class PPGLTextureBackend : public PPTextureBackend
 {
 public:
 	~PPGLTextureBackend()
 	{
-		if (Tex.handle != 0)
-		{
-			glDeleteTextures(1, &Tex.handle);
-			Tex.handle = 0;
-		}
+		// the frame buffer first: the texture must not stay attached anywhere
 		if (FB.handle != 0)
 		{
 			glDeleteFramebuffers(1, &FB.handle);
 			FB.handle = 0;
 		}
+		if (Tex.handle != 0)
+		{
+			glDeleteTextures(1, &Tex.handle);
+			Tex.handle = 0;
+		}
 	}
+
+	bool Idle() const override;
 
 	PPGLTexture Tex;
 	PPGLFrameBuffer FB;
+	uint64_t LastUse = 0;	// GLESRenderTargetPool::Frame() of the last use
 };
 
 class FShaderProgram;
+
+// The post-process effects (hw_postprocess: bloom, tonemap, lens, FXAA, the mods' custom shaders)
+// on the GLES 3.0 path. Their shaders are the desktop GLSL ones of the GL renderer, converted to
+// GLSL ES 3.00 (FShaderProgram::SetDesktopGLSL).
+class GLPPRenderState : public PPRenderState
+{
+public:
+	GLPPRenderState(FGLRenderBuffers *buffers) : buffers(buffers) { }
+
+	void PushGroup(const FString &name) override {}
+	void PopGroup() override {}
+	void Draw() override;
+	void CopyToTexture(PPTexture *dst) override;
+
+private:
+	PPGLTextureBackend *GetGLTexture(PPTexture *texture);
+	FShaderProgram *GetGLShader(PPShader *shader);
+
+	FGLRenderBuffers *buffers;
+};
+
+// Post-process effects on (gles_postprocess, GLES 3.0 mode only)
+bool UsePostProcess();
 
 
 class FGLRenderBuffers
@@ -175,6 +209,10 @@ private:
 	bool CreateSceneMultisample(int width, int height, int samples);
 	void Discard(int count, const GLenum *attachments);
 	void CreatePipeline(int width, int height);
+	void ClearPipeline();
+	PPGLFrameBuffer &PipelineFB(int index);
+	GLuint ReadableFB();
+	PPGLTexture CreatePPTexture(GLuint format, int width, int height, const void *data);
 
 	PPGLTexture Create2DTexture(const char *name, GLuint format, int width, int height, const void *data = nullptr);
 	PPGLRenderBuffer CreateRenderBuffer(const char *name, GLuint format, int width, int height);
@@ -210,6 +248,16 @@ private:
 	bool mResolvePending = false;
 
 	PPGLTexture mDitherTexture;
+
+	// Post-process pipeline. Texture 0 is mSceneTex. While mSceneFBCurrent, the scene frame buffer
+	// still holds texture 0's image (the HUD and 2D go on drawing into it, in the scene's render
+	// pass); once an effect wrote texture 0, or the multisampled scene was resolved for the effects,
+	// texture 0 is drawn into through its own single-sampled frame buffer.
+	PPGLTexture mPipelineTex1;
+	PPGLFrameBuffer mPipelineFB[2];
+	PPGLRenderBuffer mPipelineDepthStencilBuf;	// for the HUD models and the 2D after the effects
+	int mCurrentPipelineTexture = 0;
+	bool mSceneFBCurrent = true;
 
 	static bool FailedCreate;
 

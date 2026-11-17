@@ -28,9 +28,35 @@
 #include "filesystem.h"
 #include "printf.h"
 #include "cmdlib.h"
+#include <string>
+
+#ifdef ANDROID
+namespace OpenGLRenderer
+{
+	// gl_shader.cpp: NG-GL4ES's GLSL -> GLSL ES converter, shared with the GL renderer
+	bool TryLoadShaderConverter();
+	std::string ConvertShaderToGLES(const char *shaderSource, bool isVertexShader);
+}
+#endif
 
 namespace OpenGLESRenderer
 {
+
+// Post-process shaders go through NG-GL4ES when it can be loaded (checked once).
+static bool UseShaderConverter()
+{
+#ifdef ANDROID
+	static int available = -1;
+	if (available < 0)
+	{
+		available = OpenGLRenderer::TryLoadShaderConverter() ? 1 : 0;
+		Printf("GLES post-process shaders: %s\n", available ? "converted by NG-GL4ES (SPIRV-Cross)" : "NG-GL4ES not available, patched to GLSL ES 3.00");
+	}
+	return available == 1;
+#else
+	return false;
+#endif
+}
 
 FString GetGLSLPrecision();
 
@@ -98,7 +124,31 @@ void FShaderProgram::Compile(ShaderType type, const char *lumpName, const char *
 void FShaderProgram::Compile(ShaderType type, const char *name, const FString &code, const char *defines, int maxGlslVersion)
 {
 	mShaderNames[type] = name;
-	mShaderSources[type] = PatchShader(type, code, defines, maxGlslVersion);
+	if (mDesktopGLSL)
+	{
+		// The source to convert is what the program binary cache knows the program by. The
+		// patched GLSL ES version is kept in case the converter or the driver refuses it.
+		TArray<std::pair<FString, int>> fallbackBindings;
+		const bool converter = UseShaderConverter();
+		mShaderSources[type] = PatchDesktopShader(type, code, defines, maxGlslVersion, converter, samplerstobind);
+		mFallbackSources[type] = converter ? PatchDesktopShader(type, code, defines, maxGlslVersion, false, fallbackBindings) : FString();
+	}
+	else
+	{
+		mShaderSources[type] = PatchShader(type, code, defines, maxGlslVersion);
+	}
+}
+
+bool FShaderProgram::CompileSource(GLuint handle, const FString &source)
+{
+	int lengths[1] = { (int)source.Len() };
+	const char *sources[1] = { source.GetChars() };
+	glShaderSource(handle, 1, sources, lengths);
+	glCompileShader(handle);
+
+	GLint status = 0;
+	glGetShaderiv(handle, GL_COMPILE_STATUS, &status);
+	return status != GL_FALSE;
 }
 
 void FShaderProgram::CompileShader(ShaderType type)
@@ -107,26 +157,42 @@ void FShaderProgram::CompileShader(ShaderType type)
 
 	const auto &handle = mShaders[type];
 
-
-	const FString &patchedCode = mShaderSources[type];
-	int lengths[1] = { (int)patchedCode.Len() };
-	const char *sources[1] = { patchedCode.GetChars() };
-	glShaderSource(handle, 1, sources, lengths);
-
-	glCompileShader(handle);
-
-	GLint status = 0;
-	glGetShaderiv(handle, GL_COMPILE_STATUS, &status);
-	if (status == GL_FALSE)
+	FString source = mShaderSources[type];
+#ifdef ANDROID
+	if (mDesktopGLSL && mFallbackSources[type].IsNotEmpty())
 	{
-		I_FatalError("Compile Shader '%s':\n%s\n", mShaderNames[type].GetChars(), GetShaderInfoLog(handle).GetChars());
+		// GLSL -> SPIR-V -> GLSL ES 3.00. The converter hands the source back unchanged when it fails.
+		const std::string converted = OpenGLRenderer::ConvertShaderToGLES(source.GetChars(), type == Vertex);
+		if (converted != source.GetChars())
+			source = converted.c_str();
+		else
+		{
+			Printf("NG-GL4ES could not convert '%s', patching it to GLSL ES 3.00 instead\n", mShaderNames[type].GetChars());
+			source = mFallbackSources[type];
+		}
 	}
-	else
+#endif
+
+	bool compiled = CompileSource(handle, source);
+	if (!compiled && mDesktopGLSL && mFallbackSources[type].IsNotEmpty() && source.Compare(mFallbackSources[type]) != 0)
 	{
-		if (mProgram == 0)
-			mProgram = glCreateProgram();
-		glAttachShader(mProgram, handle);
+		Printf("Converted shader '%s' does not compile:\n%s\nusing it patched to GLSL ES 3.00 instead\n", mShaderNames[type].GetChars(), GetShaderInfoLog(handle).GetChars());
+		compiled = CompileSource(handle, mFallbackSources[type]);
 	}
+
+	if (!compiled)
+	{
+		if (!mDesktopGLSL)
+			I_FatalError("Compile Shader '%s':\n%s\n", mShaderNames[type].GetChars(), GetShaderInfoLog(handle).GetChars());
+
+		Printf(TEXTCOLOR_RED "Post-process shader '%s' cannot be used with OpenGL ES, the effect is left out:\n%s\n", mShaderNames[type].GetChars(), GetShaderInfoLog(handle).GetChars());
+		mFailed = true;
+		return;
+	}
+
+	if (mProgram == 0)
+		mProgram = glCreateProgram();
+	glAttachShader(mProgram, handle);
 }
 
 //==========================================================================
@@ -160,7 +226,8 @@ void FShaderProgram::Link(const char *name)
 	if (!loadedFromBinary)
 	{
 		CompileShader(Vertex);
-		CompileShader(Fragment);
+		if (!mFailed) CompileShader(Fragment);
+		if (mFailed) return;
 
 		if (IsShaderCacheActive() && glProgramParameteri)
 			glProgramParameteri(mProgram, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
@@ -168,7 +235,13 @@ void FShaderProgram::Link(const char *name)
 
 		GLint status = 0;
 		glGetProgramiv(mProgram, GL_LINK_STATUS, &status);
-		if (status == GL_FALSE)
+		if (status == GL_FALSE && mDesktopGLSL)
+		{
+			Printf(TEXTCOLOR_RED "Post-process shader '%s' cannot be used with OpenGL ES, the effect is left out:\n%s\n", name, GetProgramInfoLog(mProgram).GetChars());
+			mFailed = true;
+			return;
+		}
+		else if (status == GL_FALSE)
 		{
 			I_FatalError("Link Shader '%s':\n%s\n", name, GetProgramInfoLog(mProgram).GetChars());
 		}
@@ -305,6 +378,118 @@ FString FShaderProgram::PatchShader(ShaderType type, const FString &code, const 
 	}
 
 	return patchedCode;
+}
+
+//==========================================================================
+//
+// Post-process shaders: desktop GLSL, as the GL renderer patches it on
+// Android - '#version 410' for the converter, '#version 300 es' with default
+// precisions when patched directly. Sampler bindings are set at link time
+// (GLSL ES 3.00 has no layout(binding)).
+//
+//==========================================================================
+
+FString FShaderProgram::PatchDesktopShader(ShaderType type, const FString &code, const char *defines, int maxGlslVersion, bool forConverter, TArray<std::pair<FString, int>> &bindings)
+{
+	FString patchedCode;
+
+	if (forConverter)
+	{
+		patchedCode << "#version 410\n#define NO_CLIPDISTANCE_SUPPORT\n#define TARGET_ESSL300\n";
+	}
+	else
+	{
+		patchedCode << "#version 300 es\n#define NO_CLIPDISTANCE_SUPPORT\n#define TARGET_ESSL300\n";
+		patchedCode << "precision highp int;\n";
+		patchedCode << "precision highp float;\n";
+		patchedCode << "precision highp sampler2D;\n";
+		patchedCode << "precision highp sampler2DArray;\n";
+		patchedCode << "precision highp samplerCube;\n";
+	}
+
+	if (defines)
+		patchedCode << defines;
+
+	patchedCode << "precision highp int;\n";
+	patchedCode << "precision highp float;\n";
+
+	patchedCode << "#line 1\n";
+	patchedCode << RemoveLayoutLocationDecl(code, type == Vertex ? "out" : "in");
+
+	if (maxGlslVersion < 420)
+		patchedCode = RemoveSamplerBindings(patchedCode, bindings);
+
+	return patchedCode;
+}
+
+void FShaderProgram::SetPPUniforms(const std::vector<UniformFieldDesc> &fields)
+{
+	mPPUniforms.clear();
+	if (mFailed || mProgram == 0) return;
+
+	for (const auto &field : fields)
+	{
+		const int location = glGetUniformLocation(mProgram, field.Name);
+		if (location != -1)
+			mPPUniforms.push_back({ field, location });
+	}
+	mTimeDeltaLoc = glGetUniformLocation(mProgram, "InputTimeDelta");
+	mTimeLoc = glGetUniformLocation(mProgram, "InputTime");
+	mTimeGameLoc = glGetUniformLocation(mProgram, "InputTimeGame");
+}
+
+void FShaderProgram::ApplyPPUniforms(const TArray<uint8_t> &data)
+{
+	for (const auto &uniform : mPPUniforms)
+	{
+		const UniformFieldDesc &desc = uniform.first;
+		const int location = uniform.second;
+
+		size_t size;
+		switch (desc.Type)
+		{
+		default:
+		case UniformType::Int:
+		case UniformType::UInt:
+		case UniformType::Float: size = 4; break;
+		case UniformType::Vec2:
+		case UniformType::IVec2:
+		case UniformType::UVec2: size = 8; break;
+		case UniformType::Vec3:
+		case UniformType::IVec3:
+		case UniformType::UVec3: size = 12; break;
+		case UniformType::Vec4:
+		case UniformType::IVec4:
+		case UniformType::UVec4: size = 16; break;
+		case UniformType::Mat4: size = 64; break;
+		}
+		if (desc.Offset + size > data.Size())
+			continue;
+
+		uint32_t value[16];
+		memcpy(value, data.Data() + desc.Offset, size);
+		const GLfloat *f = (const GLfloat *)value;
+		const GLint *i = (const GLint *)value;
+		const GLuint *u = (const GLuint *)value;
+
+		switch (desc.Type)
+		{
+		default:
+		case UniformType::Int: glUniform1iv(location, 1, i); break;
+		case UniformType::UInt: glUniform1uiv(location, 1, u); break;
+		case UniformType::Float: glUniform1fv(location, 1, f); break;
+		case UniformType::Vec2: glUniform2fv(location, 1, f); break;
+		case UniformType::Vec3: glUniform3fv(location, 1, f); break;
+		case UniformType::Vec4: glUniform4fv(location, 1, f); break;
+		case UniformType::IVec2: glUniform2iv(location, 1, i); break;
+		case UniformType::IVec3: glUniform3iv(location, 1, i); break;
+		case UniformType::IVec4: glUniform4iv(location, 1, i); break;
+		case UniformType::UVec2: glUniform2uiv(location, 1, u); break;
+		case UniformType::UVec3: glUniform3uiv(location, 1, u); break;
+		case UniformType::UVec4: glUniform4uiv(location, 1, u); break;
+		case UniformType::Mat4: glUniformMatrix4fv(location, 1, GL_FALSE, f); break;
+		}
+	}
 }
 
 /////////////////////////////////////////////////////////////////////////////
