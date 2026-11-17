@@ -34,7 +34,8 @@ attribute vec4 aColor;
 #else
 #define VARYING_GRADIENT 0
 #endif
-#if defined(USER_SHADER) || (DEF_DYNAMIC_LIGHTS_MOD == 1) || (DEF_DYNAMIC_LIGHTS_SUB == 1) || (DEF_DYNAMIC_LIGHTS_ADD == 1)
+// PBR (GLSL ES 3.00): material_pbr.fp's ambient term reads the normal too, dynamic lights or not
+#if defined(USER_SHADER) || (defined(PBR) && __VERSION__ >= 300) || (DEF_DYNAMIC_LIGHTS_MOD == 1) || (DEF_DYNAMIC_LIGHTS_SUB == 1) || (DEF_DYNAMIC_LIGHTS_ADD == 1)
 #define VARYING_NORMAL 1
 #else
 #define VARYING_NORMAL 0

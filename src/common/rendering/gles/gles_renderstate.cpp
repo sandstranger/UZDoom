@@ -250,7 +250,21 @@ bool FGLRenderState::ApplyShader()
 	glVertexAttrib4fv(VATTR_NORMAL, &mStreamData.uVertexNormal.X);
 
 	activeShader->cur->muDesaturation.Set(mStreamData.uDesaturationFactor);
-	//activeShader->cur->muFogEnabled.Set(fogset);
+
+	// The built-in shaders have these as compile-time flavour flags; mods' material shaders read the
+	// GL renderer's uniforms for them (with the same values as there).
+	if (activeShader->mUserShader)
+	{
+		int fogset = 0;
+		if (mFogEnabled)
+		{
+			if (mFogEnabled == 2) fogset = -3;	// 2D rendering with 'foggy' overlay
+			else if ((GetFogColor() & 0xffffff) == 0) fogset = gl_fogmode;
+			else fogset = -gl_fogmode;
+		}
+		activeShader->cur->muFogEnabled.Set(fogset);
+		activeShader->cur->muTextureMode.Set(tm);
+	}
 
 	activeShader->cur->muLightParms.Set(mLightParms);
 	activeShader->cur->muFogColor.Set(mStreamData.uFogColor);

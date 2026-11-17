@@ -290,6 +290,13 @@ class FShader
 	FString mDefinesBase;
 	int mPassType = 0;
 
+	// A mod's material shader (GLDEFS, GLES 3.0 mode): built from GLSL ES 3.00 sources like the
+	// built-in shaders, or converted by NG-GL4ES if the driver refuses them (see FShader::Load). If
+	// neither works, the built-in shader of its material type (the fallback) takes its place.
+	bool mUserShader = false;
+	FString mFallbackFragProg2;
+	FString mFallbackDefines;
+
 	/////
 public: class ShaderVariantData
 	{

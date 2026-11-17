@@ -240,8 +240,6 @@ namespace OpenGLESRenderer
 		}
 
 
-		gl_customshader = false; // Disable user shaders for GLES renderer
-
 		GLint maxTextureSize[1];
 		glGetIntegerv(GL_MAX_TEXTURE_SIZE, maxTextureSize);
 		gles.max_texturesize = maxTextureSize[0];
@@ -344,6 +342,10 @@ namespace OpenGLESRenderer
 		// desktop GL 3.3) and its entry points were resolved.
 		const bool es3 = gles.glesMode == GLES_MODE_GLES3;
 		const bool core3 = es3 || gles.glesMode == GLES_MODE_OGL3;
+
+		// Mods' material shaders (GLDEFS) are written for the GL renderer's GLSL: GLSL ES 3.00 can
+		// take them (with NG-GL4ES converting what the driver refuses), GLSL ES 1.00 cannot.
+		if (!es3) gl_customshader = false;
 		gles.bgraTextures = CheckExtension("GL_EXT_texture_format_BGRA8888");
 		gles.textureSwizzle = core3;
 		gles.syncObjects = core3 && glFenceSync && glClientWaitSync && glDeleteSync;

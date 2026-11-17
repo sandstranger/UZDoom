@@ -30,7 +30,8 @@
 #else
 #define VARYING_GRADIENT 0
 #endif
-#if defined(USER_SHADER) || (DEF_DYNAMIC_LIGHTS_MOD == 1) || (DEF_DYNAMIC_LIGHTS_SUB == 1) || (DEF_DYNAMIC_LIGHTS_ADD == 1)
+// PBR (GLSL ES 3.00): material_pbr.fp's ambient term reads the normal too, dynamic lights or not
+#if defined(USER_SHADER) || (defined(PBR) && __VERSION__ >= 300) || (DEF_DYNAMIC_LIGHTS_MOD == 1) || (DEF_DYNAMIC_LIGHTS_SUB == 1) || (DEF_DYNAMIC_LIGHTS_ADD == 1)
 #define VARYING_NORMAL 1
 #else
 #define VARYING_NORMAL 0
@@ -63,6 +64,10 @@ struct Material
 	vec3 Specular;
 	float Glossiness;
 	float SpecularLevel;
+	// PBR materials (material_pbr.fp, GLSL ES 3.00 only)
+	float Metallic;
+	float Roughness;
+	float AO;
 };
 
 vec4 Process(vec4 color);
@@ -73,10 +78,17 @@ vec4 ProcessLight(Material mat, vec4 color);
 vec3 ProcessMaterialLight(Material material, vec3 color);
 vec2 GetTexCoord();
 
+#ifdef USER_SHADER
+// Mods' material shaders (GLSL ES 3.00 only) are written for the GL renderer's main.fp: what they use of
+// it that the built-in shaders here have as compile-time flavour flags, with the same values as there.
+uniform int uFogEnabled;	// 0 no fog, 1/2 black fog (gl_fogmode), -1/-2 colored fog, -3 2D 'fog' overlay
+
 // These get Or'ed into uTextureMode because it only uses its 3 lowermost bits.
-//const int TEXF_Brightmap = 0x10000;
-//const int TEXF_Detailmap = 0x20000;
-//const int TEXF_Glowmap = 0x40000;
+const int TEXF_Brightmap = 0x10000;
+const int TEXF_Detailmap = 0x20000;
+const int TEXF_Glowmap = 0x40000;
+const int TEXF_ClampY = 0x80000;
+#endif
 
 
 //===========================================================================
@@ -192,6 +204,84 @@ const int Tex_Blend_Hardlight = 4;
 
 	return texel;
 }
+
+#ifdef USER_SHADER
+//===========================================================================
+//
+// The GL renderer's forms for mods' material shaders: the blend flags
+// passed in rather than chosen at compile time, and RGB to HSV
+//
+//===========================================================================
+
+vec4 ApplyTextureManipulation(vec4 texel, int blendflags)
+{
+	// Step 1: desaturate according to the material's desaturation factor.
+	texel = dodesaturate(texel, uTextureModulateColor.a);
+
+	// Step 2: Invert if requested
+	if ((blendflags & 8) != 0)
+	{
+		texel.rgb = vec3(1.0 - texel.r, 1.0 - texel.g, 1.0 - texel.b);
+	}
+
+	// Step 3: Apply additive color
+	texel.rgb += uTextureAddColor.rgb;
+
+	// Step 4: Colorization, including gradient if set.
+	texel.rgb *= uTextureModulateColor.rgb;
+
+	// Before applying the blend the value needs to be clamped to [0..1] range.
+	texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+
+	// Step 5: Apply a blend. This may just be a translucent overlay or one of the blend modes present in current Build engines.
+	if ((blendflags & 7) != 0)
+	{
+		vec3 tcol = texel.rgb * 255.0;	// * 255.0 to make it easier to reuse the integer math.
+		vec4 tint = uTextureBlendColor * 255.0;
+
+		switch (blendflags & 7)
+		{
+			default:
+				tcol.b = tcol.b * (1.0 - uTextureBlendColor.a) + tint.b * uTextureBlendColor.a;
+				tcol.g = tcol.g * (1.0 - uTextureBlendColor.a) + tint.g * uTextureBlendColor.a;
+				tcol.r = tcol.r * (1.0 - uTextureBlendColor.a) + tint.r * uTextureBlendColor.a;
+				break;
+
+			// The following 3 are taken 1:1 from the Build engine
+			case Tex_Blend_Screen:
+				tcol.b = 255.0 - (((255.0 - tcol.b) * (255.0 - tint.r)) / 256.0);
+				tcol.g = 255.0 - (((255.0 - tcol.g) * (255.0 - tint.g)) / 256.0);
+				tcol.r = 255.0 - (((255.0 - tcol.r) * (255.0 - tint.b)) / 256.0);
+				break;
+
+			case Tex_Blend_Overlay:
+				tcol.b = tcol.b < 128.0? (tcol.b * tint.b) / 128.0 : 255.0 - (((255.0 - tcol.b) * (255.0 - tint.b)) / 128.0);
+				tcol.g = tcol.g < 128.0? (tcol.g * tint.g) / 128.0 : 255.0 - (((255.0 - tcol.g) * (255.0 - tint.g)) / 128.0);
+				tcol.r = tcol.r < 128.0? (tcol.r * tint.r) / 128.0 : 255.0 - (((255.0 - tcol.r) * (255.0 - tint.r)) / 128.0);
+				break;
+
+			case Tex_Blend_Hardlight:
+				tcol.b = tint.b < 128.0 ? (tcol.b * tint.b) / 128.0 : 255.0 - (((255.0 - tcol.b) * (255.0 - tint.b)) / 128.0);
+				tcol.g = tint.g < 128.0 ? (tcol.g * tint.g) / 128.0 : 255.0 - (((255.0 - tcol.g) * (255.0 - tint.g)) / 128.0);
+				tcol.r = tint.r < 128.0 ? (tcol.r * tint.r) / 128.0 : 255.0 - (((255.0 - tcol.r) * (255.0 - tint.r)) / 128.0);
+				break;
+		}
+		texel.rgb = tcol / 255.0;
+	}
+	return texel;
+}
+
+vec3 rgb2hsv(vec3 c)
+{
+	vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+	vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+	vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+
+	float d = q.x - min(q.w, q.y);
+	float e = 1.0e-10;
+	return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+#endif
 
 //===========================================================================
 //
@@ -358,6 +448,45 @@ float spotLightAttenuation(vec4 lightpos, vec3 spotdir, float lightCosInnerAngle
 	return smoothstep(lightCosOuterAngle, lightCosInnerAngle, cosDir);
 }
 
+#if defined(NORMALMAP) && __VERSION__ >= 300 && VARYING_NORMAL
+//===========================================================================
+//
+// Adjust normal vector according to the normal map (specular and PBR
+// materials, GLSL ES 3.00), as the GL renderer does
+//
+//===========================================================================
+
+mat3 cotangent_frame(vec3 n, vec3 p, vec2 uv)
+{
+	// get edge vectors of the pixel triangle
+	vec3 dp1 = dFdx(p);
+	vec3 dp2 = dFdy(p);
+	vec2 duv1 = dFdx(uv);
+	vec2 duv2 = dFdy(uv);
+
+	// solve the linear system
+	vec3 dp2perp = cross(n, dp2); // cross(dp2, n);
+	vec3 dp1perp = cross(dp1, n); // cross(n, dp1);
+	vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+	vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+
+	// construct a scale-invariant frame
+	float invmax = inversesqrt(max(dot(t,t), dot(b,b)));
+	return mat3(t * invmax, b * invmax, n);
+}
+
+vec3 ApplyNormalMap(vec2 texcoord)
+{
+	vec3 interpolatedNormal = normalize(vWorldNormal.xyz);
+
+	vec3 map = texture2D(normaltexture, texcoord).xyz;
+	map = map * 255./127. - 128./127.; // Math so "odd" because 0.5 cannot be precisely described in an unsigned format
+	map.y = -map.y;	// green up
+
+	mat3 tbn = cotangent_frame(interpolatedNormal, pixelpos.xyz, vTexCoord.st);
+	return normalize(tbn * map);
+}
+#else
 vec3 ApplyNormalMap(vec2 texcoord)
 {
 #if VARYING_NORMAL
@@ -366,6 +495,7 @@ vec3 ApplyNormalMap(vec2 texcoord)
 	return vec3(0.0, 0.0, 1.0);	// only read by the dynamic lights, which this variant has none of
 #endif
 }
+#endif
 
 //===========================================================================
 //
@@ -526,6 +656,9 @@ void main()
 	material.Specular = vec3(0.0);
 	material.Glossiness = 0.0;
 	material.SpecularLevel = 0.0;
+	material.Metallic = 0.0;
+	material.Roughness = 0.0;
+	material.AO = 0.0;
 	SetupMaterial(material);
 #else
 	Material material = ProcessMaterial();

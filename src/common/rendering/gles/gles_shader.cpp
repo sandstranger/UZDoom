@@ -30,6 +30,7 @@
 #include "i_specialpaths.h"
 #include "printf.h"
 #include "version.h"
+#include "stb_include.h"
 
 #include "matrix.h"
 #include "gles_renderer.h"
@@ -37,11 +38,13 @@
 #include "hw_batching.h"
 #include <map>
 #include <memory>
+#include <string>
 
 namespace OpenGLESRenderer
 {
 
 CVAR(Int, gles_glsl_precision, 2, 0); // 0 = low, 1 = medium, 2 = high
+EXTERN_CVAR(Bool, gl_customshader)
 
 FString GetGLSLPrecision()
 {
@@ -134,6 +137,106 @@ void RejectCachedProgramBinary(const FString &vertex, const FString &fragment)
 	ProgramBinaryCache::Reject(ProgramCacheNamespace().GetChars(), ProgramCacheDriver().GetChars(), ProgramCacheKey(vertex, fragment));
 }
 
+#ifdef ANDROID
+}
+
+namespace OpenGLRenderer
+{
+	// gl_shader.cpp: NG-GL4ES's GLSL -> GLSL ES converter, shared with the GL renderer
+	bool TryLoadShaderConverter();
+	std::string ConvertShaderToGLES(const char *shaderSource, bool isVertexShader);
+}
+
+namespace OpenGLESRenderer
+{
+
+// Mods' material shaders the driver refuses go through NG-GL4ES when it can be loaded (checked once)
+static bool UseMaterialShaderConverter()
+{
+	static int available = -1;
+	if (available < 0)
+	{
+		available = OpenGLRenderer::TryLoadShaderConverter() ? 1 : 0;
+		if (!available) Printf("NG-GL4ES not available: mods' material shaders are used as GLSL ES 3.00 only\n");
+	}
+	return available == 1;
+}
+#endif
+
+//==========================================================================
+//
+// Compiles and links a program of the main shader (vertex attributes bound
+// to their fixed locations). On failure 'error' gets the compiler's and the
+// linker's messages and the program has no shaders attached.
+//
+//==========================================================================
+
+static bool BuildProgram(GLuint program, const FString &vertexSource, const FString &fragmentSource, FString &error)
+{
+	static char buffer[10000];
+
+	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+
+	int vp_size = (int)vertexSource.Len();
+	int fp_size = (int)fragmentSource.Len();
+	const char *vp_ptr = vertexSource.GetChars();
+	const char *fp_ptr = fragmentSource.GetChars();
+
+	glShaderSource(vertexShader, 1, &vp_ptr, &vp_size);
+	glShaderSource(fragmentShader, 1, &fp_ptr, &fp_size);
+
+	glCompileShader(vertexShader);
+	glCompileShader(fragmentShader);
+
+	glAttachShader(program, vertexShader);
+	glAttachShader(program, fragmentShader);
+
+	glBindAttribLocation(program, VATTR_VERTEX, "aPosition");
+	glBindAttribLocation(program, VATTR_TEXCOORD, "aTexCoord");
+	glBindAttribLocation(program, VATTR_COLOR, "aColor");
+	glBindAttribLocation(program, VATTR_VERTEX2, "aVertex2");
+	glBindAttribLocation(program, VATTR_NORMAL, "aNormal");
+	glBindAttribLocation(program, VATTR_NORMAL2, "aNormal2");
+	glBindAttribLocation(program, VATTR_BONEWEIGHT, "aBoneWeight");
+	glBindAttribLocation(program, VATTR_BONESELECTOR, "aBoneSelector");
+	// instance attributes (only present in the instanced flavours)
+	glBindAttribLocation(program, VATTR_INSTANCE0 + 0, "aInstXform0");
+	glBindAttribLocation(program, VATTR_INSTANCE0 + 1, "aInstXform1");
+	glBindAttribLocation(program, VATTR_INSTANCE0 + 2, "aInstXform2");
+	glBindAttribLocation(program, VATTR_INSTANCE0 + 3, "aInstXform3");
+	glBindAttribLocation(program, VATTR_INSTANCE_LIGHT, "aInstLightAttr");
+	glBindAttribLocation(program, VATTR_INSTANCE_DYNLIGHT, "aInstDynLight");
+	glBindAttribLocation(program, VATTR_INSTANCE_COLORS, "aInstColors");
+
+	if (IsShaderCacheActive() && glProgramParameteri)
+		glProgramParameteri(program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
+	glLinkProgram(program);
+
+	buffer[0] = 0;
+	glGetShaderInfoLog(vertexShader, sizeof(buffer), NULL, buffer);
+	if (*buffer) error << "Vertex shader:\n" << buffer << "\n";
+
+	buffer[0] = 0;
+	glGetShaderInfoLog(fragmentShader, sizeof(buffer), NULL, buffer);
+	if (*buffer) error << "Fragment shader:\n" << buffer << "\n";
+
+	buffer[0] = 0;
+	glGetProgramInfoLog(program, sizeof(buffer), NULL, buffer);
+	if (*buffer) error << "Linking:\n" << buffer << "\n";
+
+	GLint status = 0;
+	glGetProgramiv(program, GL_LINK_STATUS, &status);
+
+	// The linked program keeps all it needs: the shader objects would only hold on to their
+	// source and their compiled form (under ANGLE a copy of the SPIR-V) as long as the program lives.
+	glDetachShader(program, vertexShader);
+	glDetachShader(program, fragmentShader);
+	glDeleteShader(vertexShader);
+	glDeleteShader(fragmentShader);
+	return status == GL_TRUE;
+}
+
 // GPU instancing (hw_batching.h): GLSL ES 3.00 only, emitted when the flavour asks for it.
 static const char *InstancingVertexDecl = R"(
 #ifdef INSTANCING
@@ -198,16 +301,21 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 
 	vert_prog_lump.Substitute("shaders/", "shaders_gles/");
 	frag_prog_lump.Substitute("shaders/", "shaders_gles/");
-	proc_prog_lump.Substitute("shaders/", "shaders_gles/");
+	if (!mUserShader) proc_prog_lump.Substitute("shaders/", "shaders_gles/");	// a mod's shader is the mod's file
 	light_fragprog.Substitute("shaders/", "shaders_gles/");
 
 	//light_fragprog.Substitute("material_pbr", "material_normal");
 
-	if(light_fragprog.Len())
-		light_fragprog = "shaders_gles/glsl/material_normal.fp"; // NOTE: Always use normal material for now, ignore others
+	// The light model: GLSL ES 3.00 lights specular and PBR materials by their own models, as the GL
+	// renderer does; everything else (and everything with GLSL ES 1.00) by the normal one.
+	if (light_fragprog.Len())
+	{
+		const bool ownModel = gles.essl300 && (light_fragprog.IndexOf("material_pbr") >= 0 || light_fragprog.IndexOf("material_specular") >= 0);
+		if (!ownModel)
+			light_fragprog = "shaders_gles/glsl/material_normal.fp";
+	}
 
 
-	static char buffer[10000];
 	FString error;
 
 	FString i_data = GetGLSLPrecision();
@@ -304,6 +412,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		uniform sampler2D texture9;
 		uniform sampler2D texture10;
 		uniform sampler2D texture11;
+		uniform sampler2D texture12;	// the last unit a mod's shader can have a texture of its own on, as with GL
 
 		// timer data
 		uniform float timer;
@@ -397,6 +506,15 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 			int pp_lump = fileSystem.CheckNumForFullName(proc_prog_lump.GetChars());
 			if (pp_lump == -1) I_Error("Unable to load '%s'", proc_prog_lump.GetChars());
 			FString pp_data = GetStringFromLump(pp_lump);
+
+			if (mUserShader)
+			{
+				// '#include' in a mod's shader, as with the GL renderer
+				TArray<FString> includedFiles;
+				FString includeError;
+				pp_data = stb_include_string(pp_data, proc_prog_lump, includedFiles, includeError);
+				if (includeError.IsNotEmpty()) I_Error("Unable to load '%s': %s", proc_prog_lump.GetChars(), includeError.GetChars());
+			}
 
 			if (pp_data.IndexOf("ProcessMaterial") < 0 && pp_data.IndexOf("SetupMaterial") < 0)
 			{
@@ -540,66 +658,51 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 
 	if (!linked)
 	{
-		shaderData->hVertProg = glCreateShader(GL_VERTEX_SHADER);
-		shaderData->hFragProg = glCreateShader(GL_FRAGMENT_SHADER);
+		linked = BuildProgram(shaderData->hShader, vp_comb, fp_comb, error);
 
-		int vp_size = (int)vp_comb.Len();
-		int fp_size = (int)fp_comb.Len();
-
-		const char *vp_ptr = vp_comb.GetChars();
-		const char *fp_ptr = fp_comb.GetChars();
-
-		glShaderSource(shaderData->hVertProg, 1, &vp_ptr, &vp_size);
-		glShaderSource(shaderData->hFragProg, 1, &fp_ptr, &fp_size);
-
-		glCompileShader(shaderData->hVertProg);
-		glCompileShader(shaderData->hFragProg);
-
-		glAttachShader(shaderData->hShader, shaderData->hVertProg);
-		glAttachShader(shaderData->hShader, shaderData->hFragProg);
-
-
-		glBindAttribLocation(shaderData->hShader, VATTR_VERTEX, "aPosition");
-		glBindAttribLocation(shaderData->hShader, VATTR_TEXCOORD, "aTexCoord");
-		glBindAttribLocation(shaderData->hShader, VATTR_COLOR, "aColor");
-		glBindAttribLocation(shaderData->hShader, VATTR_VERTEX2, "aVertex2");
-		glBindAttribLocation(shaderData->hShader, VATTR_NORMAL, "aNormal");
-		glBindAttribLocation(shaderData->hShader, VATTR_NORMAL2, "aNormal2");
-		glBindAttribLocation(shaderData->hShader, VATTR_BONEWEIGHT, "aBoneWeight");
-		glBindAttribLocation(shaderData->hShader, VATTR_BONESELECTOR, "aBoneSelector");
-		// instance attributes (only present in the instanced flavours)
-		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE0 + 0, "aInstXform0");
-		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE0 + 1, "aInstXform1");
-		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE0 + 2, "aInstXform2");
-		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE0 + 3, "aInstXform3");
-		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE_LIGHT, "aInstLightAttr");
-		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE_DYNLIGHT, "aInstDynLight");
-		glBindAttribLocation(shaderData->hShader, VATTR_INSTANCE_COLORS, "aInstColors");
-
-
-		if (IsShaderCacheActive() && glProgramParameteri)
-			glProgramParameteri(shaderData->hShader, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
-		glLinkProgram(shaderData->hShader);
-
-		glGetShaderInfoLog(shaderData->hVertProg, 10000, NULL, buffer);
-		if (*buffer)
+#ifdef ANDROID
+		// A mod's shader written for the GL renderer's desktop GLSL (implicit conversions and the
+		// like) that the driver refuses as GLSL ES 3.00: GLSL -> SPIR-V -> GLSL ES 3.00 by NG-GL4ES,
+		// as the GL renderer builds all of its shaders. The vertex shader is the built-in one.
+		if (!linked && mUserShader && UseMaterialShaderConverter())
 		{
-			error << "Vertex shader:\n" << buffer << "\n";
-		}
-		glGetShaderInfoLog(shaderData->hFragProg, 10000, NULL, buffer);
-		if (*buffer)
-		{
-			error << "Fragment shader:\n" << buffer << "\n";
-		}
+			const std::string converted = OpenGLRenderer::ConvertShaderToGLES(fp_comb.GetChars(), false);
+			if (converted != fp_comb.GetChars())
+			{
+				// SPIRV-Cross declares the samplers highp. A uniform in both stages must have the same
+				// precision, and the vertex shader's default for samplers is lowp (it only declares them).
+				FString vp_highpSamplers = vp_comb;
+				const ptrdiff_t versionEnd = vp_highpSamplers.IndexOf('\n');
+				vp_highpSamplers.Insert((size_t)(versionEnd + 1), "precision highp sampler2D;\n");
 
-		glGetProgramInfoLog(shaderData->hShader, 10000, NULL, buffer);
-		if (*buffer)
-		{
-			error << "Linking:\n" << buffer << "\n";
+				FString convertedError;
+				linked = BuildProgram(shaderData->hShader, vp_highpSamplers, FString(converted.c_str()), convertedError);
+				if (!linked) error << "Converted by NG-GL4ES (SPIRV-Cross):\n" << convertedError;
+			}
+			else
+			{
+				error << "NG-GL4ES (SPIRV-Cross) could not convert it either\n";
+			}
 		}
-		GLint status = 0;
-		glGetProgramiv(shaderData->hShader, GL_LINK_STATUS, &status);
-		linked = (status == GL_TRUE);
+#endif
+
+		if (!linked && mUserShader)
+		{
+			// The built-in shader of the material type for this one from now on, this variant included
+			Printf(TEXTCOLOR_RED "Material shader '%s' cannot be used with OpenGL ES, the built-in shader of its material type is used instead:\n%s\n", name, error.GetChars());
+			glDeleteProgram(shaderData->hShader);
+			delete shaderData;
+
+			const FString definesBase = mDefinesBase;
+			FString variantDefines = defines;
+			if (strncmp(variantDefines.GetChars(), definesBase.GetChars(), definesBase.Len()) == 0)
+				variantDefines = variantDefines.Mid(definesBase.Len());
+
+			mUserShader = false;
+			mFragProg2 = mFallbackFragProg2;
+			mDefinesBase = mFallbackDefines;
+			return Load(name, vert_prog_lump_, frag_prog_lump_, mFragProg2.GetChars(), light_fragprog_, (mDefinesBase + variantDefines).GetChars());
+		}
 
 		if (!linked)
 		{
@@ -619,12 +722,6 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 				SaveCachedProgramBinary(vp_comb, fp_comb, binary, binaryFormat);
 			}
 		}
-		// The linked program keeps all it needs: the shader objects would only hold on to their
-		// source and their compiled form (under ANGLE a copy of the SPIR-V) as long as the program lives.
-		glDetachShader(shaderData->hShader, shaderData->hVertProg);
-		glDetachShader(shaderData->hShader, shaderData->hFragProg);
-		glDeleteShader(shaderData->hVertProg);
-		glDeleteShader(shaderData->hFragProg);
 	}
 	shaderData->hVertProg = 0;
 	shaderData->hFragProg = 0;
@@ -1041,16 +1138,24 @@ void FShaderCollection::CompileShaders(EPassType passType)
 		}
 	}
 
-#if 0
-	for(unsigned i = 0; i < usershaders.Size(); i++)
+	// Mods' material shaders (GLDEFS): GLES 3.0 mode only (gl_customshader is off otherwise, see
+	// gles_system.cpp). The indices from FIRST_USER_SHADER on are theirs, as with GL.
+	if (gles.essl300 && gl_customshader)
 	{
-		FString name = ExtractFileBase(usershaders[i].shader);
-		// USER_SHADER: main.vp/main.fp keep every vertex output (custom code may read any of them)
-		FString defines = FString("#define USER_SHADER\n") + defaultshaders[usershaders[i].shaderType].Defines + usershaders[i].defines;
-		FShader *shc = Compile(name, usershaders[i].shader, defaultshaders[usershaders[i].shaderType].lightfunc, defines, true, passType);
-		mMaterialShaders.Push(shc);
+		for(unsigned i = 0; i < usershaders.Size(); i++)
+		{
+			const int shaderType = usershaders[i].shaderType;
+			FString name = ExtractFileBase(usershaders[i].shader.GetChars());
+			// USER_SHADER: main.vp/main.fp keep every vertex output (custom code may read any of them)
+			// and main.fp has the interface of the GL renderer's main.fp that mods' shaders use.
+			FString defines = FString("#define USER_SHADER\n") + defaultshaders[shaderType].Defines + usershaders[i].defines;
+			FShader *shc = Compile(name.GetChars(), usershaders[i].shader.GetChars(), defaultshaders[shaderType].lightfunc, defines.GetChars(), true, passType);
+			shc->mUserShader = true;
+			shc->mFallbackFragProg2 = defaultshaders[shaderType].gettexelfunc;
+			shc->mFallbackDefines = defaultshaders[shaderType].Defines;
+			mMaterialShaders.Push(shc);
+		}
 	}
-#endif
 
 	for(int i=0;i<MAX_EFFECTS;i++)
 	{
