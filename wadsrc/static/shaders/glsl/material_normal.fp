@@ -108,21 +108,24 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 
 	vec3 frag;
 
-#if 0 // disable this on mobile for now to avoid performance drop, fix later..
-	if ( uLightBlendMode == 1 )
+	// The level's light blend mode (MAPINFO lightblendmode) is compiled in (a shader variant, see
+	// FShader::GetLightBlendVariant) instead of a branch on uLightBlendMode: the default costs nothing.
+#ifdef LIGHT_BLEND_MODE
+#if LIGHT_BLEND_MODE == 1
 	{	// COLOR_CORRECT_CLAMPING
 		vec3 lightcolor = color + desaturate(dynlight).rgb;
 		frag = material.Base.rgb * ((lightcolor / max(max(max(lightcolor.r, lightcolor.g), lightcolor.b), 1.4) * 1.4));
 	}
-	else if ( uLightBlendMode == 2 )
+#else
 	{	// UNCLAMPED
 		frag = material.Base.rgb * (color + desaturate(dynlight).rgb);
 	}
-	else
 #endif
+#else
 	{
 		frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb, 0.0, 1.4);
 	}
+#endif
 
 	if (uLightIndex >= 0)
 	{

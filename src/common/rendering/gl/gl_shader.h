@@ -291,6 +291,9 @@ private:
 	bool mClipVariantFailed = false;
 	bool mIsClipVariant = false;
 	FShader *mParent = nullptr;		// the shader a clip variant was built from
+	FShader *mLightBlendVariant[2] = {};	// LIGHT_BLEND_MODE 1, 2
+	bool mLightBlendFailed[2] = {};
+	int mLightBlendMode = 0;			// of this shader: a light blend variant has it compiled in
 
 	FString VariantId(const char *kind) const;
 	void RecordVariantUse(const char *kind) const;
@@ -329,6 +332,11 @@ public:
 	// used only while a portal/mirror plane or a translucency split is active. Built on first
 	// use; the shader itself if it cannot be built (drawn unclipped then).
 	FShader *GetClipVariant();
+	// The level's light blend mode (MAPINFO lightblendmode) compiled in: 1 color-correct clamping,
+	// 2 unclamped. Only for the normal and specular material light models (they apply it); built on
+	// first use; the shader itself for mode 0 or if it cannot be built. Its clip and instanced
+	// variants are built from it.
+	FShader *GetLightBlendVariant(int mode);
 
 	bool Bind();
 	unsigned int GetHandle() const { return hShader; }
@@ -347,9 +355,10 @@ public:
 
 	FShader *BindEffect(int effect, EPassType passType);
 	FShader *Get(unsigned int eff, bool alphateston, EPassType passType);
-	FShader *GetInstanced(unsigned int eff, bool alphateston, EPassType passType, int variant, bool clip)
+	FShader *GetInstanced(unsigned int eff, bool alphateston, EPassType passType, int variant, bool clip, int lightBlendMode)
 	{
 		FShader *base = Get(eff, alphateston, passType);
+		if (base && lightBlendMode) base = base->GetLightBlendVariant(lightBlendMode);
 		if (base && clip) base = base->GetClipVariant();
 		return base ? base->GetInstancedVariant(variant) : nullptr;
 	}

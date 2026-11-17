@@ -74,6 +74,7 @@ int HWViewpointBuffer::Bind(FRenderState &di, unsigned int index)
 			   & ~(screen->uniformblockalignment - 1);
 		mBuffer->BindRange(&di, start, size);
 		di.EnableClipDistance(0, mClipPlaneInfo[index]);
+		di.SetLightBlendMode(mLightBlendInfo[index]);
 	}
 	return index;
 }
@@ -101,6 +102,7 @@ void HWViewpointBuffer::Set2D(FRenderState &di, int width, int height, int pll)
 	mBuffer->Unmap();
 
 	mClipPlaneInfo.Push(0);
+	mLightBlendInfo.Push(0);
 
 	Bind(di, mUploadIndex++);
 }
@@ -114,6 +116,7 @@ int HWViewpointBuffer::SetViewpoint(FRenderState &di, HWViewpointUniforms *vp)
 	mBuffer->Unmap();
 
 	mClipPlaneInfo.Push(vp->mClipHeightDirection != 0.f || vp->mClipLine.X > -1000000.0f);	// as main.vp tests it
+	mLightBlendInfo.Push((uint8_t)clamp(vp->mLightBlendMode, 0, 2));
 	return Bind(di, mUploadIndex++);
 }
 
@@ -127,6 +130,7 @@ void HWViewpointBuffer::Clear()
 #endif
 
 	mClipPlaneInfo.Clear();
+	mLightBlendInfo.Clear();
 
 	if (needNewPipeline)
 	{

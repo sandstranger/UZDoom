@@ -80,7 +80,10 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 		}
 	}
 
-	if ( uLightBlendMode == 1 )
+	// The level's light blend mode (MAPINFO lightblendmode) is compiled in (a shader variant, see
+	// FShader::GetLightBlendVariant) instead of a branch on uLightBlendMode: the default costs nothing.
+#ifdef LIGHT_BLEND_MODE
+#if LIGHT_BLEND_MODE == 1
 	{	// COLOR_CORRECT_CLAMPING
 		dynlight.rgb = color + desaturate(dynlight).rgb;
 		specular.rgb = desaturate(specular).rgb;
@@ -88,16 +91,18 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 		dynlight.rgb = ((dynlight.rgb / max(max(max(dynlight.r, dynlight.g), dynlight.b), 1.4) * 1.4));
 		specular.rgb = ((specular.rgb / max(max(max(specular.r, specular.g), specular.b), 1.4) * 1.4));
 	}
-	else if ( uLightBlendMode == 2 )
+#else
 	{	// UNCLAMPED
 		dynlight.rgb = color + desaturate(dynlight).rgb;
 		specular.rgb = desaturate(specular).rgb;
 	}
-	else
+#endif
+#else
 	{
 		dynlight.rgb = clamp(color + desaturate(dynlight).rgb, 0.0, 1.4);
 		specular.rgb = clamp(desaturate(specular).rgb, 0.0, 1.4);
 	}
+#endif
 
 	vec3 frag = material.Base.rgb * dynlight.rgb + material.Specular * specular.rgb;
 

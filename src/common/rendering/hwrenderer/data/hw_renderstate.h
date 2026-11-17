@@ -373,6 +373,7 @@ protected:
 	int mTextureClamp;
 	int mTextureModeFlags;
 	int mSoftLight;
+	int mLightBlendMode = 0;	// of the bound viewpoint (MAPINFO lightblendmode), set by HWViewpointBuffer
 	float mLightParms[4];
 
 	float mAlphaThreshold;
@@ -639,6 +640,12 @@ public:
 	{
 		mStreamData.uGlowTopColor = { t[0], t[1], t[2], t[3] };
 		mStreamData.uGlowBottomColor = { b[0], b[1], b[2], b[3] };
+	}
+
+	// The light blend mode of the viewpoint bound (the GL renderer picks the shader variant for it)
+	void SetLightBlendMode(int mode)
+	{
+		mLightBlendMode = mode;
 	}
 
 	void SetSoftLightLevel(int llevel, int blendfactor = 0)

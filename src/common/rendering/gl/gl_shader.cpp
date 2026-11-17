@@ -1114,6 +1114,7 @@ FShader::~FShader()
 	if (hShader != 0) sLivePrograms--;
 	for (auto variant : mInstanced) delete variant;
 	delete mClipVariant;
+	for (auto variant : mLightBlendVariant) delete variant;
 	glDeleteProgram(hShader);
 	if (hVertProg != 0)
 		glDeleteShader(hVertProg);
@@ -1200,6 +1201,34 @@ FShader *FShader::GetClipVariant()
 	return shader ? shader : this;
 }
 
+FShader *FShader::GetLightBlendVariant(int mode)
+{
+	if (mode < 1 || mode > 2 || mLightBlendMode != 0 || mIsClipVariant || !mParamsStored) return this;
+	// Only the light models that apply it (material_normal.fp, material_specular.fp): for the others
+	// the variant would be the same program.
+	if (!mHasLight || (mLightLump.IndexOf("material_normal") < 0 && mLightLump.IndexOf("material_specular") < 0)) return this;
+
+	const int slot = mode - 1;
+	if (mLightBlendVariant[slot]) return mLightBlendVariant[slot];
+	if (mLightBlendFailed[slot]) return this;
+
+	FString defines;
+	defines.Format("#define LIGHT_BLEND_MODE %d\n", mode);
+	FShader *shader = BuildVariant(defines, "Light blend mode");
+	if (shader == nullptr && sCacheOnly)
+		return this;		// not in the cache: built on first use
+	if (shader)
+	{
+		// Its own clip and instanced variants are recorded under it (its defines tell it apart)
+		shader->mLightBlendMode = mode;
+		if (!sCacheOnly)
+			RecordVariantUse(mode == 1 ? "b1" : "b2");
+	}
+	mLightBlendVariant[slot] = shader;
+	mLightBlendFailed[slot] = shader == nullptr;
+	return shader ? shader : this;	// drawn with the default light blend mode if it cannot be built
+}
+
 int FShader::PrewarmVariants(const TArray<FString> &recorded)
 {
 	if (!mParamsStored || mIsClipVariant || recorded.Size() == 0)
@@ -1226,6 +1255,20 @@ int FShader::PrewarmVariants(const TArray<FString> &recorded)
 		}
 	}
 	sCacheOnly = false;
+
+	// The light blend variants, then theirs (recorded under the light blend variant)
+	for (int mode = 1; mode <= 2; mode++)
+	{
+		if (!used(mode == 1 ? "b1" : "b2")) continue;
+		sCacheOnly = true;
+		FShader *blend = GetLightBlendVariant(mode);
+		sCacheOnly = false;
+		if (blend != this)
+		{
+			loaded++;
+			loaded += blend->PrewarmVariants(recorded);
+		}
+	}
 	return loaded;
 }
 

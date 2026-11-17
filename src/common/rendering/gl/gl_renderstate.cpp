@@ -115,6 +115,7 @@ bool FGLRenderState::ApplyShader()
 	else
 	{
 		activeShader = GLRenderer->mShaderManager->Get(mTextureEnabled ? mEffectState : SHADER_NoTexture, mAlphaThreshold >= 0.f, mPassType);
+		if (mLightBlendMode) activeShader = activeShader->GetLightBlendVariant(mLightBlendMode);	// a level's lightblendmode
 		if (ClipEmulationActive()) activeShader = activeShader->GetClipVariant();
 		activeShader->Bind();
 	}
@@ -892,7 +893,7 @@ bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 	// The material decides the shader (ApplyMaterial sets mEffectState), so apply it first.
 	ApplyState();
 	if (mSpecialEffect > EFF_NONE) return false;
-	FShader *shader = GLRenderer->mShaderManager->GetInstanced(mTextureEnabled ? mEffectState : SHADER_NoTexture, mAlphaThreshold >= 0.f, mPassType, variant, ClipEmulationActive());
+	FShader *shader = GLRenderer->mShaderManager->GetInstanced(mTextureEnabled ? mEffectState : SHADER_NoTexture, mAlphaThreshold >= 0.f, mPassType, variant, ClipEmulationActive(), mLightBlendMode);
 	if (!shader) return false;
 
 #if defined(__arm__) || defined(__i386__)

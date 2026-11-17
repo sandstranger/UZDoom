@@ -35,6 +35,7 @@ class HWViewpointBuffer
 	unsigned int mLastMappedIndex;
 	unsigned int mByteSize;
 	TArray<bool> mClipPlaneInfo;
+	TArray<uint8_t> mLightBlendInfo;	// lightblendmode of each viewpoint (for FRenderState::SetLightBlendMode)
 
 	unsigned int mBlockSize;
 
