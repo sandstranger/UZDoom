@@ -92,8 +92,21 @@ void HWWall::RenderWall(FRenderState &state, int textured)
 	}
 	assert(vertcount > 0);
 	state.SetLightIndex(dynlightindex);
-	// Consecutive walls with identical state are merged into one indexed draw.
-	state.DrawMerged(DT_TriangleFan, vertindex, vertcount, false, BC_Wall);
+	if (vertcount == 4 && lindex < 0)
+	{
+		// A plain quad (no edge splits, no lightmap): instanced with the walls next to it that differ only
+		// in light, colors and orientation, the corners as CreateVertices puts them in the vertex buffer.
+		const float segxy[4] = { glseg.x1, glseg.y1, glseg.x2, glseg.y2 };
+		const float z[4] = { zbottom[0], ztop[0], ztop[1], zbottom[1] };
+		const float u[4] = { tcs[LOLFT].u, tcs[UPLFT].u, tcs[UPRGT].u, tcs[LORGT].u };
+		const float v[4] = { tcs[LOLFT].v, tcs[UPLFT].v, tcs[UPRGT].v, tcs[LORGT].v };
+		state.DrawWall(vertindex, segxy, z, u, v);
+	}
+	else
+	{
+		// Consecutive walls with identical state are merged into one indexed draw.
+		state.DrawMerged(DT_TriangleFan, vertindex, vertcount, false, BC_Wall);
+	}
 	vertexcount += vertcount;
 	if (ditherT)
 	{

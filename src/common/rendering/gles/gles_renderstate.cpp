@@ -1006,7 +1006,7 @@ bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 
 	// The instanced flavour of the shader the regular draw would use. It is compiled on first
 	// use; if the driver rejects it, instancing is switched off and the batch is replayed.
-	mInstancedVariant = batch.kind == BK_Quad ? 1 : 2;
+	mInstancedVariant = batch.kind == BK_Quad ? 1 : (batch.kind == BK_Model ? 2 : 3);
 	try
 	{
 		Apply();
@@ -1038,7 +1038,7 @@ bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 	glVertexAttribDivisor(VATTR_INSTANCE_COLORS, 1);
 
 	drawcalls.Clock();
-	if (batch.kind == BK_Quad)
+	if (batch.kind == BK_Quad || batch.kind == BK_Wall)
 	{
 		// The reserved quad of the flat vertex buffer supplies the corner index in aPosition.x.
 		glDrawArraysInstanced(GL_TRIANGLE_STRIP, FFlatVertexBuffer::QUAD_INDEX, 4, count);

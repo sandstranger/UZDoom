@@ -891,7 +891,7 @@ size_t FGLRenderState::UploadStream(StreamBuffer &buf, unsigned int target, size
 
 bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 {
-	const int variant = batch.kind == BK_Quad ? 1 : 2;
+	const int variant = batch.kind == BK_Quad ? 1 : (batch.kind == BK_Model ? 2 : 3);
 	unsigned count = batch.instances.Size();
 
 	// The material decides the shader (ApplyMaterial sets mEffectState), so apply it first.
@@ -937,7 +937,7 @@ bool FGLRenderState::DrawInstancedBatch(FDrawBatch &batch)
 	static const int dt2gl[] = { GL_POINTS, GL_LINES, GL_TRIANGLES, GL_TRIANGLE_FAN, GL_TRIANGLE_STRIP };
 	GLBuffer::FlushPendingWrites();
 	drawcalls.Clock();
-	if (batch.kind == BK_Quad)
+	if (batch.kind == BK_Quad || batch.kind == BK_Wall)
 	{
 		// The reserved quad of the flat vertex buffer supplies the corner index in aPosition.x.
 		glDrawArraysInstanced(GL_TRIANGLE_STRIP, FFlatVertexBuffer::QUAD_INDEX, 4, count);

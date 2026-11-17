@@ -36,6 +36,8 @@ CVAR(Bool, r_instancing_sprites, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, r_instancing_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, r_instancing_models, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, r_batch_walls, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+// Plain walls (4 vertices, no lightmap) as instances: also batched across light level, colors and orientation
+CVAR(Bool, r_instancing_walls, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, r_batch_flats, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 // A batch of one saves no draw call but costs an upload and a program switch.
 CVAR(Int, r_instancing_minbatch, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -249,7 +251,18 @@ void FRenderState::MakeKey(FRenderStateSnapshot &key, EBatchKind kind, int dt, i
 		sd.uDynLightColor = { 0, 0, 0, 0 };
 		key.fogColor = 0;
 		memset(key.lightParms, 0, sizeof(key.lightParms));
+		// a wall's normal comes from its instance (the seg)
+		if (kind == BK_Wall) sd.uVertexNormal = { 0, 0, 0, 0 };
 	}
+}
+
+// HWSeg::Normal() of the seg of a wall instance (DrawWall)
+static FVector3 WallInstanceNormal(const FInstanceGPU &inst)
+{
+	float x = inst.xform[0][3] - inst.xform[0][1];
+	float y = inst.xform[0][0] - inst.xform[0][2];
+	float ilength = 1.f / sqrtf(x*x + y*y);
+	return FVector3(x * ilength, 0, y * ilength);
 }
 
 void FRenderState::FillInstanceValues(FInstanceGPU &inst) const
@@ -393,6 +406,7 @@ void FRenderState::FlushBatch(FDrawBatch &batch, EBatchBreak reason)
 			{
 				ApplyInstanceValues(batch.instances[i]);
 				if (batch.kind == BK_Model) memcpy(mModelMatrix.mMatrix, batch.instances[i].xform, sizeof(float) * 16);
+				if (batch.kind == BK_Wall) SetNormal(WallInstanceNormal(batch.instances[i]));
 			}
 			batchStats.replayedDraws++;
 			if (item.indexed) DrawIndexed(item.drawType, item.index, item.count);
@@ -443,6 +457,39 @@ void FRenderState::DrawQuad(int vertexindex, const FVector3 *corners, float ul, 
 	}
 	FillInstanceValues(inst);
 	batch->items.Push({ DT_TriangleStrip, vertexindex, 4, 0, (int8_t)category });
+	if (t0 != 0) batchStats.buildMs += BatchTimeMs() - t0;
+
+	if (batch->items.Size() >= BatchMaxInstances()) FlushBatch(*batch, BB_Capacity);
+}
+
+void FRenderState::DrawWall(int vertexindex, const float seg[4], const float z[4], const float u[4], const float v[4])
+{
+	// The instanced wall shader takes its transform from the instance like the sprite quads; whatever
+	// rules those out, or turned off wall instancing, leaves the wall to merging with its neighbours.
+	if (mBatchScope == BS_None || mFlushingBatch || mModelMatrixEnabled || mSpecialEffect != EFF_NONE ||
+		!BatchCategoryEnabled(BC_Wall) || !r_instancing_walls || !BatchingSupported(BK_Wall))
+	{
+		DrawMerged(DT_TriangleFan, vertexindex, 4, false, BC_Wall);
+		return;
+	}
+
+	batchStats.submissions[BC_Wall]++;
+	double t0 = BatchStatsTiming() ? BatchTimeMs() : 0;
+	FRenderStateSnapshot key;
+	MakeKey(key, BK_Wall, DT_TriangleStrip, 0, 4, false);
+	FDrawBatch *batch = FindBatch(key, BK_Wall);
+
+	FInstanceGPU &inst = batch->instances[batch->instances.Reserve(1)];
+	for (int i = 0; i < 4; i++)
+	{
+		inst.xform[0][i] = seg[i];
+		inst.xform[1][i] = z[i];
+		inst.xform[2][i] = u[i];
+		inst.xform[3][i] = v[i];
+	}
+	FillInstanceValues(inst);
+	// replayed (batch below the threshold) as the triangle fan it is in the vertex buffer
+	batch->items.Push({ DT_TriangleFan, vertexindex, 4, 0, (int8_t)BC_Wall });
 	if (t0 != 0) batchStats.buildMs += BatchTimeMs() - t0;
 
 	if (batch->items.Size() >= BatchMaxInstances()) FlushBatch(*batch, BB_Capacity);
@@ -575,7 +622,7 @@ CCMD(r_batch_stats_print)
 {
 	const auto &s = batchStatsLast;
 	static const char *cats[BC_Count] = { "sprites", "particles", "models", "walls", "flats" };
-	static const char *kinds[4] = { "-", "quad", "model", "merge" };
+	static const char *kinds[5] = { "-", "quad", "model", "merge", "wall" };
 	static const char *reasons[BB_Count] = { "state change", "other draw", "immediate state", "capacity", "scope end", "evicted" };
 
 	Printf("Draw batching (%s), last frame:\n", r_instancing ? "on" : "off");
@@ -584,10 +631,10 @@ CCMD(r_batch_stats_print)
 		total, s.draws, s.replayedDraws, s.instancedDraws, s.mergedDraws);
 	for (int c = 0; c < BC_Count; c++)
 		Printf("  %-9s: %u submitted, %u drawn in batches\n", cats[c], s.submissions[c], s.batched[c]);
-	unsigned nb = s.batches[BK_Quad] + s.batches[BK_Model] + s.batches[BK_Merge];
+	unsigned nb = s.batches[BK_Quad] + s.batches[BK_Model] + s.batches[BK_Merge] + s.batches[BK_Wall];
 	unsigned drawnBatches = s.instancedDraws + s.mergedDraws;
-	Printf("  batches flushed: %u (%s %u, %s %u, %s %u); drawn as one call: %u, average size %.2f, max %u\n",
-		nb, kinds[1], s.batches[BK_Quad], kinds[2], s.batches[BK_Model], kinds[3], s.batches[BK_Merge],
+	Printf("  batches flushed: %u (%s %u, %s %u, %s %u, %s %u); drawn as one call: %u, average size %.2f, max %u\n",
+		nb, kinds[1], s.batches[BK_Quad], kinds[2], s.batches[BK_Model], kinds[3], s.batches[BK_Merge], kinds[4], s.batches[BK_Wall],
 		drawnBatches, drawnBatches ? double(s.batchedItems) / drawnBatches : 0.0, s.maxBatch);
 	for (int r = 0; r < BB_Count; r++)
 		if (s.breaks[r]) Printf("  batch ended by %s: %u\n", reasons[r], s.breaks[r]);

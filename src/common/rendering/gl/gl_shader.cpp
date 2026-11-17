@@ -1156,12 +1156,13 @@ FShader *FShader::BuildVariant(const FString &extraDefines, const char *what)
 
 FShader *FShader::GetInstancedVariant(int variant)
 {
-	if (variant < 1 || variant > 2 || !mParamsStored) return nullptr;
+	if (variant < 1 || variant > 3 || !mParamsStored) return nullptr;
 	int slot = variant - 1;
 	if (mInstanced[slot] || mInstancedFailed[slot]) return mInstanced[slot];
 
 	FString defines;
-	defines << "#define INSTANCING\n" << (variant == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
+	static const char *const kindDefines[3] = { "#define INSTANCED_QUADS\n", "#define INSTANCED_MODELS\n", "#define INSTANCED_WALLS\n" };
+	defines << "#define INSTANCING\n" << kindDefines[slot];
 	FShader *shader = BuildVariant(defines, "Instanced");	// nullptr: drawn without instancing
 	if (shader == nullptr && sCacheOnly)
 		return nullptr;		// not in the cache: built on first use
@@ -1170,7 +1171,10 @@ FShader *FShader::GetInstancedVariant(int variant)
 		shader->mIsClipVariant = mIsClipVariant;
 		shader->mParent = mParent;
 		if (!sCacheOnly)
-			RecordVariantUse(mIsClipVariant ? (variant == 1 ? "cq" : "cm") : (variant == 1 ? "q" : "m"));
+		{
+			static const char *const kinds[2][3] = { { "q", "m", "w" }, { "cq", "cm", "cw" } };
+			RecordVariantUse(kinds[mIsClipVariant ? 1 : 0][slot]);
+		}
 	}
 	mInstanced[slot] = shader;
 	mInstancedFailed[slot] = shader == nullptr;
@@ -1244,7 +1248,8 @@ int FShader::PrewarmVariants(const TArray<FString> &recorded)
 	sCacheOnly = true;
 	if (used("q") && GetInstancedVariant(1)) loaded++;
 	if (used("m") && GetInstancedVariant(2)) loaded++;
-	if (used("c") || used("cq") || used("cm"))
+	if (used("w") && GetInstancedVariant(3)) loaded++;
+	if (used("c") || used("cq") || used("cm") || used("cw"))
 	{
 		FShader *clip = GetClipVariant();
 		if (clip != this)
@@ -1252,6 +1257,7 @@ int FShader::PrewarmVariants(const TArray<FString> &recorded)
 			loaded++;
 			if (used("cq") && clip->GetInstancedVariant(1)) loaded++;
 			if (used("cm") && clip->GetInstancedVariant(2)) loaded++;
+			if (used("cw") && clip->GetInstancedVariant(3)) loaded++;
 		}
 	}
 	sCacheOnly = false;

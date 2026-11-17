@@ -285,8 +285,8 @@ private:
 	FString mVertLump, mFragLump, mProcLump, mLightLump, mDefines;
 	bool mHasProc = false, mHasLight = false, mIsGBuffer = false, mParamsStored = false;
 	AllShaderIndex mType = MATSHADER_Default;
-	FShader *mInstanced[2] = {};		// INSTANCED_QUADS, INSTANCED_MODELS
-	bool mInstancedFailed[2] = {};
+	FShader *mInstanced[3] = {};		// INSTANCED_QUADS, INSTANCED_MODELS, INSTANCED_WALLS
+	bool mInstancedFailed[3] = {};
 	FShader *mClipVariant = nullptr;	// CLIP_EMULATION
 	bool mClipVariantFailed = false;
 	bool mIsClipVariant = false;
@@ -325,8 +325,8 @@ public:
 	// Loads the variants of this shader that earlier runs used (recorded) from the binary cache.
 	int PrewarmVariants(const TArray<FString> &recorded);
 
-	// variant 1: instanced sprite quads, 2: instanced models. Built on first use; nullptr if it
-	// cannot be built (the caller then draws without instancing).
+	// variant 1: instanced sprite quads, 2: instanced models, 3: instanced walls. Built on first use;
+	// nullptr if it cannot be built (the caller then draws without instancing).
 	FShader *GetInstancedVariant(int variant);
 	// OpenGL ES has no gl_ClipDistance: the variant that emulates the clip planes with a discard,
 	// used only while a portal/mirror plane or a translucency split is active. Built on first

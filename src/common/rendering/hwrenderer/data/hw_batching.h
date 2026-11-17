@@ -31,7 +31,7 @@ struct FBatchStats
 
 	unsigned submissions[BC_Count];	// batchable submissions by category
 	unsigned batched[BC_Count];		// ...of which drawn through an instanced or merged draw
-	unsigned batches[4];			// flushed batches by EBatchKind
+	unsigned batches[5];			// flushed batches by EBatchKind
 	unsigned maxBatch;
 	uint64_t batchedItems;			// sum of the sizes of instanced/merged batches
 	unsigned breaks[BB_Count];

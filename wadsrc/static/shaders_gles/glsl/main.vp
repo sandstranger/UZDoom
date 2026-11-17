@@ -94,6 +94,34 @@ vec4 InstanceCorner()
 }
 #define VERTEX_POSITION vec4(InstanceCorner().xyz, 1.0)
 #define VERTEX_TEXCOORD vec2((InstanceCornerIndex() & 1) == 0 ? aInstXform0.w : aInstXform1.w, (InstanceCornerIndex() & 2) == 0 ? aInstXform2.w : aInstXform3.w)
+#elif defined(INSTANCED_WALLS)
+// Walls (FRenderState::DrawWall): aInstXform0 = the seg (x1, y1, x2, y2), aInstXform1/2/3 = height, u and v
+// of the corners in the order of the wall's triangle fan (lower left, upper left, upper right, lower right).
+// The shared strip's vertices 0..3 are its corners 1, 2, 0, 3: exactly the fan's two triangles, same winding.
+int WallCorner()
+{
+	int c = int(aPosition.x + 0.5);
+	return c == 3 ? 3 : (c + 1) % 3;
+}
+float WallCornerValue(vec4 values)
+{
+	int c = WallCorner();
+	return c == 0 ? values.x : (c == 1 ? values.y : (c == 2 ? values.z : values.w));
+}
+vec4 WallPosition()
+{
+	vec2 xy = WallCorner() < 2 ? aInstXform0.xy : aInstXform0.zw;
+	return vec4(xy.x, WallCornerValue(aInstXform1), xy.y, 1.0);
+}
+vec3 WallNormal()
+{
+	// HWSeg::Normal()
+	vec2 n = vec2(aInstXform0.w - aInstXform0.y, aInstXform0.x - aInstXform0.z);
+	n *= inversesqrt(dot(n, n));
+	return vec3(n.x, 0.0, n.y);
+}
+#define VERTEX_POSITION WallPosition()
+#define VERTEX_TEXCOORD vec2(WallCornerValue(aInstXform2), WallCornerValue(aInstXform3))
 #else
 #define VERTEX_POSITION aPosition
 #define VERTEX_TEXCOORD aTexCoord
@@ -206,7 +234,9 @@ void main()
 
 vec3 GetAttrNormal()
 {
-	#ifdef HAS_UNIFORM_VERTEX_DATA
+	#if defined(INSTANCED_WALLS)
+		return WallNormal();
+	#elif defined(HAS_UNIFORM_VERTEX_DATA)
 		if ((useVertexData & 2) == 0)
 			return uVertexNormal.xyz;
 		else

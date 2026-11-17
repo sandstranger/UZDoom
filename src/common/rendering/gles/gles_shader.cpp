@@ -877,7 +877,7 @@ static FString VariantConfig(const ShaderFlavourData &flavour)
 	variantConfig.AppendFormat("#define DEF_LIGHT_BLEND_MODE %d\n", flavour.lightBlendMode);
 	variantConfig.AppendFormat("#define DEF_VANILLA_LIGHTING %d\n", flavour.vanillaLighting);
 	if (flavour.instancing && gles.essl300)
-		variantConfig << "#define INSTANCING\n" << (flavour.instancing == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
+		variantConfig << "#define INSTANCING\n" << (flavour.instancing == 1 ? "#define INSTANCED_QUADS\n" : (flavour.instancing == 2 ? "#define INSTANCED_MODELS\n" : "#define INSTANCED_WALLS\n"));
 	return variantConfig;
 }
 

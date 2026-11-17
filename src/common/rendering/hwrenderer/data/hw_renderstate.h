@@ -256,6 +256,7 @@ enum EBatchKind
 	BK_Quad,		// instanced: one shared 4-vertex strip, corners + uv per instance
 	BK_Model,		// instanced: one shared mesh range, model matrix per instance
 	BK_Merge,		// several fans/strips/indexed triangle ranges -> one indexed triangle list
+	BK_Wall,		// instanced: one shared 4-vertex strip, a wall quad per instance (DrawWall)
 };
 
 enum EBatchScope
@@ -280,7 +281,8 @@ enum EBatchBreak
 // attributes (locations VATTR_INSTANCE0..) of both GL backends; keep them in sync.
 struct FInstanceGPU
 {
-	float xform[4][4];		// quads: corner i = xyz, w = ul/ur/vt/vb; models: model matrix columns
+	float xform[4][4];		// quads: corner i = xyz, w = ul/ur/vt/vb; models: model matrix columns;
+							// walls: seg x1/y1/x2/y2, then height, u and v of each corner (DrawWall)
 	float color[4];			// uVertexColor (fed to aColor)
 	float lightAttr[4];		// uLightAttr
 	float dynLight[4];		// uDynLightColor
@@ -432,6 +434,11 @@ public:
 
 	// Batchable submissions. Without an active scope or backend support they draw immediately.
 	void DrawQuad(int vertexindex, const FVector3 *corners, float ul, float ur, float vt, float vb, EBatchCategory category);
+	// A wall drawn as a 4-vertex triangle fan at vertexindex (lower left, upper left, upper right, lower
+	// right): seg = x1, y1, x2, y2 of its left and right edge, z/u/v = height and texture coordinates of
+	// the corners in fan order. Instanced with the walls next to it that differ only in light, colors and
+	// orientation (the normal is HWSeg::Normal() of the seg); merged where instancing is not available.
+	void DrawWall(int vertexindex, const float seg[4], const float z[4], const float u[4], const float v[4]);
 	void DrawModel(int dt, int index, int count, bool indexed);
 	void DrawMerged(int dt, int index, int count, bool indexed, EBatchCategory category);
 

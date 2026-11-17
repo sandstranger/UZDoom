@@ -273,7 +273,7 @@ public:
 
 	bool hasSpotLight;
 	bool paletteInterpolate;
-	int instancing = 0;	// 0 regular, 1 instanced sprite quads, 2 instanced models (GLES3 only)
+	int instancing = 0;	// 0 regular, 1 instanced sprite quads, 2 instanced models, 3 instanced walls (GLES3 only)
 
 	// As compile-time flags, so the defaults cost nothing: the GL renderer has them as uniforms.
 	int lightBlendMode = 0;			// MAPINFO lightblendmode: 0 clamped, 1 color-correct clamping, 2 unclamped

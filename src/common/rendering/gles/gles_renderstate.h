@@ -100,7 +100,7 @@ class FGLRenderState final : public FRenderState
 	size_t UploadPersistentStream(StreamBuffer &buf, unsigned int target, size_t regionSize, const void *data, size_t bytes);
 	StreamBuffer mInstanceStream, mIndexStream;
 	int mBatchCaps = -1;			// bit 0: merged draws, bit 1: instancing; -1 = not probed yet
-	int mInstancedVariant = 0;		// 1 quads, 2 models: selects the shader flavour in ApplyShader
+	int mInstancedVariant = 0;		// 1 quads, 2 models, 3 walls: selects the shader flavour in ApplyShader
 	TArray<uint32_t> mMergedIndices;
 	size_t UploadStream(StreamBuffer &buf, unsigned int target, size_t maxCapacity, size_t regionSize, const void *data, size_t bytes, unsigned int &bufferId);
 	void FlushForImmediate()
