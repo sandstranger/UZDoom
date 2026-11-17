@@ -557,6 +557,12 @@ static void ReportMemory()
 void OpenGLFrameBuffer::Swap()
 {
 	BatchStatsEndFrame();
+	// pipeline depth/stencil buffers no longer used (HUD models gone) go back to the render target pool
+	if (GLRenderer)
+	{
+		if (GLRenderer->mScreenBuffers) GLRenderer->mScreenBuffers->ReleaseIdlePipelineDepth();
+		if (GLRenderer->mSaveBuffers) GLRenderer->mSaveBuffers->ReleaseIdlePipelineDepth();
+	}
 	GLRenderTargetPool::FrameEnd();
 	ProgramBinaryCache::ProcessPendingTrim();
 #ifdef ANDROID

@@ -181,8 +181,12 @@ public:
 	void InvalidateSceneDepth();
 	// The pipeline frame buffers get their depth/stencil buffer when depth is first cleared into them
 	// (HUD models after the effects) or the stencil test is turned on while one is bound (2D with
-	// stencil): the post-process passes and plain 2D never use it.
+	// stencil): the post-process passes and plain 2D never use it. Each call with a pipeline frame
+	// buffer bound is a use.
 	void EnsurePipelineDepth();
+	// Once a frame: the pipeline depth/stencil buffer not used for gl_rtpool_maxage frames (the HUD
+	// models are gone) is detached and goes back to the render target pool.
+	void ReleaseIdlePipelineDepth();
 
 	int GetWidth() const { return mWidth; }
 	int GetHeight() const { return mHeight; }
@@ -253,6 +257,7 @@ private:
 	PPGLTexture mPipelineTex1;
 	PPGLFrameBuffer mPipelineFB[2];
 	PPGLRenderBuffer mPipelineDepthStencilBuf;	// for HUD models after the effects: made when first cleared (EnsurePipelineDepth)
+	uint64_t mPipelineDepthLastUse = 0;			// GLESRenderTargetPool::Frame()
 	int mCurrentPipelineTexture = 0;
 	bool mSceneFBCurrent = true;
 

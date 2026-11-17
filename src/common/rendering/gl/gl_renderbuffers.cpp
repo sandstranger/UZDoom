@@ -139,7 +139,7 @@ void FGLRenderBuffers::ClearScene()
 
 void FGLRenderBuffers::ClearPipeline()
 {
-	DeleteRenderBuffer(mPipelineDepthStencilBuf);
+	ReleasePipelineDepth();
 	for (int i = 0; i < NumPipelineTextures; i++)
 	{
 		DeleteFrameBuffer(mPipelineFB[i]);
@@ -821,17 +821,23 @@ void FGLRenderBuffers::ResolveSceneData()
 
 void FGLRenderBuffers::EnsurePipelineDepth()
 {
-	if (mPipelineDepthStencilBuf || mWidth <= 0) return;
+	if (gl.esversion == 0 || mWidth <= 0) return;	// desktop GL: made with the pipeline
 	GLint fb = 0;
 	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
 	bool pipelineBound = false;
 	for (auto &pfb : mPipelineFB)
 		if (pfb && (GLint)pfb.handle == fb) pipelineBound = true;
-	if (!pipelineBound) return;
+	if (!pipelineBound) return;	// the scene frame buffer has its own
+
+	mPipelineDepthLastUse = GLRenderTargetPool::Frame();
+	if (mPipelineDepthStencilBuf) return;
 
 	GLint rb = 0;
 	glGetIntegerv(GL_RENDERBUFFER_BINDING, &rb);
-	mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, mWidth, mHeight);
+	mPipelineDepthStencilBuf.handle = GLRenderTargetPool::AcquireRenderbuffer(GL_DEPTH24_STENCIL8, mWidth, mHeight);
+	mPipelineDepthPooled = true;
+	mPipelineDepthWidth = mWidth;
+	mPipelineDepthHeight = mHeight;
 	for (auto &pfb : mPipelineFB)
 	{
 		if (!pfb) continue;
@@ -840,6 +846,48 @@ void FGLRenderBuffers::EnsurePipelineDepth()
 	}
 	glBindFramebuffer(GL_FRAMEBUFFER, fb);
 	glBindRenderbuffer(GL_RENDERBUFFER, rb);
+
+	// Defined contents from the start (the stencil test may be turned on before anything clears it, and a
+	// buffer from the pool holds what it had): the whole buffer, whatever the write masks and scissor are,
+	// which are left as they were.
+	GLboolean depthMask = GL_TRUE;
+	GLint stencilMask = 0xff;
+	const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+	glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+	glGetIntegerv(GL_STENCIL_WRITEMASK, &stencilMask);
+	glDepthMask(GL_TRUE);
+	glStencilMask(0xff);
+	if (scissor) glDisable(GL_SCISSOR_TEST);
+	glClearDepth(1);
+	glClearStencil(0);
+	glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+	if (scissor) glEnable(GL_SCISSOR_TEST);
+	glStencilMask((GLuint)stencilMask);
+	glDepthMask(depthMask);
+}
+
+// Detaches the pipeline depth/stencil buffer from the pipeline frame buffers and frees it: back to the
+// render target pool if it came from there (GLES), deleted otherwise (desktop GL).
+void FGLRenderBuffers::ReleasePipelineDepth()
+{
+	if (!mPipelineDepthStencilBuf) return;
+	if (!mPipelineDepthPooled)
+	{
+		DeleteRenderBuffer(mPipelineDepthStencilBuf);
+		return;
+	}
+	GLint fb = 0;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+	for (auto &pfb : mPipelineFB)
+	{
+		if (!pfb) continue;
+		glBindFramebuffer(GL_FRAMEBUFFER, pfb.handle);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, fb);
+	GLRenderTargetPool::ReleaseRenderbuffer(mPipelineDepthStencilBuf.handle, GL_DEPTH24_STENCIL8, mPipelineDepthWidth, mPipelineDepthHeight);
+	mPipelineDepthStencilBuf.handle = 0;
+	mPipelineDepthPooled = false;
 }
 
 void FGLRenderBuffers::InvalidatePipelineDepth()
@@ -1655,6 +1703,13 @@ void GLRenderTargetPool::FrameEnd()
 bool PPGLTextureBackend::Idle() const
 {
 	return GLRenderTargetPool::Frame() - LastUse > (uint64_t)std::max(1, (int)gl_rtpool_maxage);
+}
+
+void FGLRenderBuffers::ReleaseIdlePipelineDepth()
+{
+	if (!mPipelineDepthPooled || !mPipelineDepthStencilBuf) return;
+	if (GLRenderTargetPool::Frame() - mPipelineDepthLastUse <= (uint64_t)std::max(1, (int)gl_rtpool_maxage)) return;
+	ReleasePipelineDepth();
 }
 
 

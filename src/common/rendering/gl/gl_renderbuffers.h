@@ -185,9 +185,14 @@ public:
 	static const char *MultisamplePath();
 	// After the last use of the pipeline depth buffer in a frame.
 	void InvalidatePipelineDepth();
-	// GLES: attaches the pipeline depth/stencil buffer, created on the first depth/stencil clear
-	// into a pipeline frame buffer (HUD models); before that the pipeline has none.
+	// GLES: attaches the pipeline depth/stencil buffer (from the render target pool) when depth is
+	// cleared into a pipeline frame buffer (HUD models) or the stencil test is turned on while one is
+	// bound (2D with stencil); before that the pipeline has none. Clearing a stencil it does not have
+	// yet (Draw2D does every frame) needs none. Each call with a pipeline frame buffer bound is a use.
 	void EnsurePipelineDepth();
+	// GLES, once a frame: the pipeline depth/stencil buffer not used for gl_rtpool_maxage frames
+	// (the HUD models are gone) is detached and goes back to the render target pool.
+	void ReleaseIdlePipelineDepth();
 	// Before leaving the frame's last render pass: the bound scene/pipeline frame buffer's
 	// depth/stencil need not be written back.
 	void InvalidateBoundDepth();
@@ -227,6 +232,7 @@ private:
 	void CreateSceneES(int width, int height, int samples, bool needsSceneTextures);
 	void CreatePipeline(int width, int height);
 	void CreatePipelineTexture(int index);
+	void ReleasePipelineDepth();
 	void CreateEyeBuffers(int eye);
 	void CreateShadowMap();
 
@@ -259,6 +265,10 @@ private:
 	static const int NumPipelineTextures = 2;
 	int mCurrentPipelineTexture = 0;
 	PPGLRenderBuffer mPipelineDepthStencilBuf;
+	// GLES: the pipeline depth/stencil buffer comes from the render target pool
+	bool mPipelineDepthPooled = false;
+	int mPipelineDepthWidth = 0, mPipelineDepthHeight = 0;
+	uint64_t mPipelineDepthLastUse = 0;	// GLRenderTargetPool::Frame()
 
 	// Buffers for the scene
 	PPGLTexture mSceneMultisampleTex;

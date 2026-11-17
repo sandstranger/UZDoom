@@ -255,6 +255,9 @@ const char* OpenGLFrameBuffer::DeviceName() const
 void OpenGLFrameBuffer::Swap()
 {
 	BatchStatsEndFrame();
+	// a pipeline depth/stencil buffer no longer used (HUD models gone) goes back to the render target pool
+	if (GLRenderer && GLRenderer->mScreenBuffers) GLRenderer->mScreenBuffers->ReleaseIdlePipelineDepth();
+	if (GLRenderer && GLRenderer->mBuffers && GLRenderer->mBuffers != GLRenderer->mScreenBuffers) GLRenderer->mBuffers->ReleaseIdlePipelineDepth();
 	GLESRenderTargetPool::FrameEnd();
 	ProgramBinaryCache::ProcessPendingTrim();
 #ifdef ANDROID

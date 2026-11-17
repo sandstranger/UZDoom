@@ -614,13 +614,16 @@ static bool UseMSRTT()
 
 	void FGLRenderBuffers::EnsurePipelineDepth()
 	{
-		if (mPipelineDepthStencilBuf || mWidth <= 0) return;
+		if (mWidth <= 0) return;
 		GLint fb = 0;
 		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
 		bool pipelineBound = false;
 		for (auto &pfb : mPipelineFB)
 			if (pfb && (GLint)pfb.handle == fb) pipelineBound = true;
 		if (!pipelineBound) return;	// the scene frame buffer has its own
+
+		mPipelineDepthLastUse = GLESRenderTargetPool::Frame();
+		if (mPipelineDepthStencilBuf) return;
 
 		GLint rb = 0;
 		glGetIntegerv(GL_RENDERBUFFER_BINDING, &rb);
@@ -650,6 +653,24 @@ static bool UseMSRTT()
 		if (scissor) glEnable(GL_SCISSOR_TEST);
 		glStencilMask((GLuint)stencilMask);
 		glDepthMask(depthMask);
+	}
+
+	void FGLRenderBuffers::ReleaseIdlePipelineDepth()
+	{
+		if (!mPipelineDepthStencilBuf) return;
+		if (GLESRenderTargetPool::Frame() - mPipelineDepthLastUse <= (uint64_t)std::max(1, (int)OpenGLRenderer::gl_rtpool_maxage)) return;
+
+		// detached first: the pool may hand it out again right away
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		for (auto &pfb : mPipelineFB)
+		{
+			if (!pfb) continue;
+			glBindFramebuffer(GL_FRAMEBUFFER, pfb.handle);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, fb);
+		DeleteRenderBuffer(mPipelineDepthStencilBuf);	// back to the render target pool
 	}
 
 	//==========================================================================
