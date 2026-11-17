@@ -78,7 +78,10 @@ namespace OpenGLESRenderer
 			{
 			case GL_DEPTH_COMPONENT16:	bpp = 2; break;
 			case GL_STENCIL_INDEX8:		bpp = 1; break;
-			default: break;
+			case GL_R8:					bpp = 1; break;
+			case GL_RG8: case GL_R16F:	bpp = 2; break;
+			case GL_RGBA16F: case GL_RG32F:	bpp = 8; break;
+			default: break;	// RGBA8, RGB10_A2, R11F_G11F_B10F, RG16F, R32F, depth24/stencil8
 			}
 			// render-to-texture samples only exist in tile memory
 			const size_t count = (samples > 1 && !renderToTexture) ? size_t(samples) : 1;
@@ -122,21 +125,60 @@ namespace OpenGLESRenderer
 		}
 	}
 
-	GLuint GLESRenderTargetPool::AcquireTexture(int width, int height)
+	// The client format and type of a sized internal format (storage made without immutable textures)
+	static void TextureDataFormat(GLenum format, GLenum &dataformat, GLenum &datatype)
+	{
+		switch (format)
+		{
+		default:				dataformat = GL_RGBA; datatype = GL_UNSIGNED_BYTE; break;
+		case GL_RG8:			dataformat = GL_RG; datatype = GL_UNSIGNED_BYTE; break;
+		case GL_R8:				dataformat = GL_RED; datatype = GL_UNSIGNED_BYTE; break;
+		case GL_RGBA16F:		dataformat = GL_RGBA; datatype = GL_HALF_FLOAT; break;
+		case GL_RG16F:			dataformat = GL_RG; datatype = GL_HALF_FLOAT; break;
+		case GL_R16F:			dataformat = GL_RED; datatype = GL_HALF_FLOAT; break;
+		case GL_R32F:			dataformat = GL_RED; datatype = GL_FLOAT; break;
+		case GL_RG32F:			dataformat = GL_RG; datatype = GL_FLOAT; break;
+		case GL_R11F_G11F_B10F:	dataformat = GL_RGB; datatype = GL_FLOAT; break;
+		case GL_RGBA8_SNORM:	dataformat = GL_RGBA; datatype = GL_BYTE; break;
+		}
+	}
+
+	GLuint GLESRenderTargetPool::AcquireTexture(GLenum format, int width, int height)
 	{
 		GLuint handle = 0;
-		if (TakeFromPool(false, GL_RGBA, width, height, 0, false, handle)) return handle;
+		if (TakeFromPool(false, format, width, height, 0, false, handle)) return handle;
 		glGenTextures(1, &handle);
 		glBindTexture(GL_TEXTURE_2D, handle);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-		TrackBytes((int64_t)TargetBytes(GL_RGBA, width, height, 0, false));
+		if (format == GL_RGBA)
+		{
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		}
+		else if (glTexStorage2D)
+		{
+			glTexStorage2D(GL_TEXTURE_2D, 1, format, width, height);	// render targets are never respecified
+		}
+		else
+		{
+			GLenum dataformat, datatype;
+			TextureDataFormat(format, dataformat, datatype);
+			glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, dataformat, datatype, nullptr);
+		}
+		TrackBytes((int64_t)TargetBytes(format, width, height, 0, false));
 		rtStatsGLES.created++;
 		return handle;
 	}
 
-	void GLESRenderTargetPool::ReleaseTexture(GLuint handle, int width, int height)
+	void GLESRenderTargetPool::ReleaseTexture(GLuint handle, GLenum format, int width, int height)
 	{
-		PutInPool(false, handle, GL_RGBA, width, height, 0, false);
+		PutInPool(false, handle, format, width, height, 0, false);
+	}
+
+	void GLESRenderTargetPool::DeleteTexture(GLuint handle, GLenum format, int width, int height)
+	{
+		if (!handle) return;
+		glDeleteTextures(1, &handle);
+		rtStatsGLES.deleted++;
+		TrackBytes(-(int64_t)TargetBytes(format, width, height, 0, false));
 	}
 
 	GLuint GLESRenderTargetPool::AcquireRenderbuffer(GLenum format, int width, int height, int samples, bool renderToTexture)
@@ -200,6 +242,22 @@ namespace OpenGLESRenderer
 	bool PPGLTextureBackend::Idle() const
 	{
 		return GLESRenderTargetPool::Frame() - LastUse > (uint64_t)std::max(1, (int)OpenGLRenderer::gl_rtpool_maxage);
+	}
+
+	PPGLTextureBackend::~PPGLTextureBackend()
+	{
+		// the frame buffer first: a pooled texture must not stay attached anywhere
+		if (FB.handle != 0)
+		{
+			glDeleteFramebuffers(1, &FB.handle);
+			FB.handle = 0;
+		}
+		if (Tex.handle != 0)
+		{
+			if (Tex.pooled) GLESRenderTargetPool::ReleaseTexture(Tex.handle, Tex.internalFormat, Tex.Width, Tex.Height);
+			else GLESRenderTargetPool::DeleteTexture(Tex.handle, Tex.internalFormat, Tex.Width, Tex.Height);
+			Tex.handle = 0;
+		}
 	}
 
 	//==========================================================================
@@ -299,16 +357,8 @@ static bool UseMSRTT()
 	{
 		if (tex.handle != 0)
 		{
-			if (tex.pooled)
-			{
-				GLESRenderTargetPool::ReleaseTexture(tex.handle, tex.Width, tex.Height);
-			}
-			else
-			{
-				glDeleteTextures(1, &tex.handle);
-				rtStatsGLES.deleted++;
-				TrackBytes(-(int64_t)TargetBytes(GL_RGBA, tex.Width, tex.Height, 0, false));
-			}
+			if (tex.pooled) GLESRenderTargetPool::ReleaseTexture(tex.handle, tex.internalFormat, tex.Width, tex.Height);
+			else GLESRenderTargetPool::DeleteTexture(tex.handle, tex.internalFormat, tex.Width, tex.Height);
 		}
 		tex.handle = 0;
 		tex.pooled = false;
@@ -524,11 +574,14 @@ static bool UseMSRTT()
 
 	//==========================================================================
 	//
-	// Post-process pipeline frame buffers: single-sampled, with a depth/stencil
-	// buffer of their own for the HUD models and the 2D drawn after the effects
-	// (the models clear it first). Made when first needed. Creating one keeps
-	// the texture and renderbuffer bindings an effect has set up already, and
-	// does not clear anything (texture 0 holds the scene).
+	// Post-process pipeline frame buffers: single-sampled, made when first
+	// needed (the second texture only for the effects that ping-pong). Their
+	// depth/stencil buffer only once depth is cleared into them (HUD models
+	// drawn after the effects) or the stencil test is turned on (2D with
+	// stencil), see EnsurePipelineDepth: the post-process passes and plain 2D
+	// never use it. Creating one keeps the texture and renderbuffer bindings an
+	// effect has set up already, and does not clear anything (texture 0 holds
+	// the scene).
 	//
 	//==========================================================================
 
@@ -544,13 +597,12 @@ static bool UseMSRTT()
 
 			if (index == 1 && !mPipelineTex1)
 				mPipelineTex1 = Create2DTexture("PipelineTexture", GL_RGBA, mWidth, mHeight);
-			if (!mPipelineDepthStencilBuf)
-				mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, mWidth, mHeight);
 
 			glGenFramebuffers(1, &fb.handle);
 			glBindFramebuffer(GL_FRAMEBUFFER, fb.handle);
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, index == 0 ? mSceneTex.handle : mPipelineTex1.handle, 0);
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mPipelineDepthStencilBuf.handle);
+			if (mPipelineDepthStencilBuf)
+				glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mPipelineDepthStencilBuf.handle);
 			CheckFrameBufferCompleteness();
 
 			glBindTexture(GL_TEXTURE_2D, textureBinding);
@@ -560,10 +612,51 @@ static bool UseMSRTT()
 		return fb;
 	}
 
+	void FGLRenderBuffers::EnsurePipelineDepth()
+	{
+		if (mPipelineDepthStencilBuf || mWidth <= 0) return;
+		GLint fb = 0;
+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+		bool pipelineBound = false;
+		for (auto &pfb : mPipelineFB)
+			if (pfb && (GLint)pfb.handle == fb) pipelineBound = true;
+		if (!pipelineBound) return;	// the scene frame buffer has its own
+
+		GLint rb = 0;
+		glGetIntegerv(GL_RENDERBUFFER_BINDING, &rb);
+		mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, mWidth, mHeight);
+		for (auto &pfb : mPipelineFB)
+		{
+			if (!pfb) continue;
+			glBindFramebuffer(GL_FRAMEBUFFER, pfb.handle);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mPipelineDepthStencilBuf.handle);
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, fb);
+		glBindRenderbuffer(GL_RENDERBUFFER, rb);
+
+		// Defined contents from the start (the stencil test may be turned on before anything clears it):
+		// the whole buffer, whatever the write masks and scissor are, which are left as they were.
+		GLboolean depthMask = GL_TRUE;
+		GLint stencilMask = 0xff;
+		const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+		glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+		glGetIntegerv(GL_STENCIL_WRITEMASK, &stencilMask);
+		glDepthMask(GL_TRUE);
+		glStencilMask(0xff);
+		if (scissor) glDisable(GL_SCISSOR_TEST);
+		glClearDepthf(1.f);
+		glClearStencil(0);
+		glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+		if (scissor) glEnable(GL_SCISSOR_TEST);
+		glStencilMask((GLuint)stencilMask);
+		glDepthMask(depthMask);
+	}
+
 	//==========================================================================
 	//
 	// Post-process textures (PPTexture): the formats the effects ask for, as
-	// far as this GLES 3.0 device can render to them. Not pooled.
+	// far as this GLES 3.0 device can render to them. Render targets (no
+	// initial data) come from the render target pool.
 	//
 	//==========================================================================
 
@@ -620,14 +713,25 @@ static bool UseMSRTT()
 
 		const bool float32 = format == GL_R32F || format == GL_RG32F;
 		tex.nearestOnly = float32 && !gles.floatlinear;
+		tex.internalFormat = format;
 		const GLint filter = tex.nearestOnly ? GL_NEAREST : GL_LINEAR;
 
-		glGenTextures(1, &tex.handle);
-		glBindTexture(GL_TEXTURE_2D, tex.handle);
-		if (!data && glTexStorage2D)
-			glTexStorage2D(GL_TEXTURE_2D, 1, format, width, height);	// render targets are never respecified
+		if (!data)
+		{
+			// a render target: from the pool, as with the GL renderer (back to it when the effect is
+			// turned off for gl_rtpool_maxage frames or its size changes)
+			tex.handle = GLESRenderTargetPool::AcquireTexture(format, width, height);
+			tex.pooled = true;
+			glBindTexture(GL_TEXTURE_2D, tex.handle);
+		}
 		else
+		{
+			glGenTextures(1, &tex.handle);
+			glBindTexture(GL_TEXTURE_2D, tex.handle);
 			glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, dataformat, datatype, data);
+			rtStatsGLES.created++;
+			TrackBytes((int64_t)TargetBytes(format, width, height, 0, false));
+		}
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -657,10 +761,10 @@ static bool UseMSRTT()
 		glBindFramebuffer(GL_FRAMEBUFFER, mSceneFB.handle);
 		static const GLenum attachments[] = { GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT };
 		Discard(2, attachments);
-		// the post-process pipeline's depth/stencil (HUD models) as well
+		// the post-process pipeline's depth/stencil (HUD models) as well, if it has one
 		for (auto &pfb : mPipelineFB)
 		{
-			if (!pfb) continue;
+			if (!pfb || !mPipelineDepthStencilBuf) continue;
 			glBindFramebuffer(GL_FRAMEBUFFER, pfb.handle);
 			Discard(2, attachments);
 		}
@@ -683,7 +787,7 @@ static bool UseMSRTT()
 		if (!data)
 		{
 			// a render target: from the pool (its contents are cleared by the frame buffer setup)
-			tex.handle = GLESRenderTargetPool::AcquireTexture(width, height);
+			tex.handle = GLESRenderTargetPool::AcquireTexture(GL_RGBA, width, height);
 			tex.pooled = true;
 			glBindTexture(GL_TEXTURE_2D, tex.handle);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);

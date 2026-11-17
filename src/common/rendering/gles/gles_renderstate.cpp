@@ -680,6 +680,10 @@ void FGLRenderState::EnableClipDistance(int num, bool state)
 void FGLRenderState::Clear(int targets)
 {
 	FlushForImmediate();
+	// A pipeline frame buffer gets its depth/stencil buffer when depth is first cleared into it (HUD
+	// models). Clearing a stencil it does not have yet (Draw2D does every frame) needs none.
+	if ((targets & CT_Depth) && GLRenderer && GLRenderer->mBuffers)
+		GLRenderer->mBuffers->EnsurePipelineDepth();
 	// This always clears to default values.
 	int gltarget = 0;
 	if (targets & CT_Depth)
@@ -704,6 +708,9 @@ void FGLRenderState::Clear(int targets)
 void FGLRenderState::EnableStencil(bool on)
 {
 	FlushForImmediate();
+	// Stencil used after the effects (2D drawing with stencil): the pipeline frame buffer needs its buffer
+	if (on && GLRenderer && GLRenderer->mBuffers)
+		GLRenderer->mBuffers->EnsurePipelineDepth();
 	ToggleState(GL_STENCIL_TEST, on);
 }
 

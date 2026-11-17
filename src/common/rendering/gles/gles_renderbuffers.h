@@ -52,6 +52,7 @@ private:
 	GLuint handle = 0;
 	bool pooled = false;	// a render target from GLESRenderTargetPool
 	bool nearestOnly = false;	// 32-bit float without OES_texture_float_linear
+	GLenum internalFormat = GL_RGBA;	// what it was made with (the pool hands it out again for the same)
 
 	friend class FGLRenderBuffers;
 	friend class PPGLTextureBackend;
@@ -90,14 +91,18 @@ private:
 	friend class FGLRenderBuffers;
 };
 
-// Pool of render targets - textures without initial data (RGBA8) and renderbuffers. A released
-// one is handed out again for the same size/format/sample count; unused ones are freed after
+// Pool of render targets - textures without initial data (the scene and pipeline ones, and those of
+// the post-process effects in every format they use) and renderbuffers, as the GL renderer has it. A
+// released one is handed out again for the same size/format/sample count; unused ones are freed after
 // gl_rtpool_maxage frames, or oldest first while the pool holds more than gl_rtpool_budget_mb.
 class GLESRenderTargetPool
 {
 public:
-	static GLuint AcquireTexture(int width, int height);
-	static void ReleaseTexture(GLuint handle, int width, int height);
+	// GL_RGBA: unsized RGBA8 (glTexImage2D, GLES 2.0 as well), otherwise a sized format (immutable storage)
+	static GLuint AcquireTexture(GLenum format, int width, int height);
+	static void ReleaseTexture(GLuint handle, GLenum format, int width, int height);
+	// A texture made with initial data (not pooled): deleted, its memory no longer counted
+	static void DeleteTexture(GLuint handle, GLenum format, int width, int height);
 	static GLuint AcquireRenderbuffer(GLenum format, int width, int height, int samples, bool renderToTexture);
 	static void ReleaseRenderbuffer(GLuint handle, GLenum format, int width, int height, int samples, bool renderToTexture);
 	static void FrameEnd();
@@ -105,25 +110,13 @@ public:
 	static uint64_t Frame();
 };
 
-// A texture of the post-process effects (PPTexture) and its frame buffer. Not pooled: these
-// have formats of their own (float ones among them).
+// A texture of the post-process effects (PPTexture) and its frame buffer. A render target (no
+// initial data) comes from GLESRenderTargetPool and goes back to it when the effect has not used it
+// for gl_rtpool_maxage frames (turned off) or its size changes.
 class PPGLTextureBackend : public PPTextureBackend
 {
 public:
-	~PPGLTextureBackend()
-	{
-		// the frame buffer first: the texture must not stay attached anywhere
-		if (FB.handle != 0)
-		{
-			glDeleteFramebuffers(1, &FB.handle);
-			FB.handle = 0;
-		}
-		if (Tex.handle != 0)
-		{
-			glDeleteTextures(1, &Tex.handle);
-			Tex.handle = 0;
-		}
-	}
+	~PPGLTextureBackend();
 
 	bool Idle() const override;
 
@@ -186,6 +179,10 @@ public:
 	void BindReadableFB();
 	// After the frame's last draw: the scene depth/stencil need not be written back.
 	void InvalidateSceneDepth();
+	// The pipeline frame buffers get their depth/stencil buffer when depth is first cleared into them
+	// (HUD models after the effects) or the stencil test is turned on while one is bound (2D with
+	// stencil): the post-process passes and plain 2D never use it.
+	void EnsurePipelineDepth();
 
 	int GetWidth() const { return mWidth; }
 	int GetHeight() const { return mHeight; }
@@ -255,7 +252,7 @@ private:
 	// texture 0 is drawn into through its own single-sampled frame buffer.
 	PPGLTexture mPipelineTex1;
 	PPGLFrameBuffer mPipelineFB[2];
-	PPGLRenderBuffer mPipelineDepthStencilBuf;	// for the HUD models and the 2D after the effects
+	PPGLRenderBuffer mPipelineDepthStencilBuf;	// for HUD models after the effects: made when first cleared (EnsurePipelineDepth)
 	int mCurrentPipelineTexture = 0;
 	bool mSceneFBCurrent = true;
 
