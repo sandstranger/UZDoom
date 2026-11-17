@@ -40,11 +40,12 @@
 #include <memory>
 #include <string>
 
+EXTERN_CVAR(Bool, gl_customshader)	// hw_material.cpp (global)
+
 namespace OpenGLESRenderer
 {
 
 CVAR(Int, gles_glsl_precision, 2, 0); // 0 = low, 1 = medium, 2 = high
-EXTERN_CVAR(Bool, gl_customshader)
 
 FString GetGLSLPrecision()
 {
