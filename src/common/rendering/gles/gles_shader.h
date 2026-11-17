@@ -274,6 +274,10 @@ public:
 	bool hasSpotLight;
 	bool paletteInterpolate;
 	int instancing = 0;	// 0 regular, 1 instanced sprite quads, 2 instanced models (GLES3 only)
+
+	// As compile-time flags, so the defaults cost nothing: the GL renderer has them as uniforms.
+	int lightBlendMode = 0;			// MAPINFO lightblendmode: 0 clamped, 1 color-correct clamping, 2 unclamped
+	bool vanillaLighting = false;	// software lighting with vanilla Doom's colormap equations (light mode 16)
 };
 
 class FShader
@@ -434,6 +438,8 @@ public:
 		tag |= (flavour.hasSpotLight & 1) << 25;
 		tag |= (flavour.paletteInterpolate & 1) << 26;
 		tag |= (flavour.instancing & 3) << 27;
+		tag |= uint32_t(flavour.lightBlendMode & 3) << 29;
+		tag |= uint32_t(flavour.vanillaLighting ? 1 : 0) << 31;
 
 		return tag;
 	}

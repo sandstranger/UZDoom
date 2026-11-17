@@ -17,7 +17,7 @@
 
 // The GL renderer's specular (Blinn-Phong) light model (GLSL ES 3.00 only). The surface's dynamic lights
 // are in lights[] from 0 on: modulated ones up to uLightRange.y, subtractive ones up to uLightRange.z,
-// additive ones up to uLightRange.w. Lights are clamped as GL's default light blend mode does.
+// additive ones up to uLightRange.w. The light blend mode (MAPINFO lightblendmode) is a variant flag.
 
 vec2 lightAttenuation(int i, vec3 normal, vec3 viewdir, float lightcolorA, float glossiness, float specularLevel)
 {
@@ -83,8 +83,21 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	}
 #endif
 
+#if (DEF_LIGHT_BLEND_MODE == 1)
+	// COLOR_CORRECT_CLAMPING
+	dynlight.rgb = color + desaturate(dynlight).rgb;
+	specular.rgb = desaturate(specular).rgb;
+
+	dynlight.rgb = ((dynlight.rgb / max(max(max(dynlight.r, dynlight.g), dynlight.b), 1.4) * 1.4));
+	specular.rgb = ((specular.rgb / max(max(max(specular.r, specular.g), specular.b), 1.4) * 1.4));
+#elif (DEF_LIGHT_BLEND_MODE == 2)
+	// UNCLAMPED
+	dynlight.rgb = color + desaturate(dynlight).rgb;
+	specular.rgb = desaturate(specular).rgb;
+#else
 	dynlight.rgb = clamp(color + desaturate(dynlight).rgb, 0.0, 1.4);
 	specular.rgb = clamp(desaturate(specular).rgb, 0.0, 1.4);
+#endif
 
 	vec3 frag = material.Base.rgb * dynlight.rgb + material.Specular * specular.rgb;
 

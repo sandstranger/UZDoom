@@ -30,8 +30,9 @@
 #else
 #define VARYING_GRADIENT 0
 #endif
-// PBR (GLSL ES 3.00): material_pbr.fp's ambient term reads the normal too, dynamic lights or not
-#if defined(USER_SHADER) || (defined(PBR) && __VERSION__ >= 300) || (DEF_DYNAMIC_LIGHTS_MOD == 1) || (DEF_DYNAMIC_LIGHTS_SUB == 1) || (DEF_DYNAMIC_LIGHTS_ADD == 1)
+// PBR (GLSL ES 3.00): material_pbr.fp's ambient term reads the normal too, dynamic lights or not.
+// Vanilla lighting: walls and planes have different colormap equations.
+#if defined(USER_SHADER) || (defined(PBR) && __VERSION__ >= 300) || (DEF_VANILLA_LIGHTING == 1) || (DEF_DYNAMIC_LIGHTS_MOD == 1) || (DEF_DYNAMIC_LIGHTS_SUB == 1) || (DEF_DYNAMIC_LIGHTS_ADD == 1)
 #define VARYING_NORMAL 1
 #else
 #define VARYING_NORMAL 0
@@ -399,6 +400,68 @@ float R_ZDoomColormap(float light, float z)
 	return lightscale * 31.0;
 }
 
+#if (DEF_VANILLA_LIGHTING == 1)
+//===========================================================================
+//
+// Vanilla Doom wall colormap equation
+//
+//===========================================================================
+float R_WallColormap(float lightnum, float z, vec3 normal)
+{
+	// R_ScaleFromGlobalAngle calculation
+	float projection = 160.0; // projection depends on SCREENBLOCKS!! 160 is the fullscreen value
+	vec2 line_v1 = pixelpos.xz; // in vanilla this is the first curline vertex
+	vec2 line_normal = normal.xz;
+	float texscale = projection * clamp(dot(normalize(uCameraPos.xz - line_v1), line_normal), 0.0, 1.0) / z;
+
+	float lightz = clamp(16.0 * texscale, 0.0, 47.0);
+
+	// scalelight[lightnum][lightz] lookup
+	float startmap = (15.0 - lightnum) * 4.0;
+	return startmap - lightz * 0.5;
+}
+
+//===========================================================================
+//
+// Vanilla Doom plane colormap equation
+//
+//===========================================================================
+float R_PlaneColormap(float lightnum, float z)
+{
+	float lightz = clamp(z / 16.0, 0.0, 127.0);
+
+	// zlight[lightnum][lightz] lookup
+	float startmap = (15.0 - lightnum) * 4.0;
+	float scale = 160.0 / (lightz + 1.0);
+	return startmap - scale * 0.5;
+}
+#endif
+
+//===========================================================================
+//
+// Colormap of the software light modes: vanilla Doom's equations with light
+// mode 16, ZDoom's otherwise
+//
+//===========================================================================
+float R_DoomColormap(float light, float z)
+{
+#if (DEF_VANILLA_LIGHTING == 1)
+	float lightnum = clamp(light * 15.0, 0.0, 15.0);
+
+	if (dot(vWorldNormal.xyz, vWorldNormal.xyz) > 0.5)
+	{
+		vec3 normal = normalize(vWorldNormal.xyz);
+		return mix(R_WallColormap(lightnum, z, normal), R_PlaneColormap(lightnum, z), abs(normal.y));
+	}
+	else // vWorldNormal is not set on sprites
+	{
+		return R_PlaneColormap(lightnum, z);
+	}
+#else
+	return R_ZDoomColormap(light, z);
+#endif
+}
+
 //===========================================================================
 //
 // Doom software lighting equation
@@ -424,7 +487,7 @@ float R_DoomLightingEquation(float light)
 	return clamp(shade * uLightDist, 0.0, 1.0);
 #endif
 
-	float colormap = R_ZDoomColormap(light, z); // ONLY Software mode, vanilla not yet working
+	float colormap = R_DoomColormap(light, z);
 
 #if (DEF_BANDED_SW_LIGHTING == 1)
 	colormap = floor(colormap) + 0.5;

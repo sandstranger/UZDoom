@@ -873,13 +873,15 @@ static FString VariantConfig(const ShaderFlavourData &flavour)
 
 	variantConfig.AppendFormat("#define DEF_HAS_SPOTLIGHT %d\n", flavour.hasSpotLight);
 	variantConfig.AppendFormat("#define DEF_PALETTE_INTERPOLATE %d\n", flavour.paletteInterpolate);
+	variantConfig.AppendFormat("#define DEF_LIGHT_BLEND_MODE %d\n", flavour.lightBlendMode);
+	variantConfig.AppendFormat("#define DEF_VANILLA_LIGHTING %d\n", flavour.vanillaLighting);
 	if (flavour.instancing && gles.essl300)
 		variantConfig << "#define INSTANCING\n" << (flavour.instancing == 1 ? "#define INSTANCED_QUADS\n" : "#define INSTANCED_MODELS\n");
 	return variantConfig;
 }
 
 // A flavour as it is written to the list of the variants used (variants.txt), every field in full
-static const int FlavourFieldCount = 22;
+static const int FlavourFieldCount = 24;
 
 static void FlavourToInts(const ShaderFlavourData &f, int *v)
 {
@@ -895,6 +897,7 @@ static void FlavourToInts(const ShaderFlavourData &f, int *v)
 	v[i++] = 0;
 #endif
 	v[i++] = f.hasSpotLight; v[i++] = f.paletteInterpolate; v[i++] = f.instancing;
+	v[i++] = f.lightBlendMode; v[i++] = f.vanillaLighting;
 	assert(i == FlavourFieldCount);
 }
 
@@ -912,6 +915,7 @@ static void FlavourFromInts(const int *v, ShaderFlavourData &f)
 	i++;
 #endif
 	f.hasSpotLight = v[i++] != 0; f.paletteInterpolate = v[i++] != 0; f.instancing = v[i++];
+	f.lightBlendMode = v[i++]; f.vanillaLighting = v[i++] != 0;
 	assert(i == FlavourFieldCount);
 }
 

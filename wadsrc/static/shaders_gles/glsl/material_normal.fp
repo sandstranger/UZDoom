@@ -102,7 +102,16 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	#endif
 #endif
 
+#if (DEF_LIGHT_BLEND_MODE == 1)
+	// COLOR_CORRECT_CLAMPING
+	vec3 lightcolor = color + desaturate(dynlight).rgb;
+	vec3 frag = material.Base.rgb * ((lightcolor / max(max(max(lightcolor.r, lightcolor.g), lightcolor.b), 1.4) * 1.4));
+#elif (DEF_LIGHT_BLEND_MODE == 2)
+	// UNCLAMPED
+	vec3 frag = material.Base.rgb * (color + desaturate(dynlight).rgb);
+#else
 	vec3 frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb, 0.0, 1.4);
+#endif
 
 #if (DEF_DYNAMIC_LIGHTS_ADD == 1)
 	vec4 addlight = vec4(0.0,0.0,0.0,0.0);

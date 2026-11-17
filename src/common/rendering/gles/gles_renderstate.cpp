@@ -208,6 +208,9 @@ bool FGLRenderState::ApplyShader()
 
 	flavour.buildLighting = (mHwUniforms->mPalLightLevels >> 16) == 5; // Build engine mode
 	flavour.bandedSwLight = !!(mHwUniforms->mPalLightLevels & 0xFF);
+	// Light mode 16 (vanilla Doom's light equations) only changes the software lighting path
+	flavour.vanillaLighting = flavour.useULightLevel && (mHwUniforms->mPalLightLevels >> 16) == 16;
+	flavour.lightBlendMode = clamp(mHwUniforms->mLightBlendMode, 0, 2);
 
 #ifdef NPOT_EMULATION
 	flavour.npotEmulation = (mStreamData.uNpotEmulation.Y != 0);
