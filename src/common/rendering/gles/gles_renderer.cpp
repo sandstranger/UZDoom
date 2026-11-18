@@ -87,7 +87,9 @@ FGLRenderer::~FGLRenderer()
 	if (mShaderManager != nullptr) delete mShaderManager;
 	if (mFBID != 0) glDeleteFramebuffers(1, &mFBID);
 
-	if (mBuffers) delete mBuffers;
+	if (mSaveBuffers) delete mSaveBuffers;
+	if (mScreenBuffers) delete mScreenBuffers;
+	mBuffers = mSaveBuffers = mScreenBuffers = nullptr;
 	if (mPresentShader) delete mPresentShader;
 }
 

@@ -406,8 +406,9 @@ static bool UseMSRTT()
 			// the frame buffer references the old texture: release both before creating the new set
 			ClearScene();
 			CreatePipeline(width, height);
-			// targets of the old size are not coming back: free them now instead of keeping two sets
-			GLESRenderTargetPool::Trim(true);
+			// targets of the old size are not coming back: free them now instead of keeping two sets.
+			// Not on a first setup (the savegame picture's buffers): the screen's targets are coming back.
+			if (mWidth > 0) GLESRenderTargetPool::Trim(true);
 		}
 
 		if (resized || samples != mSamples)

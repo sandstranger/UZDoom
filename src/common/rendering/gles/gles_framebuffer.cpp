@@ -24,6 +24,7 @@
 #include "gles_system.h"
 #include "v_video.h"
 #include "m_png.h"
+#include "version.h"
 
 #include "i_time.h"
 
@@ -393,6 +394,33 @@ void OpenGLFrameBuffer::SetSceneRenderTarget(bool useSSAO)
 void OpenGLFrameBuffer::WaitForCommands(bool finish)
 {
 	glFinish();
+}
+
+//===========================================================================
+//
+// The savegame picture gets render buffers of its own size, as on the GL
+// renderer. In a corner of the screen sized ones the post-process passes
+// (tonemap, FXAA, lens, custom shaders...) would squeeze their whole input
+// texture - the full screen - into the picture: black with a tiny image.
+// Created only for the picture and released right after it.
+//
+//===========================================================================
+
+void OpenGLFrameBuffer::SetSaveBuffers(bool yes)
+{
+	if (!GLRenderer) return;
+	if (yes)
+	{
+		if (!GLRenderer->mSaveBuffers) GLRenderer->mSaveBuffers = new FGLRenderBuffers();
+		GLRenderer->mSaveBuffers->Setup(SAVEPICWIDTH, SAVEPICHEIGHT, SAVEPICWIDTH, SAVEPICHEIGHT);
+		GLRenderer->mBuffers = GLRenderer->mSaveBuffers;
+	}
+	else
+	{
+		GLRenderer->mBuffers = GLRenderer->mScreenBuffers;
+		delete GLRenderer->mSaveBuffers;	// its render targets go back to the pool
+		GLRenderer->mSaveBuffers = nullptr;
+	}
 }
 
 

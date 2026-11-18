@@ -77,6 +77,7 @@ public:
 
 	FGLRenderBuffers *mBuffers = nullptr;
 	FGLRenderBuffers *mScreenBuffers = nullptr;
+	FGLRenderBuffers *mSaveBuffers = nullptr;	// only while a savegame picture is rendered
 	FPresentShader *mPresentShader = nullptr;
 
 	//FRotator mAngles;
