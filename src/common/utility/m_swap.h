@@ -25,6 +25,7 @@
 #define __M_SWAP_H__
 
 #include <stdlib.h>
+#include <string.h>
 
 // Endianess handling.
 // WAD files are stored little endian.
@@ -233,13 +234,18 @@ long LittleLong(long) = delete;
 
 // Data accessors, since some data is highly likely to be unaligned.
 #if defined(_M_IX86) || defined(_M_X64) || defined(__i386__) || defined(__x86_64__)
+// (memcpy: an unaligned typed read is undefined; this compiles to the same single load)
 inline int GetShort(const unsigned char *foo)
 {
-	return *(const short *)foo;
+	short v;
+	memcpy(&v, foo, sizeof(v));
+	return v;
 }
 inline int GetInt(const unsigned char *foo)
 {
-	return *(const int *)foo;
+	int v;
+	memcpy(&v, foo, sizeof(v));
+	return v;
 }
 #else
 inline int GetShort(const unsigned char *foo)

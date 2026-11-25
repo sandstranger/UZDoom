@@ -899,14 +899,22 @@ void MapLoader::FixHoles()
 
 			// Now fix all references to these in the level data.
 			// Note that the Index method does not work here due to the reallocation.
-			for (auto &seg : Level->segs)
+			// Only the entries there were before: the reserved ones hold no pointers yet (they were "moved" too, garbage
+			// to garbage). The offsets are taken as integers - the old arrays are gone.
+			auto rebase = [](auto *p, const void *oldBase, auto *newBase)
 			{
-				if (seg.PartnerSeg) seg.PartnerSeg = newsegstartptr + (seg.PartnerSeg - oldsegstartptr);
-				seg.Subsector = newssstartptr + (seg.Subsector - oldssstartptr);
+				return newBase + ((uintptr_t)p - (uintptr_t)oldBase) / sizeof(*newBase);
+			};
+			for (unsigned i = 0; i < newsegstart; i++)
+			{
+				auto &seg = Level->segs[i];
+				if (seg.PartnerSeg) seg.PartnerSeg = rebase(seg.PartnerSeg, oldsegstartptr, newsegstartptr);
+				seg.Subsector = rebase(seg.Subsector, oldssstartptr, newssstartptr);
 			}
-			for (auto &sub : Level->subsectors)
+			for (unsigned i = 0; i < newssstart; i++)
 			{
-				sub.firstline = newsegstartptr + (sub.firstline - oldsegstartptr);
+				auto &sub = Level->subsectors[i];
+				sub.firstline = rebase(sub.firstline, oldsegstartptr, newsegstartptr);
 			}
 			for (auto &node : Level->nodes)
 			{
@@ -917,7 +925,7 @@ void MapLoader::FixHoles()
 					if (intp & 1)
 					{
 						subsector_t *sp = (subsector_t*)(intp - 1);
-						sp = newssstartptr + (sp - oldssstartptr);
+						sp = rebase(sp, oldssstartptr, newssstartptr);
 						intp = intptr_t(sp) + 1;
 						p = (void*)intp;
 					}
@@ -927,7 +935,7 @@ void MapLoader::FixHoles()
 			{
 				for (auto &seg : segloop)
 				{
-					seg = newsegstartptr + (seg - oldsegstartptr);
+					seg = rebase(seg, oldsegstartptr, newsegstartptr);
 				}
 			}
 

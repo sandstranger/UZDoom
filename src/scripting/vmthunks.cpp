@@ -1963,7 +1963,10 @@ static int LocateWeapon(FWeaponSlots *self, PClassActor *weap, int *pslot, int *
 DEFINE_ACTION_FUNCTION_NATIVE(FWeaponSlots, LocateWeapon, LocateWeapon)
 {
 	PARAM_SELF_STRUCT_PROLOGUE(FWeaponSlots);
-	PARAM_CLASS(weap, AActor);
+	PARAM_POINTER(weapclass, PClass);
+	// (a class that is no actor - WP_NOCHANGE.GetClass(), Selaco's weapon bar asks for that - is not found; it failed an
+	// assertion in debug builds)
+	PClassActor *weap = weapclass != nullptr && weapclass->IsDescendantOf(RUNTIME_CLASS(AActor)) ? static_cast<PClassActor *>(weapclass) : nullptr;
 	int slot = 0, index = 0;
 	bool retv = self->LocateWeapon(weap, &slot, &index);
 	if (numret >= 1) ret[0].SetInt(retv);

@@ -453,6 +453,12 @@ FFont::FFont (const char *name, const char *nametemplate, const char *filetempla
 				}
 			}
 		}
+		if (maxchar < minchar)
+		{
+			// no characters: an empty range (INT_MIN - INT_MAX overflowed, here and in the uses of the range)
+			minchar = 0;
+			maxchar = -1;
+		}
 		FirstChar = minchar;
 		LastChar = maxchar;
 		auto count = maxchar - minchar + 1;
@@ -595,6 +601,12 @@ void FFont::ReadSheetFontClassic(std::vector<FileSys::FolderEntry> &folderdata, 
 	}
 
 
+	if (maxchar < minchar)
+	{
+		// no characters: an empty range (INT_MIN - INT_MAX overflowed, here and in the uses of the range)
+		minchar = 0;
+		maxchar = -1;
+	}
 	FirstChar = minchar;
 	bool map1252 = false;
 	if (minchar < 0x80 && maxchar >= 0xa0) // should be a settable option, but that'd probably cause more problems than it'd solve.
@@ -708,6 +720,12 @@ void FFont::ReadSheetFont(std::vector<FileSys::FolderEntry> &folderdata, int wid
 	}
 
 
+	if (maxchar < minchar)
+	{
+		// no characters: an empty range (INT_MIN - INT_MAX overflowed, here and in the uses of the range)
+		minchar = 0;
+		maxchar = -1;
+	}
 	FirstChar = minchar;
 	bool map1252 = false;
 	if (minchar < 0x80 && maxchar >= 0xa0) // should be a settable option, but that'd probably cause more problems than it'd solve.

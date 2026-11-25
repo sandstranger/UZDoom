@@ -2234,11 +2234,12 @@ void MapLoader::LoadSideDefs2 (MapData *map, FMissingTextureTracker &missingtex)
 
 static unsigned int BlockHash (TArray<int> *block)
 {
-	int hash = 0;
-	int *ar = &(*block)[0];
+	// (unsigned: the int overflowed; Data(): an empty block has no element 0)
+	unsigned int hash = 0;
+	const int *ar = block->Data();
 	for (size_t i = 0; i < block->Size(); ++i)
 	{
-		hash = hash * 12235 + ar[i];
+		hash = hash * 12235u + (unsigned int)ar[i];
 	}
 	return hash & 0x7fffffff;
 }

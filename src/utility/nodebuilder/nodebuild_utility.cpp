@@ -719,7 +719,7 @@ FNodeBuilder::FVertexMapSimple::FVertexMapSimple(FNodeBuilder &builder)
 
 int FNodeBuilder::FVertexMapSimple::SelectVertexExact(FNodeBuilder::FPrivVert &vert)
 {
-	FPrivVert *verts = &MyBuilder.Vertices[0];
+	FPrivVert *verts = MyBuilder.Vertices.Data();
 	unsigned int stop = MyBuilder.Vertices.Size();
 
 	for (unsigned int i = 0; i < stop; ++i)
@@ -735,7 +735,7 @@ int FNodeBuilder::FVertexMapSimple::SelectVertexExact(FNodeBuilder::FPrivVert &v
 
 int FNodeBuilder::FVertexMapSimple::SelectVertexClose(FNodeBuilder::FPrivVert &vert)
 {
-	FPrivVert *verts = &MyBuilder.Vertices[0];
+	FPrivVert *verts = MyBuilder.Vertices.Data();
 	unsigned int stop = MyBuilder.Vertices.Size();
 
 	for (unsigned int i = 0; i < stop; ++i)

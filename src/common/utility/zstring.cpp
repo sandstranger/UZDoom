@@ -374,6 +374,7 @@ void FString::VFormat (const char *fmt, va_list arglist)
 	char workbuf[STB_SPRINTF_MIN];
 	Data()->Release();
 	Chars = (char *)(FStringData::Alloc(128) + 1);
+	Chars[0] = 0;	// (an empty result never reaches FormatHelper: the string had no terminator)
 	stbsp_vsprintfcb(FormatHelper, this, workbuf, fmt, arglist);
 }
 

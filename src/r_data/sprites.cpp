@@ -258,7 +258,9 @@ void R_InstallSprite (int num, spriteframewithrotate *sprtemp, int &maxframe)
 						// Selaco's own graphics in sprites/ have 8-character names that can read as frames of a sprite the
 						// other games' actors use (sprites/decorations/mineralexpoflyer.png = MINERALE = MINE frames R and L):
 						// the gaps are filled with a rotation there is, instead of aborting.
-						FTextureID any;
+						// (initialized: a default FTextureID is not - stack garbage that looked valid filled the frame with
+						// garbage texture numbers, and the rotations below crashed on them)
+						FTextureID any = FNullTextureID();
 						for (int k = 0; k < 16 && !any.isValid(); k++) any = sprtemp[frame].Texture[k];
 						for (int k = 0; k < 16; k++)
 						{
@@ -302,7 +304,8 @@ void R_InstallSprite (int num, spriteframewithrotate *sprtemp, int &maxframe)
 		{
 			for (int rot = 0; rot < 16; ++rot)
 			{
-				TexMan.GetGameTexture(sprtemp[frame].Texture[rot])->SetRotations(framestart + frame);
+				if (auto tex = TexMan.GetGameTexture(sprtemp[frame].Texture[rot]))
+					tex->SetRotations(framestart + frame);
 			}
 		}
 	}

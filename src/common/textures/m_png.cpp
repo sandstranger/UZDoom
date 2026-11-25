@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <stdlib.h>
+#include <string.h>
 #include <miniz.h>
 #include <stdint.h>
 #ifdef _MSC_VER
@@ -149,7 +150,11 @@ bool M_CreatePNG (FileWriter *file, const uint8_t *buffer, const PalEntry *palet
 	MakeChunk (ihdr, MAKE_ID('I','H','D','R'), 2*4+5);
 
 	// Assume a display exponent of 2.2 (100000/2.2 ~= 45454.5)
-	*gama = BigLong (int (45454.5f * (png_gamma == 0.f ? gamma : png_gamma)));
+	{
+		// (memcpy: the chunk lies at any byte, see MakeChunk)
+		const uint32_t gamaValue = BigLong (int (45454.5f * (png_gamma == 0.f ? gamma : png_gamma)));
+		memcpy (gama, &gamaValue, 4);
+	}
 	MakeChunk (gama, MAKE_ID('g','A','M','A'), 4);
 
 	if (color_type == SS_PAL)
@@ -700,12 +705,19 @@ bool M_ReadIDAT (FileReader &file, uint8_t *buffer, int width, int height, int p
 //
 //==========================================================================
 
+// (the chunks lie at any byte: their words written with memcpy - a misaligned uint32_t store is undefined, and on 32
+// bit ARM paired stores fault on it)
+static inline void PutWord (uint8_t *where, uint32_t value)
+{
+	memcpy(where, &value, 4);
+}
+
 static inline void MakeChunk (void *where, uint32_t type, size_t len)
 {
 	uint8_t *const data = (uint8_t *)where;
-	*(uint32_t *)(data - 8) = BigLong ((unsigned int)len);
-	*(uint32_t *)(data - 4) = type;
-	*(uint32_t *)(data + len) = BigLong ((unsigned int)CalcCRC32 (data-4, (unsigned int)(len+4)));
+	PutWord (data - 8, BigLong ((unsigned int)len));
+	PutWord (data - 4, type);
+	PutWord (data + len, BigLong ((unsigned int)CalcCRC32 (data-4, (unsigned int)(len+4))));
 }
 
 //==========================================================================

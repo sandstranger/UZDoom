@@ -717,9 +717,10 @@ public:
 			dest.mapsection = (short)group.groupedSections[0].section->mapsection;
 			dest.hacked = false;
 			dest.validcount = 0;
-			dest.segments.Set(&output.allLines[numsegments], group.segments.Size());
-			dest.sides.Set(&output.allSides[numsides], group.sideMap.CountUsed());
-			dest.subsectors.Set(&output.allSubsectors[numsubsectors], group.subsectors.Size());
+			// (Data() + offset: a section without sides or lines has no element of the empty arrays to point at)
+			dest.segments.Set(output.allLines.Data() + numsegments, group.segments.Size());
+			dest.sides.Set(output.allSides.Data() + numsides, group.sideMap.CountUsed());
+			dest.subsectors.Set(output.allSubsectors.Data() + numsubsectors, group.subsectors.Size());
 			dest.vertexindex = -1;
 			dest.vertexcount = 0;
 			dest.flags = 0;
