@@ -566,7 +566,9 @@ void F2DDrawer::AddTexture(FGameTexture* img, DrawParms& parms)
 	offset = osave;
 }
 
-static TArray<RefCountedPtr<DShape2DBufferInfo>> buffersToDestroy;
+// (on the heap, never destroyed: the buffers still waiting here at exit were deleted by the static destructors, with
+// GL calls after the context and the GL library were gone - Selaco crashed every time it quit)
+static TArray<RefCountedPtr<DShape2DBufferInfo>> &buffersToDestroy = *new TArray<RefCountedPtr<DShape2DBufferInfo>>;
 
 void DShape2D::OnDestroy() {
 	if (lastParms) delete lastParms;
