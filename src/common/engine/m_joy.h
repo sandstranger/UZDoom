@@ -117,6 +117,8 @@ struct IJoystickConfig
 	virtual void SetDefaultConfig() = 0;
 	virtual FString GetIdentifier() = 0;
 	virtual bool IsGamepad() { return false; }
+	// The axis code (EAxisCodes) one direction of an axis drives, AXIS_CODE_NULL for none
+	virtual int GetAxisCode(int axis, bool positive) { return AXIS_CODE_NULL; }
 
 	void Reset()
 	{

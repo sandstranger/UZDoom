@@ -219,6 +219,16 @@ public:
 		return Mapping != NULL;
 	}
 
+	// The axis codes the directions of an axis drive, as AddAxes adds them (Selaco's GetAxisMap)
+	int GetAxisCode(int axis, bool positive) override
+	{
+		if (axis < 0)
+			return AXIS_CODE_NULL;
+		if (Mapping)
+			return axis < SDL_CONTROLLER_AXIS_MAX ? ControllerAxisCodes[axis][positive ? 0 : 1] : AXIS_CODE_NULL;
+		return axis < NUM_JOYAXISBUTTONS ? AXIS_CODE_JOY1_PLUS + axis * 2 + (positive ? 0 : 1) : AXIS_CODE_NULL;
+	}
+
 	void SetAxisDeadZone(int axis, float zone)
 	{
 		SettingsChanged = true;

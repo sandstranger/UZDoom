@@ -118,6 +118,7 @@ public:
 	float GetAxisResponseCurvePoint(int axis, int point);
 	float GetAxis(int axis) override;
 	float GetRawAxis(int axis) override;
+	int GetAxisCode(int axis, bool positive) override;
 
 	void SetAxisDeadZone(int axis, float deadzone);
 	void SetAxisScale(int axis, float scale);
@@ -262,6 +263,12 @@ static const EAxisCodes AxisCodes[][2] =
 	{ AXIS_CODE_PAD_LTRIGGER, AXIS_CODE_NULL },
 	{ AXIS_CODE_PAD_RTRIGGER, AXIS_CODE_NULL }
 };
+
+// The axis codes the directions of an axis drive, as AddAxes adds them (Selaco's GetAxisMap)
+int FXInputController::GetAxisCode(int axis, bool positive)
+{
+	return axis >= 0 && axis < NUM_AXES ? int(AxisCodes[axis][positive ? 0 : 1]) : int(AXIS_CODE_NULL);
+}
 
 FXInputController::DefaultAxisConfig FXInputController::DefaultAxes[NUM_AXES] =
 {

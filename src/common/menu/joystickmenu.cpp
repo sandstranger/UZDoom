@@ -22,8 +22,10 @@
 **
 */
 
+#include "c_bind.h"
 #include "m_joy.h"
 #include "menu.h"
+#include "selaco.h"
 #include "vm.h"
 
 static TArray<IJoystickConfig *> Joysticks;
@@ -188,6 +190,51 @@ DEFINE_ACTION_FUNCTION(IJoystickConfig, GetRawAxis)
 	ACTION_RETURN_FLOAT(self->GetRawAxis(axis));
 }
 
+//=============================================================================
+//
+// Axis mapping was replaced with binds: the deprecated GetAxisMap answers none.
+// Selaco's scripts read it though (its weapon wheel, the stick cursor of its
+// menus): in Selaco mode it is worked out from what the two directions of the
+// axis are bound to.
+//
+//=============================================================================
+
+enum { JOYAXIS_None = -1, JOYAXIS_Yaw, JOYAXIS_Pitch, JOYAXIS_Forward, JOYAXIS_Side, JOYAXIS_Up };	// (as in ZScript)
+
+static int GetAxisMapFromBinds(IJoystickConfig *joy, int axis)
+{
+	static const struct { const char *command; int joyaxis; } AxisCommands[] =
+	{
+		{ "+left", JOYAXIS_Yaw }, { "+right", JOYAXIS_Yaw },
+		{ "+lookup", JOYAXIS_Pitch }, { "+lookdown", JOYAXIS_Pitch },
+		{ "+forward", JOYAXIS_Forward }, { "+back", JOYAXIS_Forward },
+		{ "+moveleft", JOYAXIS_Side }, { "+moveright", JOYAXIS_Side },
+		{ "+moveup", JOYAXIS_Up }, { "+movedown", JOYAXIS_Up },
+	};
+	if (!g_SelacoMode)
+		return JOYAXIS_None;
+	for (bool positive : { true, false })
+	{
+		int code = joy->GetAxisCode(axis, positive);
+		if (code < 0 || code >= NUM_AXIS_CODES)
+			continue;
+		const FString &bind = Bindings.GetBinding(KeyAxisMapping[code]);
+		for (auto &ac : AxisCommands)
+		{
+			if (bind.CompareNoCase(ac.command) == 0)
+				return ac.joyaxis;
+		}
+	}
+	return JOYAXIS_None;
+}
+
+DEFINE_ACTION_FUNCTION(IJoystickConfig, GetAxisMap)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(IJoystickConfig);
+	PARAM_INT(axis);
+	ACTION_RETURN_INT(GetAxisMapFromBinds(self, axis));
+}
+
 DEFINE_ACTION_FUNCTION(IJoystickConfig, GetNumAxes)
 {
 	PARAM_SELF_STRUCT_PROLOGUE(IJoystickConfig);
@@ -246,7 +293,7 @@ DEFINE_ACTION_FUNCTION(IJoystickConfig, GetJoystick)
 {
 	PARAM_PROLOGUE;
 	PARAM_INT(indx);
-	ACTION_RETURN_POINTER(Joysticks[indx]);
+	ACTION_RETURN_POINTER(unsigned(indx) < Joysticks.Size() ? Joysticks[indx] : nullptr);
 }
 
 DEFINE_ACTION_FUNCTION(IJoystickConfig, RestoreDefaults)

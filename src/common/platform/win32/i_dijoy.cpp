@@ -148,6 +148,7 @@ public:
 	bool GetDevice();
 	void ProcessInput();
 	void AddAxes(float axes[NUM_AXIS_CODES]);
+	int GetAxisCode(int axis, bool positive) override;
 
 	// IJoystickConfig interface
 	FString GetName();
@@ -546,6 +547,14 @@ void FDInputJoystick::ProcessInput()
 // Add the values of each axis to the game axes.
 //
 //===========================================================================
+
+// The axis codes the directions of an axis drive, as AddAxes adds them (Selaco's GetAxisMap)
+int FDInputJoystick::GetAxisCode(int axis, bool positive)
+{
+	if (axis < 0 || unsigned(axis) >= Axes.Size() || axis >= NUM_JOYAXISBUTTONS)
+		return AXIS_CODE_NULL;
+	return AXIS_CODE_JOY1_PLUS + axis * 2 + (positive ? 0 : 1);
+}
 
 void FDInputJoystick::AddAxes(float axes[NUM_AXIS_CODES])
 {
