@@ -75,6 +75,7 @@
 #include "s_music.h"
 #include "sbar.h"
 #include "screenjob.h"
+#include "selaco.h"
 #include "serializer_doom.h"
 #include "st_stuff.h"
 #include "v_palette.h"
@@ -122,7 +123,7 @@ void G_PlayerReborn (int player);
 
 void G_DoAutoSave ();
 void G_DoPlayDemo (void);
-void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, const char *description);
+void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, const char *description, int32_t flags = 0);
 void G_DoVictory (void);
 
 void SetupLoadingCVars();
@@ -198,6 +199,7 @@ float           mousey;
 
 FString         savegamefile;
 FString         savedescription;
+int32_t         savegameflags; // Selaco's savegame flags (stored in the savegame's info.json)
 FString         BackupSaveName;
 
 CVARD_NAMED (Int, gameskill, skill, 2, CVAR_SERVERINFO|CVAR_LATCH, "sets the skill for the next newly started game")
@@ -215,6 +217,7 @@ FARG(nodraw, "Debug", "Stops the game from drawing anything.", "",
 FARG(noblit, "Debug", "Prevents the screen from updating.", "",
 	"Causes ZDoom not to update the display on the screen, but it still draws everything to an"
 	" internal buffer. Only useful with -timedemo.");
+EXTERN_CVAR(String, save_dir);
 
 //==========================================================================
 //
@@ -885,6 +888,7 @@ void G_BuildTiccmd (usercmd_t *cmd)
 		Net_WriteInt8 (DEM_SAVEGAME);
 		Net_WriteString (savegamefile.GetChars());
 		Net_WriteString (savedescription.GetChars());
+		if (g_SelacoMode) Net_WriteInt32 (savegameflags); // Selaco's save flags (see DEM_SAVEGAME in d_net.cpp)
 		savegamefile = "";
 	}
 	if (SendItemUse == (const AActor *)1)
@@ -1248,6 +1252,11 @@ void G_Ticker ()
 
 	C_TickQueuedInputs();
 
+	// @Cockatrice - Restore background texture loading if paused
+	if (screen->BackgroundCachePaused()) {
+		screen->ResumeBackgroundCache();
+	}
+
 	// do player reborns if needed
 	// TODO: These should really be moved to queues.
 	for (unsigned int i = 0; i < MAXPLAYERS; ++i)
@@ -1287,16 +1296,22 @@ void G_Ticker ()
 			G_DoLoadGame ();
 			break;
 		case ga_savegame:
-			G_DoSaveGame (true, false, savegamefile, savedescription.GetChars());
+			staticEventManager.PreSave(0);
+			G_DoSaveGame (true, false, savegamefile, savedescription.GetChars(), savegameflags);
+			staticEventManager.PostSave(0);
 			gameaction = ga_nothing;
 			savegamefile = "";
 			savedescription = "";
+			savegameflags = 0;
 			break;
 		case ga_quicksave:
-			G_DoSaveGame(true, true, savegamefile, savedescription.GetChars());
+			staticEventManager.PreSave(1);
+			G_DoSaveGame(true, true, savegamefile, savedescription.GetChars(), savegameflags);
+			staticEventManager.PostSave(1);
 			gameaction = ga_nothing;
 			savegamefile = "";
 			savedescription = "";
+			savegameflags = 0;
 			break;
 		case ga_autosave:
 			G_DoAutoSave ();
@@ -1985,12 +2000,14 @@ static bool CheckSingleWad (const char *name, bool &printRequires, bool printwar
 }
 
 // Return false if not all the needed wads have been loaded.
-bool G_CheckSaveGameWads (FSerializer &arc, bool printwarn)
+bool G_CheckSaveGameWads (FSerializer &arc, bool printwarn, TArray<FString> *wadList)
 {
 	bool printRequires = false;
 
 	const char *text = arc.GetString("Game WAD");
-	CheckSingleWad (text, printRequires, printwarn);
+	if (!CheckSingleWad(text, printRequires, printwarn) && wadList != nullptr)
+		wadList->Push(text);
+
 	const char *text2 = arc.GetString("Map WAD");
 	// do not validate the same file twice.
 	if (text != nullptr && text2 != nullptr && stricmp(text, text2) != 0) CheckSingleWad (text2, printRequires, printwarn);
@@ -2007,11 +2024,16 @@ bool G_CheckSaveGameWads (FSerializer &arc, bool printwarn)
 	return true;
 }
 
-static void LoadGameError(const char *label, const char *append = "")
+static void LoadGameError(const char *label, const char *append = "", int errType = ERR_LOADGAME)
 {
 	FString message = GStrings.GetString(label);
 	message.Substitute("%s", savename);
-	Printf ("%s %s\n", message.GetChars(), append);
+	FString full;
+	full.Format("%s %s", message.GetChars(), append);
+	Printf ("%s\n", full.GetChars());
+
+	// @Cockatrice - Send an event to static event handlers so the script system can present this info better to the player
+	staticEventManager.HandleError(errType, full);
 }
 
 void C_SerializeCVars(FSerializer& arc, const char* label, uint32_t filter)
@@ -2152,12 +2174,23 @@ void G_DoLoadGame ()
 			message.Substitute("%e", FStringf("%d", SAVEVER));
 		}
 		message.Substitute("%d", FStringf("%d", SaveVersion));
-		LoadGameError(message.GetChars());
+		LoadGameError(message.GetChars(), "", ERR_SAVEGAMEVERSION);
 		return;
 	}
 
-	if (!G_CheckSaveGameWads(arc, true))
+	TArray<FString> missingWadList;
+
+	if (!G_CheckSaveGameWads(arc, true, &missingWadList))
 	{
+		if (g_SelacoMode)
+		{
+			// Selaco shows this through its error event handler
+			FString wadErr = "Failed to restore savegame. \nMissing Wads:\n";
+			for (int x = 0; x < (int)missingWadList.Size(); x++) {
+				wadErr.AppendFormat("\t%s\n", missingWadList[x].GetChars());
+			}
+			LoadGameError(wadErr.GetChars(), "", ERR_MISSINGMAP);
+		}
 		return;
 	}
 
@@ -2173,8 +2206,26 @@ void G_DoLoadGame ()
 	{
 		gamestate = GS_HIDECONSOLE;
 	}
+
+	// @Cockatrice - Retrieve the version number if it exists
+	int mapVersion = 0;
+	arc("Map Version", mapVersion);
+
 	// we are done with info.json.
 	arc.Close();
+
+	// Verify we can find the specified map version
+	if (g_SelacoMode && !P_CheckMapData(map.GetChars(), mapVersion)) {
+		FString fullError;
+
+		if (mapVersion > 0)
+			fullError.Format("Could not find map: %s Version: %d", map.GetChars(), mapVersion);
+		else
+			fullError.Format("Could not find map: %s", map.GetChars());
+
+		LoadGameError(fullError.GetChars(), "", ERR_MISSINGMAP);
+		return;
+	}
 
 	info = resfile->FindEntry("globals.json");
 	if (info < 0)
@@ -2226,7 +2277,7 @@ void G_DoLoadGame ()
 
 	// load a base level
 	bool demoplaybacksave = demoplayback;
-	G_InitNew(map.GetChars(), false);
+	G_InitNew(map.GetChars(), false, mapVersion);
 	FinishLoadingCVars();
 	demoplayback = demoplaybacksave;
 	savegamerestore = false;
@@ -2243,6 +2294,9 @@ void G_DoLoadGame ()
 	if (level.info != nullptr)
 		level.info->Snapshot.Clean();
 
+	// [NL] Need to rebuild lightmaps after a load, otherwise dynamic lightmaps will still be marked as 'rendered'
+	level.ResetLightmapRenderInfo();
+
 	BackupSaveName = savename;
 
 	// At this point, the GC threshold is likely a lot higher than the
@@ -2257,7 +2311,7 @@ void G_DoLoadGame ()
 // Called by the menu task.
 // Description is a 24 byte text string
 //
-void G_SaveGame (const char *filename, const char *description, bool quick)
+void G_SaveGame (const char *filename, const char *description, bool quick, int flags)
 {
 	if (sendsave || gameaction == ga_savegame || gameaction == ga_quicksave)
 	{
@@ -2283,6 +2337,7 @@ void G_SaveGame (const char *filename, const char *description, bool quick)
 	{
 		savegamefile = filename;
 		savedescription = description;
+		savegameflags = (int32_t)flags;
 		if (quick)
 		{
 			sendsave = false;
@@ -2304,6 +2359,157 @@ CCMD(opensaves)
 	I_OpenShellFolder(name.GetChars());
 }
 
+
+// @Cockatrice - Build a list of possible savegame locations to check given the prefix
+// Returns the number of items inserted into the array
+int G_BuildSaveNames(const char* prefix, TArray<FString> &outputAr) {
+	TArray<FString> paths;
+	M_GetSavegamesPaths(paths);
+
+	for (int x = 0; x < (int)paths.Size(); x++) {
+		const char* slash = "";
+		FString name;
+		FString leader = paths[x];
+		size_t len = leader.Len();
+		if (leader[0] != '\0' && leader[len - 1] != '\\' && leader[len - 1] != '/')
+		{
+			slash = "/";
+		}
+		name << leader << slash;
+		name = NicePath(name.GetChars());
+		CreatePath(name.GetChars());
+		name << prefix;
+
+		outputAr.Push(name);
+	}
+
+
+	// If +save_dir or -savedir is specified, add that
+	// command argument overrides CVAR
+	FString savedir;
+	if (const char* const dir = Args->CheckValue(FArg_savedir)) {
+		savedir = dir;
+	} else if(**save_dir) {
+		savedir = FString(save_dir);
+	}
+
+	const size_t len = savedir.Len();
+	if (len) {
+		FixPathSeperator(savedir);
+		if (savedir[len - 1] != '/')
+			savedir << '/';
+
+		savedir = NicePath(savedir.GetChars());
+
+		outputAr.Push(savedir);
+	}
+
+	return paths.Size();
+}
+
+
+extern time_t epochoffset;
+
+// @cockatrice - Because of cloud saving, saves can come in from anywhere, which means quicksave numbers are completely unreliable
+// Instead of using the number system, find all quicksaves, and if we are over the rotation count we overwrite the oldest one
+// (Used for Selaco's autosaves and quicksaves.)
+static FString G_FindSaveFilename(const char* header, int count = 1) {
+	TArray<FString> saveFiles;
+	FString filename, file;
+	int i, firstValidIndex = -1;
+
+	for (i = 0; i < 50; ++i)
+	{
+		FString savnam(header);
+		savnam.AppendFormat("%d", i);
+
+		filename = G_BuildSaveName(savnam.GetChars());
+		if (FileExists(filename)) {
+			saveFiles.Push(filename);
+		}
+		else {
+			if (firstValidIndex == -1)
+				firstValidIndex = i;
+		}
+	}
+
+	if (saveFiles.Size() > (unsigned int)count) {
+		// We are over our quicksave rotation limit, so pick the oldest one to write over
+		// We can't rely on file dates, so read the save files
+		int desiredIndex = -1;
+		int lastDate = INT_MAX;
+
+		for (unsigned int x = 0; x < saveFiles.Size(); x++) {
+			std::unique_ptr<FResourceFile> savegame(FResourceFile::OpenResourceFile(saveFiles[x].GetChars(), true));
+			if (savegame != nullptr) {
+				auto info = savegame->FindEntry("info.json");
+				if (info < 0)
+				{
+					// this should not happen because the file has already been verified.
+					continue;
+				}
+
+				auto data = savegame->Read(info);
+				FSerializer arc;
+				if (arc.OpenReader(data.string(), data.size())) {
+					int date = 0;
+					arc("Save Date", date);
+
+					if (date > 0 && date < lastDate) {
+						desiredIndex = x;
+						lastDate = date;
+					}
+				}
+			}
+		}
+
+		if (desiredIndex >= 0) {
+			file = saveFiles[desiredIndex];
+		}
+		else {
+			// Fallback on overwriting the smallest number
+			file = saveFiles[0];
+		}
+	}
+	else {
+		if (firstValidIndex != -1) {
+			file = G_BuildSaveName(header, firstValidIndex);
+		}
+		else {
+			// Keep going until we find a valid filename
+			for (i = 0;; ++i) {
+				filename = G_BuildSaveName(header, i);
+				if (!FileExists(filename)) {
+					file = filename;
+					break;
+				}
+			}
+		}
+	}
+
+	return file;
+}
+
+// Selaco's autosave/quicksave description: the current date and time, unless an event handler provides a title.
+static FString G_SelacoSaveDescription(const char *prefix, int type)
+{
+	char readableTime[64];
+	time_t now;
+	time(&now);
+	now += epochoffset;
+	struct tm* nowInfo = localtime(&now);
+	strftime(readableTime, 64, "%H:%M:%S - %d/%m/%Y", nowInfo);
+	FString description;
+	description.Format("%s: %s", prefix, readableTime);
+
+	// @Cockatrice - Consult the event managers to find a more appropriate description
+	FString autoDescription = staticEventManager.GetSavegameTitle(type);
+	if(!autoDescription.IsEmpty()) {
+		description = autoDescription;
+	}
+	return description;
+}
+
 void G_DoAutoSave ()
 {
 	// Never autosave in netgames since you can't load this properly anyway.
@@ -2312,35 +2518,48 @@ void G_DoAutoSave ()
 
 	FString description;
 	FString file;
-	// Keep up to four autosaves at a time
-	UCVarValue num;
-	const char *readableTime;
 	int count = autosavecount != 0 ? autosavecount : 1;
 
-	if (nextautosave == -1)
+	if (g_SelacoMode)
 	{
-		nextautosave = (autosavenum + 1) % count;
-	}
-
-	num.Int = nextautosave;
-	autosavenum->ForceSet (num, CVAR_Int);
-
-	file = G_BuildSaveName(FStringf("auto%02d", nextautosave).GetChars());
-
-	// The hint flag is only relevant on the primary level.
-	if (!(primaryLevel->flags2 & LEVEL2_NOAUTOSAVEHINT))
-	{
-		nextautosave = (nextautosave + 1) % count;
+		// Selaco: autosaveN files, the oldest one is overwritten (see G_FindSaveFilename)
+		file = G_FindSaveFilename("autosave", count);
+		description = G_SelacoSaveDescription("Autosave", 0);
 	}
 	else
 	{
-		// This flag can only be used once per level
-		primaryLevel->flags2 &= ~LEVEL2_NOAUTOSAVEHINT;
+		// Keep up to four autosaves at a time
+		UCVarValue num;
+		const char *readableTime;
+
+		if (nextautosave == -1)
+		{
+			nextautosave = (autosavenum + 1) % count;
+		}
+
+		num.Int = nextautosave;
+		autosavenum->ForceSet (num, CVAR_Int);
+
+		file = G_BuildSaveName(FStringf("auto%02d", nextautosave).GetChars());
+
+		// The hint flag is only relevant on the primary level.
+		if (!(primaryLevel->flags2 & LEVEL2_NOAUTOSAVEHINT))
+		{
+			nextautosave = (nextautosave + 1) % count;
+		}
+		else
+		{
+			// This flag can only be used once per level
+			primaryLevel->flags2 &= ~LEVEL2_NOAUTOSAVEHINT;
+		}
+
+		readableTime = myasctime ();
+		description.Format("Autosave %s", readableTime);
 	}
 
-	readableTime = myasctime ();
-	description.Format("Autosave %s", readableTime);
+	staticEventManager.PreSave(2);
 	G_DoSaveGame (false, false, file, description.GetChars());
+	staticEventManager.PostSave(2);
 }
 
 void G_DoQuickSave ()
@@ -2349,32 +2568,49 @@ void G_DoQuickSave ()
 	if (netgame)
 		return;
 
+	// @Cockatrice - Consult the event managers to determine if we are actually allowed to save at this moment
+	if (!staticEventManager.IsSaveAllowed(true)) {
+		if (developer > 0)
+			Printf("Quicksave rejected by event manager.\n");
+		return;
+	}
+
 	FString description;
 	FString file;
-	// Keeps a rotating set of quicksaves
-	UCVarValue num;
-	const char *readableTime;
-	int count = quicksaverotationcount != 0 ? quicksaverotationcount : 1;
 
-	if (quicksavenum < 0)
+	if (g_SelacoMode)
 	{
-		lastquicksave = 0;
+		// Selaco: quicksaveN files, the oldest one is overwritten (see G_FindSaveFilename)
+		int count = quicksaverotationcount > 0 ? quicksaverotationcount : 1;
+		file = G_FindSaveFilename("quicksave", count);
+		description = G_SelacoSaveDescription("Quicksave", 1);
 	}
 	else
 	{
-		lastquicksave = (quicksavenum + 1) % count;
+		// Keeps a rotating set of quicksaves
+		UCVarValue num;
+		const char *readableTime;
+		int count = quicksaverotationcount != 0 ? quicksaverotationcount : 1;
+
+		if (quicksavenum < 0)
+		{
+			lastquicksave = 0;
+		}
+		else
+		{
+			lastquicksave = (quicksavenum + 1) % count;
+		}
+
+		num.Int = lastquicksave;
+		quicksavenum->ForceSet (num, CVAR_Int);
+
+		file = G_BuildSaveName(FStringf("quick%02d", lastquicksave).GetChars());
+
+		readableTime = myasctime ();
+		description.Format("Quicksave %s", readableTime);
 	}
-
-	num.Int = lastquicksave;
-	quicksavenum->ForceSet (num, CVAR_Int);
-
-	file = G_BuildSaveName(FStringf("quick%02d", lastquicksave).GetChars());
-
-	readableTime = myasctime ();
-	description.Format("Quicksave %s", readableTime);
 	G_SaveGame(file.GetChars(), description.GetChars(), true);
 }
-
 
 static void PutSaveWads (FSerializer &arc)
 {
@@ -2387,26 +2623,47 @@ static void PutSaveWads (FSerializer &arc)
 	// Name of wad the map resides in
 	name = fileSystem.GetResourceFileName (fileSystem.GetFileContainer (primaryLevel->lumpnum));
 	arc.AddString("Map WAD", name);
+
+	if (g_SelacoMode)
+	{
+		// Add a list of mod files for reference
+		// (everything loaded after the IWAD and its own extra files)
+		TArray<FString> wadNames;
+		for (int x = fileSystem.GetMaxIwadNum() + 1; x < fileSystem.GetNumWads(); x++) {
+			wadNames.Push(fileSystem.GetWadName(x));
+		}
+
+		if(wadNames.size()) arc.Array("Mod Files", wadNames.data(), wadNames.size());
+	}
+
+	arc("Map Version", primaryLevel->mapVersion);
 }
 
-static void PutSaveComment (FSerializer &arc)
+static void PutSaveComment (FSerializer &arc, int32_t &flags, bool quicksave, bool autosave)
 {
 	int levelTime;
 
-	FString comment = myasctime();
+	FString comment;// = myasctime();
 
-	arc.AddString("Creation Time", comment.GetChars());
+	arc.AddString("Creation Time", myasctime());
 
-	// Get level name
-	comment.Format("%s - %s\n", primaryLevel->MapName.GetChars(), primaryLevel->LevelName.GetChars());
+	comment = staticEventManager.GetSavegameComments();
+	flags |= staticEventManager.GetSavegameFlags(quicksave, autosave);
 
-	// Append elapsed time
-	const char *const time = GStrings.GetString("SAVECOMMENT_TIME");
-	levelTime = primaryLevel->time / TICRATE;
-	comment.AppendFormat("%s: %02d:%02d:%02d", time, levelTime/3600, (levelTime%3600)/60, levelTime%60);
+	if (comment.IsEmpty()) {
+		// Get level name
+		comment.Format("%s - %s\n", primaryLevel->MapName.GetChars(), primaryLevel->LevelName.GetChars());
+
+		// Append elapsed time
+		const char *const time = GStrings.GetString("SAVECOMMENT_TIME");
+		levelTime = primaryLevel->time / TICRATE;
+		comment.AppendFormat("%s: %02d:%02d:%02d", time, levelTime / 3600, (levelTime % 3600) / 60, levelTime % 60);
+	}
 
 	// Write out the comment
 	arc.AddString("Comment", comment.GetChars());
+
+	arc("Flags", flags);
 }
 
 static void PutSavePic (FileWriter *file, int width, int height)
@@ -2424,7 +2681,7 @@ static void PutSavePic (FileWriter *file, int width, int height)
 	}
 }
 
-void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, const char *description)
+void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, const char *description, int32_t flags)
 {
 	TArray<FCompressedBuffer> savegame_content;
 	TArray<FString> savegame_filenames;
@@ -2508,7 +2765,15 @@ void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, c
 	}
 
 	PutSaveWads (savegameinfo);
-	PutSaveComment (savegameinfo);
+	PutSaveComment (savegameinfo, flags, forceQuicksave, gameaction == ga_autosave);
+
+	// @Cockatrice - Add date value so we can sort entries by date saved
+	time_t cdate;
+	time(&cdate);
+	int cdatei = (int)cdate;
+	savegameinfo("Save Date", cdatei);
+	savegameinfo("Elapsed Time", level.totaltime);
+	savegameinfo("Level Number", level.levelnum);
 
 	// Intermission stats for hubs
 	G_SerializeHub(savegameglobals);
@@ -2566,7 +2831,7 @@ void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, c
 
 	if (succeeded)
 	{
-		savegameManager.NotifyNewSave(filename, description, okForQuicksave, forceQuicksave);
+		savegameManager.NotifyNewSave(filename, description, cdatei, okForQuicksave, forceQuicksave, level.totaltime, level.levelnum, flags);
 		BackupSaveName = filename;
 
 		if (longsavemessages) Printf("%s (%s)\n", GStrings.GetString("GGSAVED"), filename.GetChars());
@@ -3227,6 +3492,44 @@ DEFINE_ACTION_FUNCTION(FLevelLocals, MakeAutoSave)
 {
 	G_MakeAutoSave();
 	return 0;
+}
+
+// Similar to CCMD(quicksave) but with additional checks
+// Returns true if savegame was PERMITTED, but does not guarantee that save was created
+DEFINE_ACTION_FUNCTION(FLevelLocals, MakeQuickSave)
+{
+	if (!usergame || (players[consoleplayer].health <= 0 && !multiplayer))
+	{
+		S_Sound(CHAN_VOICE, CHANF_UI, "menu/invalid", snd_menuvolume, ATTN_NONE);
+		ACTION_RETURN_BOOL(false);
+	}
+
+	if (gamestate != GS_LEVEL)
+		ACTION_RETURN_BOOL(false);
+
+	// If the quick save rotation is enabled, it handles the save slot.
+	if (quicksaverotation)
+	{
+		G_DoQuickSave();
+		ACTION_RETURN_BOOL(true);
+	}
+
+	if (savegameManager.quickSaveSlot == NULL || savegameManager.quickSaveSlot == (FSaveGameNode*)1)
+	{
+		FString description;
+		FString file;
+		//lastquicksave = 0;
+		file = G_BuildSaveName("quicksave", 0);// lastquicksave);
+
+		FString readableTime = myasctime();
+		description.Format("Quicksave %s", readableTime.GetChars());
+		// deferred to G_Ticker (ga_quicksave), which calls the PreSave/PostSave events, like G_DoQuickSave
+		G_SaveGame(file.GetChars(), description.GetChars(), true);
+		ACTION_RETURN_BOOL(true);
+	}
+
+	G_SaveGame(savegameManager.quickSaveSlot->Filename.GetChars(), savegameManager.quickSaveSlot->SaveTitle.GetChars());
+	ACTION_RETURN_BOOL(true);
 }
 
 DEFINE_GLOBAL(players)

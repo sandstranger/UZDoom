@@ -15,10 +15,23 @@ class VulkanPhysicalDevice;
 class VulkanSurface;
 class VulkanCompatibleDevice;
 
+
+struct VulkanUploadSlot {
+	VkQueue queue = VK_NULL_HANDLE;
+	int queueFamily = -1, queueIndex = -1;
+	bool familySupportsGraphics = false;
+};
+
+
+enum VulkanDeviceFlags {
+	VK_DEVICE_FLAG_FORCE_EXCLUSIVE_PRESENT = 1
+};
+
+
 class VulkanDevice
 {
 public:
-    VulkanDevice(std::shared_ptr<VulkanInstance> instance, VulkanSurface *surface, const VulkanCompatibleDevice& selectedDevice);
+    VulkanDevice(std::shared_ptr<VulkanInstance> instance, VulkanSurface *surface, const VulkanCompatibleDevice& selectedDevice, int numUploadSlots = 2, int flags = 0);
 	~VulkanDevice();
 
 	std::set<std::string> EnabledDeviceExtensions;
@@ -32,12 +45,20 @@ public:
 	VkDevice device = VK_NULL_HANDLE;
 	VmaAllocator allocator = VK_NULL_HANDLE;
 
+
 	VkQueue GraphicsQueue = VK_NULL_HANDLE;
 	VkQueue PresentQueue = VK_NULL_HANDLE;
+	std::vector<VulkanUploadSlot> uploadQueues;
+
+	int UploadFamily = -1;
+	int UploadQueuesSupported = 1;
+	bool UploadFamilySupportsGraphics = false;
 
 	int GraphicsFamily = -1;
 	int PresentFamily = -1;
 	bool GraphicsTimeQueries = false;
+
+	bool isARC = false;
 
 	bool SupportsExtension(const char* ext) const;
 
@@ -46,7 +67,7 @@ public:
 private:
 	bool DebugLayerActive = false;
 
-	void CreateDevice();
+	void CreateDevice(int numUploadSlots = 2);
 	void CreateAllocator();
 	void ReleaseResources();
 };

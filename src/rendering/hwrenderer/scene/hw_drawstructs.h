@@ -43,6 +43,8 @@ class FRenderState;
 struct HWDecal;
 struct FSection;
 enum area_t : int;
+class DParticleDefinition;
+struct particledata_t;
 
 enum HWRenderStyle
 {
@@ -248,14 +250,17 @@ public:
 
 	bool DoHorizon(HWWallDispatcher* di, seg_t* seg, sector_t* fs, vertex_t* v1, vertex_t* v2);
 
-	bool SetWallCoordinates(seg_t* seg, FTexCoordInfo* tci, float ceilingrefheight,
-		float topleft, float topright, float bottomleft, float bottomright, float t_ofs, float skew);
+	bool SetWallCoordinates(seg_t* seg, FTexCoordInfo* tci, float texturetop,
+		float topleft, float topright, float bottomleft, float bottomright, float t_ofs, float skew, 
+		float* clipOfs);
 
 	void DoTexture(HWWallDispatcher* di, int type, seg_t* seg, int peg,
 		float ceilingrefheight, float floorrefheight,
 		float CeilingHeightstart, float CeilingHeightend,
 		float FloorHeightstart, float FloorHeightend,
-		float v_offset, float skew);
+		float v_offset, float skew,
+		float preclip_topleft, float preclip_topright,
+		float preclip_bottomleft, float preclip_bottomright);
 
 	void DoMidTexture(HWWallDispatcher* di, seg_t* seg, bool drawfogboundary,
 		sector_t* front, sector_t* back,
@@ -267,7 +272,9 @@ public:
 
 	void BuildFFBlock(HWWallDispatcher* di, seg_t* seg, F3DFloor* rover, int roverIndex,
 		float ff_topleft, float ff_topright,
-		float ff_bottomleft, float ff_bottomright);
+		float ff_bottomleft, float ff_bottomright,
+		float preclip_topleft, float preclip_topright,
+		float preclip_bottomleft, float preclip_bottomright);
 	void InverseFloors(HWWallDispatcher* di, seg_t* seg, sector_t* frontsector,
 		float topleft, float topright,
 		float bottomleft, float bottomright);
@@ -406,6 +413,13 @@ public:
 	TArray<lightlist_t> *lightlist;
 	DRotator Angles;
 
+	// (Selaco) particle data of the sprite, also for Selaco's pooled particles which have no particle_t
+	bool isparticle = false;
+	bool particlehastexture = false;
+	bool particlenomipmap = false;
+	uint32_t particleflags = 0;
+	subsector_t* particlesubsector = nullptr;
+
 	void SplitSprite(HWDrawInfo *di, sector_t * frontsector, bool translucent);
 	void PerformSpriteClipAdjustment(AActor *thing, const DVector2 &thingpos, float spriteheight);
 	bool CalculateVertices(HWDrawInfo *di, FVector3 *v, DVector3 *vp);
@@ -413,9 +427,10 @@ public:
 public:
 
 	void CreateVertices(HWDrawInfo *di);
-	void PutSprite(HWDrawInfo *di, bool translucent);
+	void PutSprite(HWDrawInfo *di, bool translucent, double ticFrac = 1.0);
 	void Process(HWDrawInfo *di, AActor* thing,sector_t * sector, area_t in_area, int thruportal = false, bool isSpriteShadow = false);
-	void ProcessParticle(HWDrawInfo *di, particle_t *particle, sector_t *sector, class DVisualThinker *spr);//, int shade, int fakeside)
+	void ProcessParticle(HWDrawInfo* di, particle_t* particle, sector_t* sector, class DVisualThinker* spr);//, int shade, int fakeside)
+	void ProcessDefinedParticle(HWDrawInfo *di, particledata_t *particle, sector_t *sector);
 	void AdjustVisualThinker(HWDrawInfo *di, DVisualThinker *spr, sector_t *sector);
 
 	void DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent);
@@ -459,13 +474,16 @@ inline float Dist2(float x1,float y1,float x2,float y2)
 }
 
 bool hw_SetPlaneTextureRotation(const HWSectorPlane * secplane, FGameTexture * gltexture, VSMatrix &mat);
-void hw_GetDynModelLight(AActor *self, FDynLightData &modellightdata);
-LightProbe* FindLightProbe(FLevelLocals* level, float x, float y, float z);
+void hw_GetDynModelLight(AActor *self, FDynLightData &modellightdata, double ticFrac = 1.0);
+LightProbe* FindLightProbe(FLevelLocals* level, float x, float y, float z, float floorz = -FLT_MAX);
+bool TryGetLightProbeColor(FLevelLocals* level, AActor* actor, FVector3& out);
+bool TryGetLightProbeColor(FLevelLocals* level, float x, float y, float z, FVector3& out, float floorz = -FLT_MAX);
+void SetHeavyProbe(FRenderState& state, FLevelLocals* level, AActor* actor);
 
 extern const float LARGE_VALUE;
 
 struct FDynLightData;
 struct FDynamicLight;
-bool GetLight(FDynLightData& dld, int group, Plane& p, FDynamicLight* light, bool checkside);
-void AddLightToList(FDynLightData &dld, int group, FDynamicLight* light, bool forceAttenuate);
+bool GetLight(FDynLightData& dld, int group, Plane& p, FDynamicLight* light, bool checkside, double ticFrac);
+void AddLightToList(FDynLightData &dld, int group, FDynamicLight* light, bool forceAttenuate, double ticFrac);
 void SetSplitPlanes(FRenderState& state, const secplane_t& top, const secplane_t& bottom);

@@ -25,6 +25,7 @@
 #include "TRS.h"
 #include "tarray.h"
 #include "name.h"
+#include "fs_files.h"
 
 #include "bonecomponents.h"
 
@@ -103,6 +104,12 @@ enum EFrameError
 class FModel
 {
 public:
+	enum LoadState
+	{
+		NONE = 0,		// Uninitialized
+		LOADING = 1,	// Waiting on texture load op
+		READY = 2		// Fully loaded
+	};
 
 	FModel();
 	virtual ~FModel();
@@ -148,14 +155,23 @@ public:
 	IModelVertexBuffer *GetVertexBuffer(int type) const { return mVBuf[type]; }
 	void DestroyVertexBuffer();
 
+	LoadState GetLoadState() const { return loadState; }
+	void SetLoadState(LoadState state) { loadState = state; }
+
+	virtual void LoadGeometry(FileSys::FileData* lumpData);
+	int GetLumpNum() const { return mLumpNum; }
+
 	bool hasSurfaces = false;
 
 	FString mFileName;
 	std::pair<FString, FString> mFilePath;
 
-	FSpriteModelFrame *baseFrame;
+	FSpriteModelFrame *baseFrame = nullptr;
 private:
 	IModelVertexBuffer *mVBuf[NumModelRendererTypes];
+	LoadState loadState = NONE;
+protected:
+	int mLumpNum = -1;
 };
 
 int ModelFrameHash(FSpriteModelFrame* smf);

@@ -21,6 +21,7 @@
 #include "actor.h"
 #include "cycler.h"
 #include "g_levellocals.h"
+#include "selaco.h"
 
 struct side_t;
 struct seg_t;
@@ -226,6 +227,12 @@ struct FDynamicLight
 		return Pos + Level->Displacements.getOffset(Sector->PortalGroup, portalgroup);
 	}
 
+	inline DVector3 PosRelative(int portalgroup, double ticFrac) const
+	{
+		DVector3 lp = LastPos + Level->Displacements.getOffset(LastSector->PortalGroup, portalgroup);
+		return	lp + ((Pos + Level->Displacements.getOffset(Sector->PortalGroup, portalgroup) - lp) * ticFrac);
+	}
+
 	bool ShouldLightActor(AActor *check)
 	{
 		int lf = (*pLightFlags);
@@ -290,6 +297,19 @@ struct FDynamicLight
 	}
 	void Activate();
 
+	void AddPlayerLight() {
+		auto idx = Level->playerLights.Find(this);
+		if (idx >= Level->playerLights.size()) {
+			Level->playerLights.Push(this);
+		}
+	}
+
+	void RemovePlayerLight() {
+		auto idx = Level->playerLights.Find(this);
+		if (idx < Level->playerLights.size())
+			Level->playerLights.Delete(idx);
+	}
+
 	void SetActor(AActor *ac, bool isowned)
 	{
 		target = ac;
@@ -301,10 +321,26 @@ struct FDynamicLight
 		{
 			flags &= ~(ILF_OWNED);
 		}
+
+		// [Selaco] lights of actors parented to the console player are tracked as player lights (Selaco only)
+		if (g_SelacoMode)
+		{
+			if (target && target->master && target->master == players[consoleplayer].mo) {
+				AddPlayerLight();
+			}
+			else {
+				RemovePlayerLight();
+			}
+		}
 	}
+
 	double X() const { return Pos.X; }
 	double Y() const { return Pos.Y; }
 	double Z() const { return Pos.Z; }
+
+	double iX(double ticFrac) const { return LastPos.X + ((Pos.X - LastPos.X) * ticFrac); }
+	double iY(double ticFrac) const { return LastPos.Y + ((Pos.Y - LastPos.Y) * ticFrac); }
+	double iZ(double ticFrac) const { return LastPos.Z + ((Pos.Z - LastPos.Z) * ticFrac); }
 
 	void Tick();
 	void UpdateLocation();
@@ -316,11 +352,16 @@ struct FDynamicLight
 private:
 	double DistToSeg(const DVector3 &pos, vertex_t *start, vertex_t *end);
 	void CollectWithinRadius(const DVector3 &pos, FSection *section, float radius);
+	void CollectWithinRadiusSP(const DVector3 &opos, const DVector3 &spotDir, FSection *section, float radius);
 
 public:
 	FCycler m_cycler;
+	DVector3 LastPos;
 	DVector3 Pos;
 	DVector3 m_off;
+	
+	// @Cockatrice - These values are used only for spotlights and only to detect changes in angle between frames
+	DAngle LastAngle, LastPitch;
 
 	// This date can either come from the owning actor or from a light definition
 	// To avoid having to copy these around every tic, these are pointers to the source data.
@@ -331,7 +372,7 @@ public:
 
 	double specialf1;
 	FDynamicLight *next, *prev;
-	sector_t *Sector;
+	sector_t *Sector, *LastSector;
 	FLevelLocals *Level;
 	TObjPtr<AActor *> target;
 	DAngle            Yaw, Pitch;

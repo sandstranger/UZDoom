@@ -22,6 +22,8 @@
 **
 */
 
+#include "selaco.h"
+#include "filesystem.h"
 #include "info.h"
 #include "actor.h"
 #include "p_lnspec.h"
@@ -248,6 +250,17 @@ void FMapInfoParser::ParseDoomEdNums()
 	}
 }
 
+// Selaco: the engine pk3's own MAPINFO names other games' classes, some of which are not compiled for Selaco
+// (zcc_parser.cpp, IsSelacoSkippedEngineScript) - not an error then.
+static bool SelacoSkippedEngineClass(const FString& filename)
+{
+	if (!g_SelacoMode) return false;
+	const char* base = fileSystem.GetResourceFileName(0);
+	if (base == nullptr || *base == 0) return false;
+	FString prefix = FString(base) + ":";
+	return strnicmp(filename.GetChars(), prefix.GetChars(), prefix.Len()) == 0;
+}
+
 void InitActorNumsFromMapinfo()
 {
 	DoomEdMap.Clear();
@@ -261,7 +274,12 @@ void InitActorNumsFromMapinfo()
 		if (pair->Value.classname != NAME_None)
 		{
 			cls = PClass::FindActor(pair->Value.classname);
-			if (cls == NULL)
+			if (cls == NULL && SelacoSkippedEngineClass(pair->Value.filename))
+			{
+				DPrintf(DMSG_NOTIFY, "%s line %d: class %s is not compiled for Selaco\n",
+					pair->Value.filename.GetChars(), pair->Value.linenum, pair->Value.classname.GetChars());
+			}
+			else if (cls == NULL)
 			{
 				Printf(TEXTCOLOR_RED "Script error, \"%s\" line %d:\nUnknown actor class %s\n",
 					pair->Value.filename.GetChars(), pair->Value.linenum, pair->Value.classname.GetChars());
@@ -430,7 +448,12 @@ void InitClassMap(FClassMap &themap, SpawnMap &thedata)
 		if (pair->Value.classname != NAME_None)
 		{
 			cls = PClass::FindActor(pair->Value.classname);
-			if (cls == NULL)
+			if (cls == NULL && SelacoSkippedEngineClass(pair->Value.filename))
+			{
+				DPrintf(DMSG_NOTIFY, "%s line %d: class %s is not compiled for Selaco\n",
+					pair->Value.filename.GetChars(), pair->Value.linenum, pair->Value.classname.GetChars());
+			}
+			else if (cls == NULL)
 			{
 				Printf(TEXTCOLOR_RED "Script error, \"%s\" line %d:\nUnknown actor class %s\n",
 					pair->Value.filename.GetChars(), pair->Value.linenum, pair->Value.classname.GetChars());

@@ -36,7 +36,90 @@
 #include "gstrings.h"
 #include "i_mainwindow.h"
 #include "engineerrors.h"
+#include "selaco.h"
 #include "zstring.h"
+
+
+// @Cockatrice - GZSelaco's storage location checks (kept for reference; UZDoom's IsPortable() decides
+// where files are stored, for Selaco too)
+bool UseKnownFolders()
+{
+	// Cache this value so the semantics don't change during a single run
+	// of the program. (e.g. Somebody could add write access while the
+	// program is running.)
+	static int iswritable = -1;
+	HANDLE file;
+
+	if (iswritable >= 0)
+	{
+		return !iswritable;
+	}
+	// Consider 'Program Files' read only without actually checking.
+	bool found = false;
+	for (auto p : { L"ProgramFiles", L"ProgramFiles(x86)" })
+	{
+		wchar_t buffer1[256];
+		if (GetEnvironmentVariable(p, buffer1, 256))
+		{
+			FString envpath(buffer1);
+			FixPathSeperator(envpath);
+			if (progdir.MakeLower().IndexOf(envpath.MakeLower()) == 0)
+			{
+				found = true;
+				break;
+			}
+		}
+	}
+
+	if (!found)
+	{
+		std::wstring testpath = progdir.WideString() + L"writest";
+		file = CreateFile(testpath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+		if (file != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(file);
+			if (!batchrun) Printf("Using program directory for storage\n");
+			iswritable = true;
+			return false;
+		}
+	}
+	if (!batchrun) Printf("Using known folders for storage\n");
+	iswritable = false;
+	return true;
+}
+
+
+bool UseKnownFoldersIncludingProgramFiles()
+{
+	// Cache this value so the semantics don't change during a single run
+	// of the program. (e.g. Somebody could add write access while the
+	// program is running.)
+	static int iswritable = -1;
+	HANDLE file;
+
+	if (iswritable >= 0)
+	{
+		return !iswritable;
+	}
+
+	std::wstring testpath = progdir.WideString() + L"writest";
+	file = CreateFile(testpath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL,
+		CREATE_ALWAYS,
+		FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+	if (file != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(file);
+		Printf("Using program directory for savegame storage\n");
+		iswritable = true;
+		return false;
+	}
+
+	Printf("Using known folders for savegame storage\n");
+	iswritable = false;
+	return true;
+}
 
 
 static int isportable = -1;
@@ -108,14 +191,30 @@ bool IsPortable()
 //
 //===========================================================================
 
-FString GetKnownFolder(int shell_folder, REFKNOWNFOLDERID known_folder, bool create)
+FString GetKnownFolder(int shell_folder, REFKNOWNFOLDERID known_folder, bool create, bool isFatal = true)
 {
 	PWSTR wpath;
 	if (FAILED(SHGetKnownFolderPath(known_folder, create ? KF_FLAG_CREATE : 0, NULL, &wpath)))
 	{
 		// This should never be triggered unless the OS was compromised
-		I_FatalError("Unable to retrieve known folder.");
+		if (isFatal) {
+			I_FatalError(TEXTCOLOR_YELLOW "Unable to retrieve or create known folder: {%08lX-%04hX-%04hX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX} Create: %d",
+				known_folder.Data1, known_folder.Data2, known_folder.Data3,
+				known_folder.Data4[0], known_folder.Data4[1], known_folder.Data4[2], known_folder.Data4[3],
+				known_folder.Data4[4], known_folder.Data4[5], known_folder.Data4[6], known_folder.Data4[7],
+				create);
+		}
+		else {
+			Printf(TEXTCOLOR_YELLOW "Warning: Unable to retrieve or create known folder: {%08lX-%04hX-%04hX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX} Create: %d\n",
+				known_folder.Data1, known_folder.Data2, known_folder.Data3,
+				known_folder.Data4[0], known_folder.Data4[1], known_folder.Data4[2], known_folder.Data4[3],
+				known_folder.Data4[4], known_folder.Data4[5], known_folder.Data4[6], known_folder.Data4[7],
+				create);
+		}
+
+		return "";
 	}
+
 	FString path = FString(wpath);
 	FixPathSeperator(path);
 	CoTaskMemFree(wpath);
@@ -366,12 +465,99 @@ FString M_GetSavegamesPath()
 	// Try standard Saved Games folder
 	else
 	{
-		path = GetKnownFolder(-1, FOLDERID_SavedGames, true);
-		path << "/" GAMENAME "/";
+		// On some Win11 systems, this call fails so use Documents as a backup
+		path = GetKnownFolder(-1, FOLDERID_SavedGames, true, false);
+
+		if (path.IsEmpty()) {
+			// Try Documents folder
+			path = GetKnownFolder(CSIDL_PERSONAL, FOLDERID_Documents, true, false);
+
+			if (!path.IsEmpty()) {
+				// Documents folder
+				path << "/My Games/" GAMENAME "/";
+			}
+			else {
+				// Last resort, use the AppData folder. This is probably because the user profile wasn't created properly
+				// I'm looking at you Windows11
+				path = GetKnownFolder(CSIDL_APPDATA, FOLDERID_RoamingAppData, true);
+				path += "/" GAME_DIR "/Save/";
+				CreatePath(path.GetChars());
+
+				// Steam may not synchronize cloud saves from this folder, so output an error to the console if we pick this
+				// Only warn once
+				static bool hasWarned = false;
+				if (!hasWarned) {
+					hasWarned = Printf(TEXTCOLOR_ORANGE "Error: No standard save path could be located.\n" TEXTCOLOR_ORANGE "Your savegames may not be synchronized over Steam Cloud.\n" TEXTCOLOR_ORANGE "Savegames are currently being saved to : \n\t" TEXTCOLOR_BLUE "%s\n", path.GetChars()) > 0;
+				}
+			}
+		}
+		else {
+			// Saved Games folder
+			path << "/" GAMENAME "/";
+		}
 	}
 	if (netgame)
 		path << "NetGame/";
 	return path;
+}
+
+//===========================================================================
+//
+// M_GetSavegamesPaths												Windows
+//
+// Returns all paths where savegames might be located
+//
+//===========================================================================
+
+int M_GetSavegamesPaths(TArray<FString>& outputAr) {
+	int cnt = 0;
+
+	auto addPath = [&](const FString &path)
+	{
+		if (path.IsEmpty()) return;
+		for (unsigned i = 0; i < outputAr.Size(); i++)
+		{
+			if (outputAr[i].CompareNoCase(path) == 0) return;
+		}
+		outputAr.Push(path);
+		cnt++;
+	};
+
+	// The location new saves are written to
+	addPath(M_GetSavegamesPath());
+
+	// @Cockatrice - Selaco also looks in all the other places GZSelaco may have saved to
+	if (g_SelacoMode)
+	{
+		FString path;
+
+		// Start with progdir
+		path << progdir << "Save/";
+		addPath(path);
+
+		// Try Saved Games
+		path = GetKnownFolder(-1, FOLDERID_SavedGames, false, false);
+		if (!path.IsEmpty()) {
+			path << "/" GAMENAME "/";
+			addPath(path);
+		}
+
+		// Try Documents/My Games/ Folder
+		path = GetKnownFolder(CSIDL_PERSONAL, FOLDERID_Documents, false, false);
+		if (!path.IsEmpty()) {
+			path << "/My Games/" GAMENAME "/";
+			addPath(path);
+		}
+
+		// Try appdata/GAMENAMELOWERCASE/Save
+		path = GetKnownFolder(CSIDL_APPDATA, FOLDERID_RoamingAppData, false, false);
+		if (!path.IsEmpty()) {
+			path += "/" GAME_DIR "/Save/";
+			addPath(path);
+		}
+	}
+
+	return cnt;
 }
 
 //===========================================================================

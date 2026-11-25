@@ -179,6 +179,7 @@ FGameConfigFile::FGameConfigFile ()
 	bGameSetup = false;
 	bKeySetup = false;
 	bResetBindFlags = 0;
+	bRequiresReset = false;
 	pathname = GetConfigPath (true);
 	ChangePathName (pathname.GetChars());
 	LoadConfigFile ();
@@ -389,6 +390,7 @@ void FGameConfigFile::DoAutoloadSetup (FIWadManager *iwad_man)
 	CreateSectionAtStart("Global.Autoload");
 
 	// The same goes for auto-exec files.
+	// (Selaco.AutoExec is created by AddAutoexec() when Selaco is played.)
 	CreateStandardAutoExec("Chex.AutoExec", true);
 	CreateStandardAutoExec("Strife.AutoExec", true);
 	CreateStandardAutoExec("Hexen.AutoExec", true);
@@ -919,6 +921,16 @@ void FGameConfigFile::DoKeySetup(FString section)
 	}
 
 	bKeySetup = true;
+}
+
+// Called at the end of ParseCVarInfo(): resets all CVars to their defaults if a config migration asked for it
+// (GZSelaco did this for its own configs older than LastRun version 224; UZDoom's migration in DoGlobalSetup()
+// doesn't need it, so nothing sets bRequiresReset at the moment).
+void FGameConfigFile::FinishStartup() {
+	if (bRequiresReset) {
+		C_SetCVarsToDefaults();
+		bRequiresReset = false;
+	}
 }
 
 // Like DoGameSetup(), but for mod-specific cvars.

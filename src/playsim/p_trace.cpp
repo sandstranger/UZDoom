@@ -30,6 +30,7 @@
 #include "g_levellocals.h"
 #include "p_terrain.h"
 #include "vm.h"
+#include "selaco.h"
 
 //==========================================================================
 //
@@ -70,7 +71,7 @@ struct FTraceInfo
 	bool CheckPlane(const secplane_t &plane);
 	void EnterLinePortal(FPathTraverse &pt, intercept_t *in);
 	void EnterSectorPortal(FPathTraverse &pt, int position, double frac, sector_t *entersec);
-
+	void Check3DFloorsForWater(double dist);
 
 	bool CheckSectorPlane(const sector_t *sector, bool checkFloor)
 	{
@@ -300,7 +301,11 @@ void FTraceInfo::Setup3DFloors()
 
 			if (Results->Crossed3DWater == NULL)
 			{
-				if (Check3DFloorPlane(rover, false) && isLiquid(rover))
+				if (g_SelacoMode)
+				{
+					Check3DFloorsForWater(sdist);
+				}
+				else if (Check3DFloorPlane(rover, false) && isLiquid(rover))
 				{
 					// only consider if the plane is above the actual floor.
 					if (rover->top.plane->ZatPoint(Results->HitPos) > bf)
@@ -358,6 +363,36 @@ void FTraceInfo::Setup3DFloors()
 						bc = ff_top;
 					}
 					inshootthrough = false;
+				}
+			}
+		}
+	}
+}
+
+// @Cockatrice - Check 3d sectors, check for entrance into water
+// This should be used inside of the line/sector test so we don't exceed the bounds of the water sector like in standard GZDoom
+inline void FTraceInfo::Check3DFloorsForWater(double dist) {
+	if (Results->Crossed3DWater == NULL) {
+		for (auto rover : CurSector->e->XFloor.ffloors)
+		{
+			if ((rover->flags & FF_EXISTS) && isLiquid(rover))
+			{
+				//CheckPlane(checkBottom ? *(ffloor->bottom.plane) : *(ffloor->top.plane));
+				auto plane = *(rover->top.plane);
+				double den = plane.Normal() | Vec;
+
+				if (den != 0)
+				{
+					double num = (plane.Normal() | Start) + plane.fD();
+
+					double hitdist = -num / den;
+
+					if (hitdist > EnterDist && hitdist < MaxDist && hitdist < dist)
+					{
+						Results->Crossed3DWaterPos = Start + Vec * hitdist;
+						Results->Crossed3DWater = rover;
+						return;
+					}
 				}
 			}
 		}
@@ -448,6 +483,8 @@ bool FTraceInfo::LineCheck(intercept_t *in, double dist, DVector3 hit, bool spec
 			Results->Distance = 0;
 		}
 	}
+
+	if (g_SelacoMode) Check3DFloorsForWater(dist); // (Selaco: water crossed by this line segment)
 
 	if (hit.Z <= ff)
 	{
@@ -566,12 +603,12 @@ bool FTraceInfo::LineCheck(intercept_t *in, double dist, DVector3 hit, bool spec
 		{
 			if (TraceFlags & TRACE_PCross)
 			{
-				P_ActivateLine(in->d.line, IgnoreThis, lineside, SPAC_PCross);
+				P_ActivateLine(in->d.line, IgnoreThis, lineside, SPAC_PCross, &hit);
 			}
 			if (TraceFlags & TRACE_Impact)
 			{ // This is incorrect for "impact", but Hexen did this, so
 			  // we need to as well, for compatibility
-				P_ActivateLine(in->d.line, IgnoreThis, lineside, SPAC_Impact);
+				P_ActivateLine(in->d.line, IgnoreThis, lineside, SPAC_Impact, &hit);
 			}
 		}
 	}
@@ -785,7 +822,9 @@ bool FTraceInfo::TraceTraverse (int ptflags)
 	while ((in = it.Next()))
 	{
 		// Deal with splashes in 3D floors (but only run once per sector, not each iteration - and stop if something was found.)
-		if (Results->Crossed3DWater == NULL && lastsplashsector != CurSector->sectornum)
+		// @Cockatrice, this 3D floor water check was removed since it results in splashes spawning outside of the bounds of the 3D sector. Major oversight? Not sure why it was done this way.
+		// (Selaco only: LineCheck finds the crossing there. Other games keep this check.)
+		if (!g_SelacoMode && Results->Crossed3DWater == NULL && lastsplashsector != CurSector->sectornum)
 		{
 			for (auto rover : CurSector->e->XFloor.ffloors)
 			{
@@ -940,6 +979,12 @@ bool FTraceInfo::TraceTraverse (int ptflags)
 			break;
 		}
 	}
+
+	// @Cockatrice - Remove water crossing if the distance to the surface is not shorter than the end position of the trace
+	if (Results->Crossed3DWater && (Results->Crossed3DWaterPos - Start).LengthSquared() >= (Results->Distance * Results->Distance)) {
+		Results->Crossed3DWater = NULL;
+	}
+
 	return Results->HitType != TRACE_HitNone;
 }
 

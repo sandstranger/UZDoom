@@ -32,6 +32,7 @@
 #include "texturemanager.h"
 #include "v_video.h"
 #include "hw_cvars.h"
+#include "selaco.h"
 
 void AddLightDefaults(FLightDefaults *defaults, double attnFactor);
 void AddLightAssociation(const char *actor, const char *frame, const char *light);
@@ -1859,10 +1860,60 @@ class GLDefsParser
 			sc.MustGetString();
 			FTextureID no = TexMan.CheckForTexture(sc.String, type);
 			auto tex = TexMan.GetGameTexture(no);
-			if (tex) tex->AddAutoMaterials();
+			
+			bool skipOpeningBrace = false;
+			if (!tex) {
+				// [Selaco] gated: UZDoom silently ignores hardware shaders for missing textures.
+				if (g_SelacoMode) sc.ScriptMessage("GLDefs defined hardware shader for non-existent texture %s\n", sc.String);
+			}
+			else {
+				// @Cockatrice - Check for a second texture name so we can copy and redefine this texture, leaving the original alone
+				// This allows us to define shaders for textures and still use the original without a shader
+				// This has limited use of course, since you can't use these generated textures in an editor as they don't exist outside the game
+				// But will work great for automatic replacement of certain textures that need shaders in some conditions without breaking the original texture
+				if (sc.GetString()) {
+					if (sc.Compare("{")) {
+						skipOpeningBrace = true;
+					}
+					else {
+						#ifndef NDEBUG
+							Printf("Duplicating texture, making new tex with name: %s\n", sc.String);
+						#endif
+						auto orig = tex->GetTexture();
+						auto newTex = MakeGameTexture(orig, sc.String, type);
+						tex->CopySize(tex, false);
+						TexMan.AddGameTexture(newTex);
+
+						// I have no idea if this will actually work
+						if (tex->GetBrightmap()) newTex->Brightmap = tex->GetBrightmap();
+
+						// Copy layers
+						FMaterialLayers* layers = tex->Layers.get();
+						
+						if (layers != nullptr) {
+							if (!newTex->Layers) newTex->Layers = std::make_unique<FMaterialLayers>();
+							if (layers->Normal.get()) newTex->Layers->Normal = layers->Normal;
+							if (layers->AmbientOcclusion.get()) newTex->Layers->AmbientOcclusion = layers->AmbientOcclusion;
+							if (layers->Roughness.get()) newTex->Layers->Roughness = layers->Roughness;
+							if (layers->Metallic.get()) newTex->Layers->Metallic = layers->Metallic;
+							if (layers->Specular.get()) newTex->Layers->Specular = layers->Specular;
+							if (layers->Glowmap.get()) newTex->Layers->Glowmap = layers->Glowmap;
+							if (layers->Detailmap.get()) newTex->Layers->Detailmap = layers->Detailmap;
+
+							for (int x = 0; x < MAX_CUSTOM_HW_SHADER_TEXTURES; x++) {
+								newTex->Layers->CustomShaderTextures[x] = layers->CustomShaderTextures[x];
+							}
+						}
+
+						tex = newTex;
+					}
+				}
+
+				tex->AddAutoMaterials();
+			}
 			MaterialLayers mlay = { -1000, -1000 };
 
-			sc.MustGetToken('{');
+			if(!skipOpeningBrace) sc.MustGetToken('{');
 			while (!sc.CheckToken('}'))
 			{
 				sc.MustGetString();

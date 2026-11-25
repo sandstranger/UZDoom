@@ -331,6 +331,7 @@ static FFlagDef ActorFlagDefs[]=
 	DEFINE_FLAG(MF8, MASTERNOSEE, AActor, flags8),
 	DEFINE_FLAG(MF8, ADDLIGHTLEVEL, AActor, flags8),
 	DEFINE_FLAG(MF8, ONLYSLAMSOLID, AActor, flags8),
+	DEFINE_FLAG(MF8, BLOCKLOF, AActor, flags8),				// @Cockatrice
 
 	DEFINE_FLAG(MF9, SHADOWAIM, AActor, flags9),
 	DEFINE_FLAG(MF9, DOSHADOWBLOCK, AActor, flags9),
@@ -341,6 +342,12 @@ static FFlagDef ActorFlagDefs[]=
 	DEFINE_PROTECTED_FLAG(MF9, ISPUFF, AActor, flags9), //[AA] was spawned by SpawnPuff
 	DEFINE_FLAG(MF9, FORCESECTORDAMAGE, AActor, flags9),
 	DEFINE_FLAG(MF9, NOAUTOOFFSKULLFLY, AActor, flags9),
+	// Selaco flags (GZSelaco had ABSDAMAGE, HITSCANTHRU and PRECACHEALWAYS in flags8)
+	DEFINE_FLAG(MF9, MASTERLIGHTPROBES, AActor, flags9),
+	DEFINE_FLAG(MF9, ABSDAMAGE, AActor, flags9),
+	DEFINE_FLAG(MF9, HITSCANTHRU, AActor, flags9),
+	DEFINE_FLAG(MF9, PRECACHEALWAYS, AActor, flags9),
+	DEFINE_FLAG(MF9, BLOCKLOS, AActor, flags9),
 
 	// Effect flags
 	DEFINE_FLAG(FX, VISIBILITYPULSE, AActor, effects),

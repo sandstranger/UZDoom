@@ -263,6 +263,22 @@ FString M_GetSavegamesPath()
 
 //===========================================================================
 //
+// M_GetSavegamesPaths												Unix
+//
+// Returns all paths where savegames might be located
+// (Selaco: GZSelaco looked in several folders; here saves only ever went
+// to M_GetSavegamesPath)
+//
+//===========================================================================
+
+int M_GetSavegamesPaths(TArray<FString>& outputAr)
+{
+	outputAr.Push(M_GetSavegamesPath());
+	return 1;
+}
+
+//===========================================================================
+//
 // M_GetDemoPath													Unix
 //
 // Returns the path to the default demo directory.

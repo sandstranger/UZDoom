@@ -415,6 +415,12 @@ ImageBuilder& ImageBuilder::Format(VkFormat format)
 	return *this;
 }
 
+ImageBuilder& ImageBuilder::Flags(VkImageCreateFlagBits flags)
+{
+	imageInfo.flags = flags;
+	return *this;
+}
+
 ImageBuilder& ImageBuilder::LinearTiling()
 {
 	imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
@@ -1579,7 +1585,7 @@ QueueSubmit& QueueSubmit::AddSignal(VulkanSemaphore* semaphore)
 
 void QueueSubmit::Execute(VulkanDevice* device, VkQueue queue, VulkanFence* fence)
 {
-	VkResult result = vkQueueSubmit(device->GraphicsQueue, 1, &submitInfo, fence ? fence->fence : VK_NULL_HANDLE);
+	VkResult result = vkQueueSubmit(queue, 1, &submitInfo, fence ? fence->fence : VK_NULL_HANDLE);
 	CheckVulkanError(result, "Could not submit command buffer");
 }
 
@@ -1875,34 +1881,116 @@ std::vector<VulkanCompatibleDevice> VulkanDeviceBuilder::FindDevices(const std::
 		enabledFeatures.DescriptorIndexing.descriptorBindingVariableDescriptorCount = deviceFeatures.DescriptorIndexing.descriptorBindingVariableDescriptorCount;
 		enabledFeatures.DescriptorIndexing.shaderSampledImageArrayNonUniformIndexing = deviceFeatures.DescriptorIndexing.shaderSampledImageArrayNonUniformIndexing;
 
-		// Figure out which queue can present
-		if (surface)
-		{
-			for (int i = 0; i < (int)info.QueueFamilies.size(); i++)
-			{
-				VkBool32 presentSupport = false;
-				VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(info.Device, i, surface->Surface, &presentSupport);
-				if (result == VK_SUCCESS && info.QueueFamilies[i].queueCount > 0 && presentSupport)
-				{
-					dev.PresentFamily = i;
+
+		// @Cocaktrice - Changed the logic a bit
+		// So, lets Find our graphics queue family first, this should be the easiest one
+		for (int i = 0; i < (int)info.QueueFamilies.size(); i++) {
+			const auto& queueFamily = info.QueueFamilies[i];
+			if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+				dev.GraphicsFamily = i;
+				dev.GraphicsTimeQueries = queueFamily.timestampValidBits != 0;
+				break;
+			}
+		}
+
+		// Find a transfer queue family. This can be a graphics family if necessary, but make sure there is enough
+		// room. AMD cards do not seem to allow blit ops on a Transfer only queue, to the point where most drivers
+		// seem to freeze the entire operating system if you try. We will first try a unique graphics family queue.
+		// If we can't get a graphics family queue, mipmaps need to be generated in the main thread which is obviously
+		// a bit slower, so avoid this when possible.
+		for (int i = 0; i < (int)info.QueueFamilies.size(); i++) {
+			const auto& queueFamily = info.QueueFamilies[i];
+			if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+				// Make sure the family has room for another queue
+				if (i == dev.GraphicsFamily && queueFamily.queueCount < 2) {
+					continue;
+				}
+
+				// We have LOTS of misalignments between our textures, so we NEED a granularity of 1.
+				if (queueFamily.minImageTransferGranularity.width > 1 || queueFamily.minImageTransferGranularity.depth > 1) {
+					continue;
+				}
+
+				// We are lucky! We found a graphics family for our upload queue, and we can generate mipmaps in
+				// the background thread
+				dev.UploadFamily = i;
+				dev.UploadFamilySupportsGraphics = true;
+				break;
+			}
+		}
+
+		// If we didn't find one, loosen the restrictions
+		if (dev.UploadFamily == -1) {
+			for (int i = 0; i < (int)info.QueueFamilies.size(); i++) {
+				const auto& queueFamily = info.QueueFamilies[i];
+
+				if (i == dev.GraphicsFamily && queueFamily.queueCount < 2) {
+					continue;
+				}
+
+				// We have LOTS of misalignments between our textures, so we NEED a granularity of 1.
+				if (queueFamily.minImageTransferGranularity.width > 1 || queueFamily.minImageTransferGranularity.depth > 1) {
+					continue;
+				}
+
+				// Spec states all families must support Transfer, so we should be able to grab any one that passes the other criteria
+				// Note: It turns out that this isn't true. Newer drivers are specifying queues that do not have transfer enabled so we need to check (I'm look at you ARC!!)
+				if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT)) {
+					dev.UploadFamily = i;
+					dev.UploadFamilySupportsGraphics = false;
 					break;
 				}
 			}
 		}
 
-		// The vulkan spec states that graphics and compute queues can always do transfer.
-		// Furthermore the spec states that graphics queues always can do compute.
-		// Last, the spec makes it OPTIONAL whether the VK_QUEUE_TRANSFER_BIT is set for such queues, but they MUST support transfer.
-		//
-		// In short: pick the first graphics queue family for everything.
-		for (int i = 0; i < (int)info.QueueFamilies.size(); i++)
-		{
-			const auto& queueFamily = info.QueueFamilies[i];
-			if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT))
-			{
-				dev.GraphicsFamily = i;
-				dev.GraphicsTimeQueries = queueFamily.timestampValidBits != 0;
-				break;
+		// Last chance, we didn't find a dedicated TRANSFER queue, but maybe we can use a COMPUTE queue
+		if (dev.UploadFamily == -1) {
+			for (int i = 0; i < (int)info.QueueFamilies.size(); i++) {
+				const auto& queueFamily = info.QueueFamilies[i];
+
+				if (i == dev.GraphicsFamily && queueFamily.queueCount < 2) {
+					continue;
+				}
+
+				// We have LOTS of misalignments between our textures, so we NEED a granularity of 1.
+				if (queueFamily.minImageTransferGranularity.width > 1 || queueFamily.minImageTransferGranularity.depth > 1) {
+					continue;
+				}
+
+				if (queueFamily.queueCount > 0 && (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT)) {
+					dev.UploadFamily = i;
+					dev.UploadFamilySupportsGraphics = false;
+					break;
+				}
+			}
+		}
+
+
+		// Check if the graphics queue supports Present, this should usually be true but in rare cases...
+		if (surface) {
+			VkBool32 presentSupport = false;
+
+			VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(info.Device, dev.GraphicsFamily, surface->Surface, &presentSupport);
+			if (result == VK_SUCCESS && presentSupport) {
+				dev.PresentFamily = -2;
+			}
+			else {
+				// Search for a new family
+				for (int i = 0; i < (int)info.QueueFamilies.size(); i++) {
+					const auto& queueFamily = info.QueueFamilies[i];
+					presentSupport = false;
+					VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(info.Device, i, surface->Surface, &presentSupport);
+					if (result == VK_SUCCESS && queueFamily.queueCount > 0 && presentSupport) {
+						// Make sure there is enough room in this queue
+						uint32_t requiredCount = 1;
+						if (i == dev.GraphicsFamily) requiredCount++;
+						if (i == dev.UploadFamily) requiredCount++;
+						if (requiredCount > queueFamily.queueCount) continue;
+
+						dev.PresentFamily = i;
+						break;
+					}
+				}
 			}
 		}
 
@@ -1938,7 +2026,7 @@ std::vector<VulkanCompatibleDevice> VulkanDeviceBuilder::FindDevices(const std::
 	return supportedDevices;
 }
 
-std::shared_ptr<VulkanDevice> VulkanDeviceBuilder::Create(std::shared_ptr<VulkanInstance> instance)
+std::shared_ptr<VulkanDevice> VulkanDeviceBuilder::Create(std::shared_ptr<VulkanInstance> instance, int numUploadSlots, int flags)
 {
 	if (instance->PhysicalDevices.empty())
 		VulkanError("No Vulkan devices found. The graphics card may have no vulkan support or the driver may be too old.");
@@ -1950,7 +2038,7 @@ std::shared_ptr<VulkanDevice> VulkanDeviceBuilder::Create(std::shared_ptr<Vulkan
 	size_t selected = deviceIndex;
 	if (selected >= supportedDevices.size())
 		selected = 0;
-	return std::make_shared<VulkanDevice>(instance, surface, supportedDevices[selected]);
+	return std::make_shared<VulkanDevice>(instance, surface, supportedDevices[selected], numUploadSlots, flags);
 }
 
 /////////////////////////////////////////////////////////////////////////////

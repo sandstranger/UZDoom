@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <assert.h>
 #include <string.h>
+#include "zstring.h"
 #include "files_internal.h"
 #include "m_crc32.h"
 #include "engineerrors.h"
@@ -45,6 +46,7 @@ FILE *myfopen(const char *filename, const char *flags)
 	auto widename = toWide(filename);
 	auto wideflags = toWide(flags);
 	return _wfopen(widename.c_str(), wideflags.c_str());
+	//return _wfsopen(widename.c_str(), wideflags.c_str(), _SH_DENYWR);
 #endif
 }
 
@@ -64,6 +66,7 @@ FILE *myfopen(const char *filename, const char *flags)
 class StdFileReader : public FileReaderInterface
 {
 	FILE *File = nullptr;
+	FString Filename = "";
 	ptrdiff_t StartPos = 0;
 	ptrdiff_t FilePos = 0;
 
@@ -86,10 +89,25 @@ public:
 		if (File == nullptr) return false;
 		FilePos = startpos;
 		StartPos = startpos;
+		Filename = filename;
 		Length = CalcFileLen();
 		if (len >= 0 && len < Length) Length = len;
 		if (startpos > 0) Seek(0, SEEK_SET);
 		return true;
+	}
+	
+	void ShiftStart(ptrdiff_t offset) override {
+		StartPos += offset;
+	}
+
+	const inline void VerifyFileOpen() {
+		/*if (!File && Filename.GetChars() != "") {
+			long fPos = FilePos;
+
+			if (Open(Filename.GetChars(), StartPos, Length))
+				Seek(fPos, SEEK_SET);
+		}*/
+		assert(0);
 	}
 
 	ptrdiff_t Tell() const override
@@ -113,6 +131,7 @@ public:
 		}
 		if (offset < StartPos || offset > StartPos + Length) return -1;	// out of scope
 
+		//VerifyFileOpen();
 		if (0 == fseek(File, offset, SEEK_SET))
 		{
 			FilePos = offset;
@@ -129,6 +148,8 @@ public:
 		{
 			len = Length - FilePos + StartPos;
 		}
+
+		//VerifyFileOpen();
 		len = fread(buffer, 1, len, File);
 		FilePos += len;
 		return len;
@@ -137,6 +158,9 @@ public:
 	char *Gets(char *strbuf, ptrdiff_t len) override
 	{
 		if (len <= 0 || len > 0x7fffffff || FilePos >= StartPos + Length) return nullptr;
+
+		//VerifyFileOpen();
+
 		char *p = fgets(strbuf, (int)len, File);
 		if (p != nullptr)
 		{
@@ -151,9 +175,11 @@ public:
 	}
 
 private:
-	ptrdiff_t CalcFileLen() const
+	ptrdiff_t CalcFileLen()
 	{
 		ptrdiff_t endpos;
+
+		//VerifyFileOpen();
 
 		fseek(File, 0, SEEK_END);
 		endpos = ftell(File);
@@ -172,12 +198,12 @@ private:
 
 class FileReaderRedirect : public FileReaderInterface
 {
-	FileReader *mReader = nullptr;
+	FileReader* mReader = nullptr;
 	ptrdiff_t StartPos = 0;
 	ptrdiff_t FilePos = 0;
 
 public:
-	FileReaderRedirect(FileReader &parent, ptrdiff_t start, ptrdiff_t length)
+	FileReaderRedirect(FileReader& parent, ptrdiff_t start, ptrdiff_t length)
 	{
 		mReader = &parent;
 		FilePos = start;
@@ -216,7 +242,7 @@ public:
 		return -1;
 	}
 
-	virtual ptrdiff_t Read(void *buffer, ptrdiff_t len) override
+	virtual ptrdiff_t Read(void* buffer, ptrdiff_t len) override
 	{
 		assert(len >= 0);
 		if (len <= 0) return 0;
@@ -229,10 +255,10 @@ public:
 		return len;
 	}
 
-	virtual char *Gets(char *strbuf, ptrdiff_t len) override
+	virtual char* Gets(char* strbuf, ptrdiff_t len) override
 	{
 		if (len <= 0 || FilePos >= StartPos + Length) return nullptr;
-		char *p = mReader->Gets(strbuf, len);
+		char* p = mReader->Gets(strbuf, len);
 		if (p != nullptr)
 		{
 			ptrdiff_t old = FilePos;
@@ -244,7 +270,6 @@ public:
 		}
 		return p;
 	}
-
 };
 
 //==========================================================================
@@ -316,6 +341,8 @@ char *MemoryReader::Gets(char *strbuf, ptrdiff_t len)
 	*p++ = 0;
 	return strbuf;
 }
+
+
 
 int BufferingReader::FillBuffer(ptrdiff_t newpos)
 {

@@ -217,6 +217,7 @@ enum EFxType
 	EFX_StringCast,
 	EFX_ColorCast,
 	EFX_SoundCast,
+	EFX_SoundHandleCast,
 	EFX_TranslationCast,
 	EFX_TypeCast,
 	EFX_PlusSign,
@@ -278,6 +279,7 @@ enum EFxType
 	EFX_VectorValue,
 	EFX_VectorPlusZ,
 	EFX_VectorBuiltin,
+	EFX_SoundHandleBuiltin,
 	EFX_TypeCheck,
 	EFX_DynamicCast,
 	EFX_GlobalVariable,
@@ -712,6 +714,21 @@ public:
 
 	ExpEmit Emit(VMFunctionBuilder *build);
 };
+
+
+class FxSoundHandleCast : public FxExpression
+{
+	FxExpression* basex;
+
+public:
+
+	FxSoundHandleCast(FxExpression* x);
+	~FxSoundHandleCast();
+	FxExpression* Resolve(FCompileContext&);
+
+	ExpEmit Emit(VMFunctionBuilder* build);
+};
+
 
 class FxTranslationCast : public FxExpression
 {

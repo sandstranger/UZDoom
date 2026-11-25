@@ -204,6 +204,9 @@ public:
 		return (entry < NumLumps) ? Entries[entry].CRC32 : 0;
 	}
 
+	// @Cocaktrice - Used for moving the file reader past the header (mostly zips) from exterior thread
+	virtual void SkipHeader(FileReader& fr);
+
 	// default is the safest reader type.
 	virtual FileReader GetEntryReader(uint32_t entry, int readertype = READER_NEW, int flags = READERFLAG_SEEKABLE);
 

@@ -44,6 +44,12 @@ class TeleportFog : Actor
 
 	override void PostBeginPlay ()
 	{
+		// Selaco has no teleport fog (GZSelaco's default TeleFogSourceType/TeleFogDestType are empty)
+		if (SelacoMode)
+		{
+			Destroy();
+			return;
+		}
 		Super.PostBeginPlay ();
 		A_StartSound ("misc/teleport", CHAN_BODY);
 		switch (gameinfo.gametype)

@@ -1081,6 +1081,15 @@ void FScanner::ScriptError (const char *message, ...)
 		va_end (arglist);
 	}
 
+	FString modFile = "";
+
+	if (LumpNum > 0) {
+		int wi = fileSystem.GetFileContainer(LumpNum);
+		if (wi > fileSystem.GetMaxIwadNum()) {	// (a mod, not the engine pk3 or the IWAD)
+			modFile = fileSystem.GetWadName(wi);
+		}
+	}
+
 	ParseError = true;
 	if (NoFatalErrors)
 	{
@@ -1088,8 +1097,16 @@ void FScanner::ScriptError (const char *message, ...)
 			AlreadyGot ? AlreadyGotLine : Line, composed.GetChars());
 		return;
 	}
-	I_Error ("%sScript error, \"%s\" line %d:\n%s\n", PrependMessage.GetChars(), ScriptName.GetChars(),
-		AlreadyGot? AlreadyGotLine : Line, composed.GetChars());
+
+	if (modFile.IsEmpty()) {
+		I_Error("%sScript error, \"%s\" line %d:\n%s\n", PrependMessage.GetChars(), ScriptName.GetChars(),
+			AlreadyGot ? AlreadyGotLine : Line, composed.GetChars());
+	}
+	else {
+		I_Error("%sMod: %s\n------------\nScript error, \"%s\" line %d:\n%s\n", PrependMessage.GetChars(), modFile.GetChars(), ScriptName.GetChars(),
+			AlreadyGot ? AlreadyGotLine : Line, composed.GetChars());
+	}
+	
 }
 
 //==========================================================================
@@ -1114,9 +1131,24 @@ void FScanner::ScriptMessage (const char *message, ...)
 		va_end (arglist);
 	}
 
+	FString modFile = "";
+
+	if (LumpNum > 0) {
+		int wi = fileSystem.GetFileContainer(LumpNum);
+		if (wi > fileSystem.GetMaxIwadNum()) {	// (a mod, not the engine pk3 or the IWAD)
+			modFile = fileSystem.GetWadName(wi);
+		}
+	}
+
 	ParseError = true;
-	Printf (TEXTCOLOR_RED "%sScript error, \"%s\"" TEXTCOLOR_RED " line %d:\n" TEXTCOLOR_RED "%s\n", PrependMessage.GetChars(), ScriptName.GetChars(),
-		AlreadyGot? AlreadyGotLine : Line, composed.GetChars());
+	if (modFile.IsEmpty()) {
+		Printf(TEXTCOLOR_RED "%sScript error, \"%s\"" TEXTCOLOR_RED " line %d:\n" TEXTCOLOR_RED "%s\n", PrependMessage.GetChars(), ScriptName.GetChars(),
+			AlreadyGot ? AlreadyGotLine : Line, composed.GetChars());
+	}
+	else {
+		Printf(TEXTCOLOR_RED "%sMod: %s\nScript error, \"%s\"" TEXTCOLOR_RED " line %d:\n" TEXTCOLOR_RED "%s\n", PrependMessage.GetChars(), modFile.GetChars(), ScriptName.GetChars(),
+			AlreadyGot ? AlreadyGotLine : Line, composed.GetChars());
+	}
 }
 
 //==========================================================================

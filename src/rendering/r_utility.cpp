@@ -54,6 +54,8 @@
 #include "v_video.h"
 #include "vm.h"
 #include "a_dynlight.h"
+#include "menustate.h"
+#include "selaco.h"
 
 const float MY_SQRT2    = float(1.41421356237309504880); // sqrt(2)
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
@@ -113,6 +115,14 @@ CUSTOM_CVARD(Int, r_actorspriteshadow, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "ren
 	else if (self > 2)
 		self = 2;
 }
+// (Selaco) Selaco's unified shadow setting, used instead of r_actorspriteshadow for Selaco
+CUSTOM_CVARD(Int, r_shadowquality, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "render light effect shadows and sprite shadows. 1 = low, 2 = medium, 3 = high")
+{
+	if (self < 1)
+		self = 1;
+	else if (self > 3)
+		self = 3;
+}
 CUSTOM_CVARD(Float, r_actorspriteshadowdist, 1500.0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG, "how far sprite shadows should be rendered")
 {
 	if (self < 0.f)
@@ -152,6 +162,8 @@ CUSTOM_CVARD(Color, gl_cullcolor, Color::str("#888888"), CVAR_ARCHIVE | CVAR_GLO
 {
 	primaryLevel->cullcolor = gl_cullcolor;
 }
+
+EXTERN_CVAR(Bool, gl_light_shadowmap);
 
 int 			viewwindowx;
 int 			viewwindowy;
@@ -206,6 +218,9 @@ int			freelookviewheight;
 
 DVector3a view;
 DAngle viewpitch;
+
+DVector3	FrameAngleOffsets;	// cache each frame for look offsets
+DVector3	FramePosOffset;		// cache each frame for look offsets
 
 DEFINE_GLOBAL(LocalViewPitch);
 
@@ -490,6 +505,7 @@ void R_Shutdown ()
 	if (SWRenderer != nullptr) delete SWRenderer;
 	SWRenderer = nullptr;
 }
+
 
 //==========================================================================
 //
@@ -949,6 +965,30 @@ static double QuakePower(double factor, double intensity, double offset)
 // R_DoActorTickerAngleChanges
 //
 //==========================================================================
+EXTERN_CVAR(Bool, g_leveltilting)
+
+void R_SetupViewOffsets(player_t *player, double ticFrac, DVector3 &angleOffsets, DVector3 &posOffset) {
+	// @Cockatrice - Allow the player class to supply per-frame view adjustments
+	// This will be used for things like strafe-tilt. We don't use the look interpolation
+	// because it also interpolates mouse-look, which we absolutely do not want
+	/*angleOffsets = { 0,0,0 };
+	posOffset = { 0,0,0 };
+	
+	if (player != NULL && player->mo != NULL) {
+		IFVIRTUALPTRNAME(player->mo, NAME_PlayerPawn, CameraOffsets)
+		{
+			VMValue param[] = { player->mo, ticFrac };
+			VMReturn ret[2];
+			ret[0].Location = &angleOffsets;
+			ret[1].Location = &posOffset;
+			ret[0].RegType = REGT_FLOAT | REGT_MULTIREG3;
+			ret[1].RegType = REGT_FLOAT | REGT_MULTIREG3;
+			VMCall(func, param, 2, ret, 2);
+		}
+	}*/
+	P_GetCameraOffsets(player, angleOffsets, posOffset, ticFrac, false);
+}
+
 
 static void R_DoActorTickerAngleChanges(player_t* const player, DRotator& angles, const double scale)
 {
@@ -967,6 +1007,7 @@ static void R_DoActorTickerAngleChanges(player_t* const player, DRotator& angles
 
 EXTERN_CVAR(Float, chase_dist)
 EXTERN_CVAR(Float, chase_height)
+
 
 void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AActor* const actor)
 {
@@ -1054,6 +1095,9 @@ void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AA
 	AActor* const client = players[consoleplayer].mo;
 	const bool matchPlayer = gamestate != GS_TITLELEVEL && viewPoint.camera->player == nullptr && (viewPoint.camera->renderflags2 & RF2_CAMFOLLOWSPLAYER);
 	const bool usePawn = matchPlayer ? mainView.camera != client : false;
+	
+	R_SetupViewOffsets(player, viewPoint.TicFrac, FrameAngleOffsets, FramePosOffset);
+	
 	//==============================================================================================
 	// Sets up the view position offset.
 	{
@@ -1121,7 +1165,8 @@ void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AA
 		viewPoint.sector = viewPoint.ViewLevel->PointInRenderSubsector(camPos)->sector;
 	}
 
-	if (!WorldPaused(true))
+	// (Selaco: no quakes while a menu is open, also when it does not pause the game)
+	if (!WorldPaused(true) && (!g_SelacoMode || (menuactive != MENU_On && menuactive != MENU_WaitKey)))
 	{
 		FQuakeJiggers jiggers;
 		int intensity = DEarthquake::StaticGetQuakeIntensities(viewPoint.TicFrac, viewPoint.camera, jiggers);
@@ -1189,6 +1234,18 @@ void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AA
 			if (!l->IsExplicitPitch())
 				l->Pitch = viewPoint.Angles.Pitch;
 		}
+	}
+
+	// Add angle offsets from script, if any
+	viewPoint.Angles.Yaw += DAngle::fromDeg(FrameAngleOffsets.X);
+	viewPoint.Angles.Pitch += DAngle::fromDeg(FrameAngleOffsets.Y);
+	viewPoint.Angles.Roll += DAngle::fromDeg(FrameAngleOffsets.Z);
+
+	// Add world tilt
+	if (g_leveltilting) {
+		DAngle wyaw = viewPoint.Angles.Yaw + DAngle::fromDeg(level.tiltAngle);
+		viewPoint.Angles.Roll += DAngle::fromDeg(wyaw.Cos() * level.tilt);
+		viewPoint.Angles.Pitch += DAngle::fromDeg(-wyaw.Sin() * level.tilt);
 	}
 
 	viewPoint.SetViewAngle(viewWindow);
@@ -1332,12 +1389,16 @@ CUSTOM_CVAR(Float, maxviewpitch, 90.f, CVAR_ARCHIVE | CVAR_SERVERINFO)
 
 bool R_ShouldDrawSpriteShadow(AActor *thing)
 {
+	//@Cockatrice - Hate me for this, but for Selaco we want to unify shadow settings and this was the easiest way to do it
+	// (Selaco only: sprite shadows follow gl_light_shadowmap and r_shadowquality, which is r_actorspriteshadow + 1)
+	if (g_SelacoMode && !gl_light_shadowmap) return false;
+
 	int rf = thing->renderflags;
 	// for wall and flat sprites the shadow math does not work so these must be unconditionally skipped.
 	if (rf & (RF_FLATSPRITE | RF_WALLSPRITE)) return false;
 
 	bool doit = false;
-	switch (r_actorspriteshadow)
+	switch (g_SelacoMode ? (int)r_shadowquality - 1 : (int)r_actorspriteshadow)
 	{
 	case 1:
 		doit = (rf & RF_CASTSPRITESHADOW);

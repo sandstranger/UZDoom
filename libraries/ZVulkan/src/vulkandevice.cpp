@@ -5,8 +5,9 @@
 #include <algorithm>
 #include <set>
 #include <string>
+#include <cstring>
 
-VulkanDevice::VulkanDevice(std::shared_ptr<VulkanInstance> instance,  VulkanSurface *surface, const VulkanCompatibleDevice& selectedDevice) : Instance(instance), Surface(surface)
+VulkanDevice::VulkanDevice(std::shared_ptr<VulkanInstance> instance,  VulkanSurface *surface, const VulkanCompatibleDevice& selectedDevice, int numUploadSlots, int flags) : Instance(instance), Surface(surface)
 {
 	PhysicalDevice = *selectedDevice.Device;
 	EnabledDeviceExtensions = selectedDevice.EnabledDeviceExtensions;
@@ -14,13 +15,35 @@ VulkanDevice::VulkanDevice(std::shared_ptr<VulkanInstance> instance,  VulkanSurf
 
 	GraphicsFamily = selectedDevice.GraphicsFamily;
 	PresentFamily = selectedDevice.PresentFamily;
+	UploadFamily = selectedDevice.UploadFamily;
+	UploadFamilySupportsGraphics = selectedDevice.UploadFamilySupportsGraphics;
 	GraphicsTimeQueries = selectedDevice.GraphicsTimeQueries;
-
 	DebugLayerActive = instance->DebugLayerActive;
+
+	// Detect ARC since it requires special handling due to immature drivers
+	// Just detect all Intel devices for now since most of them exibit the same problem, and the vendor string is corrupt sometimes under Linux
+	isARC = PhysicalDevice.Properties.Properties.vendorID == 0x8086/* && strstr(PhysicalDevice.Properties.Properties.deviceName, "Arc")*/;
+	
+	// @Cockatrice - Special case for ARC GPU, try not to use concurrent mode swapchain
+	if (isARC || flags & VK_DEVICE_FLAG_FORCE_EXCLUSIVE_PRESENT) {
+		PresentFamily = -2;
+	}
+
+	// Test to see if we can fit more upload queues
+	// (no usable upload family, e.g. on mobile GPUs with a single queue: run without background upload queues)
+	if (UploadFamily >= 0 && UploadFamily < (int)selectedDevice.Device->QueueFamilies.size())
+	{
+		int rqt = (UploadFamily == GraphicsFamily ? 1 : 0) + (PresentFamily == UploadFamily ? 1 : 0);
+		UploadQueuesSupported = std::max(0, (int)selectedDevice.Device->QueueFamilies[UploadFamily].queueCount - rqt);
+	}
+	else
+	{
+		UploadQueuesSupported = 0;
+	}
 
 	try
 	{
-		CreateDevice();
+		CreateDevice(numUploadSlots);
 		CreateAllocator();
 	}
 	catch (...)
@@ -58,26 +81,54 @@ void VulkanDevice::CreateAllocator()
 		VulkanError("Unable to create allocator");
 }
 
-void VulkanDevice::CreateDevice()
+
+static int CreateOrModifyQueueInfo(std::vector<VkDeviceQueueCreateInfo>& infos, uint32_t family, float* priority) {
+	for (VkDeviceQueueCreateInfo& info : infos) {
+		if (info.queueFamilyIndex == family) {
+			info.queueCount++;
+			return info.queueCount - 1;
+		}
+	}
+
+	VkDeviceQueueCreateInfo queueCreateInfo = {};
+	queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+	queueCreateInfo.queueFamilyIndex = family;
+	queueCreateInfo.queueCount = 1;
+	queueCreateInfo.pQueuePriorities = priority;
+	infos.push_back(queueCreateInfo);
+
+	return 0;
+}
+
+
+void VulkanDevice::CreateDevice(int numUploadSlots)
 {
-	float queuePriority = 1.0f;
+	// TODO: Lower queue priority for upload queues
+	// (one entry per queue that can be requested from a single family: graphics + present + up to 8 upload queues)
+	float queuePriority[] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
 
-	std::set<int> neededFamilies;
-	if (GraphicsFamily != -1)
-		neededFamilies.insert(GraphicsFamily);
-	if (PresentFamily != -1)
-		neededFamilies.insert(PresentFamily);
+	int graphicsFamilySlot = CreateOrModifyQueueInfo(queueCreateInfos, GraphicsFamily, queuePriority);
+	int presentFamilySlot = PresentFamily < 0 ? -1 : CreateOrModifyQueueInfo(queueCreateInfos, PresentFamily, queuePriority);
 
-	for (int index : neededFamilies)
-	{
-		VkDeviceQueueCreateInfo queueCreateInfo = {};
-		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queueCreateInfo.queueFamilyIndex = index;
-		queueCreateInfo.queueCount = 1;
-		queueCreateInfo.pQueuePriorities = &queuePriority;
-		queueCreateInfos.push_back(queueCreateInfo);
+	// Request as many upload queues as desired and supported. Minimum 1
+	std::vector<int> uploadFamilySlots;
+	int numUploadQueues = numUploadSlots >= 0 ? numUploadSlots : 2;
+
+	for (int x = 0; x < numUploadQueues && x < UploadQueuesSupported; x++) {
+		uploadFamilySlots.push_back(CreateOrModifyQueueInfo(queueCreateInfos, UploadFamily, queuePriority));
 	}
+
+
+	// @Cockatrice - Temporary debug info!
+	VulkanPrintLog("debug", "Vulkan Queue Create Layout:\n");
+	for (auto& q : queueCreateInfos) {
+		std::string output = "\tQueue Family: " + std::to_string(q.queueFamilyIndex) + "  # of queues: " + std::to_string(q.queueCount);
+		VulkanPrintLog("debug", output);
+	}
+	VulkanPrintLog("debug", "Graphics Family: " + std::to_string(GraphicsFamily));
+	VulkanPrintLog("debug", "Present Family: " + std::to_string(PresentFamily));
+	VulkanPrintLog("debug", "Upload Family: " + std::to_string(UploadFamily));
 
 	std::vector<const char*> extensionNames;
 	extensionNames.reserve(EnabledDeviceExtensions.size());
@@ -126,15 +177,44 @@ void VulkanDevice::CreateDevice()
 		next = &EnabledFeatures.DescriptorIndexing.pNext;
 	}
 
+	VulkanPrintLog("debug", "Creating Vulkan device on " + std::string(PhysicalDevice.Properties.Properties.deviceName));
+
 	VkResult result = vkCreateDevice(PhysicalDevice.Device, &deviceCreateInfo, nullptr, &device);
 	CheckVulkanError(result, "Could not create vulkan device");
+
+	if (isARC) {
+		VulkanPrintLog("debug", "Detected Intel ARC!");
+	}
 
 	volkLoadDevice(device);
 
 	if (GraphicsFamily != -1)
-		vkGetDeviceQueue(device, GraphicsFamily, 0, &GraphicsQueue);
-	if (PresentFamily != -1)
-		vkGetDeviceQueue(device, PresentFamily, 0, &PresentQueue);
+		vkGetDeviceQueue(device, GraphicsFamily, graphicsFamilySlot, &GraphicsQueue);
+	if (PresentFamily >= 0 && presentFamilySlot >= 0)
+		vkGetDeviceQueue(device, PresentFamily, presentFamilySlot, &PresentQueue);
+	else if(PresentFamily == -2)
+		vkGetDeviceQueue(device, GraphicsFamily, graphicsFamilySlot, &PresentQueue);
+		//PresentQueue = GraphicsQueue;	// I think we still need a reference to a queue even if there is no present family
+	else if (Surface)
+		VulkanError("No valid combination of queues gave us a Graphics and Present queue. \nCockatrice must have done something wrong or your hardware does not support it.");
+
+	// Upload queues
+	if (uploadFamilySlots.size() > 0) {
+		VulkanUploadSlot slot = { VK_NULL_HANDLE, UploadFamily, uploadFamilySlots[0], UploadFamilySupportsGraphics };
+		vkGetDeviceQueue(device, UploadFamily, uploadFamilySlots[0], &slot.queue);
+		uploadQueues.push_back(slot);
+
+		// Push more upload queues if supported
+		for (int x = 1; x < (int)uploadFamilySlots.size(); x++) {
+			VulkanUploadSlot slot = { VK_NULL_HANDLE, UploadFamily, uploadFamilySlots[x], UploadFamilySupportsGraphics };
+			vkGetDeviceQueue(device, UploadFamily, uploadFamilySlots[x], &slot.queue);
+			uploadQueues.push_back(slot);
+
+			if (slot.queue == VK_NULL_HANDLE) {
+				VulkanError(("Vulkan Error : Failed to create background transfer queue [" + std::to_string(x) + "] !\n\tCheck vk_max_transfer_threads ?").c_str());
+			}
+		}
+	}
 }
 
 void VulkanDevice::ReleaseResources()

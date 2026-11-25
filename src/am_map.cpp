@@ -60,6 +60,9 @@
 
 using Color::str;
 
+#include "vm.h"
+#include "selaco.h"
+
 //=============================================================================
 //
 // Global state
@@ -122,6 +125,9 @@ CVAR(Int, am_linethickness, 1, CVAR_ARCHIVE)
 CVAR(Int, am_lineantialiasing, 0, CVAR_ARCHIVE)
 CVAR(Bool, am_thingrenderstyles, true, CVAR_ARCHIVE)
 CVAR(Int, am_showsubsector, -1, 0);
+
+CVAR(Float, am_playerScale, 0.5, CVAR_ARCHIVE)		// Selaco: size of the player icon
+CVAR(Bool, am_draw_portals, false, CVAR_ARCHIVE);	// Selaco: draw portal lines (UZDoom always draws them)
 
 CUSTOM_CVAR(Int, am_showalllines, -1, CVAR_NOINITCALL) // This is a cheat so don't save it.
 {
@@ -201,10 +207,17 @@ CVAR(Int, am_markcolor, CR_GREY, CVAR_ARCHIVE)
 
 CCMD(am_togglefollow)
 {
-	am_followplayer = !am_followplayer;
+	am_followplayer = g_SelacoMode ? true : !am_followplayer;	// Selaco's automap always follows (and can be panned)
 	if (primaryLevel && primaryLevel->automap)
 		primaryLevel->automap->ResetFollowLocation();
 	Printf("%s\n", GStrings.GetString(am_followplayer ? "AMSTR_FOLLOWON" : "AMSTR_FOLLOWOFF"));
+}
+
+CCMD(am_center)
+{
+	if (primaryLevel && primaryLevel->automap) {
+		primaryLevel->automap->ResetFollowLocation();
+	}
 }
 
 CCMD(am_togglegrid)
@@ -261,6 +274,33 @@ CCMD(am_zoom)
 	}
 }
 
+
+static int AutomapToggle() {
+	if (gameaction == ga_nothing)
+	{
+		gameaction = ga_togglemap;
+	}
+
+	return 1;
+}
+
+static int AutomapClose() {
+	AM_Stop();
+	return 1;
+}
+
+
+DEFINE_ACTION_FUNCTION_NATIVE(_Screen, ToggleAutomap, AutomapToggle)
+{
+	PARAM_PROLOGUE;
+	ACTION_RETURN_INT(AutomapToggle());
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(_Screen, CloseAutomap, AutomapClose)
+{
+	PARAM_PROLOGUE;
+	ACTION_RETURN_INT(AutomapClose());
+}
 //=============================================================================
 //
 // Automap colors
@@ -871,6 +911,7 @@ static TArray<mline_t> MapArrow;
 static TArray<mline_t> CheatMapArrow;
 static TArray<mline_t> CheatKey;
 static TArray<mline_t> EasyKey;
+static FTextureID AutomapPlayerIcon, AutomapPlayerIconOuter;	// The player icons, outer will be rotated around inner
 
 static std::array<mline_t, 3> thintriangle_guy = { {
 	{{-.5,-.7}, {1,0}},
@@ -936,6 +977,9 @@ void AM_StaticInit()
 		mysnprintf(namebuf, countof(namebuf), "AMMNUM%d", i);
 		marknums[i] = TexMan.CheckForTexture(namebuf, ETextureType::MiscPatch);
 	}
+
+	AutomapPlayerIcon = TexMan.CheckForTexture("PLYRZ0", ETextureType::Any);
+	AutomapPlayerIconOuter = TexMan.CheckForTexture("PLYRZ1", ETextureType::Any);
 }
 
 //=============================================================================
@@ -1047,6 +1091,8 @@ class DAutomap :public DAutomapBase
 
 	void DrawMarker(FGameTexture *tex, double x, double y, int yadjust,
 		bool flip, double xscale, double yscale, FTranslationID translation, double alpha, uint32_t fillcolor, FRenderStyle renderstyle);
+	void DrawMarkerRotated(FGameTexture *tex, double x, double y, double angle, int yadjust,
+		bool flip, double xscale, double yscale, int translation, double alpha, uint32_t fillcolor, FRenderStyle renderstyle);
 
 	void rotatePoint(double *x, double *y);
 	void rotate(double *x, double *y, DAngle an);
@@ -1225,8 +1271,17 @@ void DAutomap::findMinMaxBoundaries ()
 	max_w = max_x - min_x;
 	max_h = max_y - min_y;
 
-	min_w = 2*AutoMap::Defaults::PLAYERRADIUS; // const? never changed?
-	min_h = 2*AutoMap::Defaults::PLAYERRADIUS;
+	if (g_SelacoMode)
+	{
+		// Selaco: the automap can't be zoomed in as far
+		min_w = 512;
+		min_h = 512;
+	}
+	else
+	{
+		min_w = 2*AutoMap::Defaults::PLAYERRADIUS; // const? never changed?
+		min_h = 2*AutoMap::Defaults::PLAYERRADIUS;
+	}
 
 	calcMinMaxMtoF();
 }
@@ -1244,7 +1299,7 @@ void DAutomap::calcMinMaxMtoF()
 	double b = safe_frame * (StatusBar->GetTopOfStatusbar() / max_h);
 
 	min_scale_mtof = a < b ? a : b;
-	max_scale_mtof = twod->GetHeight() / (2*AutoMap::Defaults::PLAYERRADIUS);
+	max_scale_mtof = twod->GetHeight() / (g_SelacoMode ? 512.0 : (2*AutoMap::Defaults::PLAYERRADIUS));
 }
 
 //=============================================================================
@@ -1413,7 +1468,7 @@ void DAutomap::LevelInit ()
 	clearMarks();
 
 	findMinMaxBoundaries();
-	scale_mtof = min_scale_mtof / 0.7;
+	scale_mtof = g_SelacoMode ? max_scale_mtof * 0.2 : min_scale_mtof / 0.7;
 	if (scale_mtof > max_scale_mtof)
 		scale_mtof = min_scale_mtof;
 	scale_ftom = 1.0 / scale_mtof;
@@ -1505,7 +1560,14 @@ bool DAutomap::Responder (event_t *ev, bool last)
 {
 	if (automapactive && (ev->type == EV_KeyDown || ev->type == EV_KeyUp))
 	{
-		if (am_followplayer)
+		// @Cockatrice - Allow ESCAPE to cancel automap instead of opening a menu on top (Selaco)
+		if (g_SelacoMode && ev->type == EV_KeyDown && ev->data1 == KEY_ESCAPE) {
+			AM_Stop();
+			return true;
+		}
+
+		// @Cockatrice - Selaco allows panning with follow mode on, and provides a center button (am_center)
+		if (am_followplayer && !g_SelacoMode)
 		{
 			// check for am_pan* and ignore in follow mode
 			const char *defbind = AutomapBindings.GetBind(ev->data1);
@@ -2708,7 +2770,7 @@ void DAutomap::drawWalls (bool allmap)
 
 				if (portalmode)
 				{
-					drawMline(&l, AMColors.PortalColor);
+					if (!g_SelacoMode || am_draw_portals) drawMline(&l, AMColors.PortalColor);
 				}
 				else if (AM_CheckSecret(&line) == 1)
 				{
@@ -2922,6 +2984,20 @@ void DAutomap::drawPlayers ()
 		else
 		{
 			angle = players[consoleplayer].mo->InterpolatedAngles(r_viewpoint.TicFrac).Yaw;
+		}
+
+		if (g_SelacoMode)
+		{
+			// Selaco draws the player as an icon (PLYRZ0) with a direction ring (PLYRZ1) rotated around it
+			// (DrawMarkerRotated rotates the position itself, so it gets the unrotated one)
+			auto tex = TexMan.GetGameTexture(AutomapPlayerIcon, true);
+			auto tex2 = TexMan.GetGameTexture(AutomapPlayerIconOuter, true);
+			const double spriteXScale = am_playerScale * (10. / 16.) * scale_mtof;
+			const double spriteYScale = am_playerScale * (10. / 16.) * scale_mtof;
+
+			DrawMarkerRotated(tex, pos.X, pos.Y, 0, 0, false, spriteXScale, spriteYScale, 0, 1, 0, LegacyRenderStyles[STYLE_Normal]);
+			DrawMarkerRotated(tex2, pos.X, pos.Y, angle.Degrees() - 90.0, 0, false, spriteXScale, spriteYScale, 0, 1, 0, LegacyRenderStyles[STYLE_Normal]);
+			return;
 		}
 
 		if (am_cheat != 0 && CheatMapArrow.Size() > 0)
@@ -3244,6 +3320,42 @@ void DAutomap::DrawMarker (FGameTexture *tex, double x, double y, int yadjust,
 		DTA_Alpha, alpha,
 		DTA_FillColor, fillcolor,
 		DTA_RenderStyle, renderstyle.AsDWORD,
+		DTA_BilinearFilter, g_SelacoMode,	// Selaco filters its automap markers
+		TAG_DONE);
+}
+
+
+void DAutomap::DrawMarkerRotated(FGameTexture *tex, double x, double y, double angle, int yadjust,
+	bool flip, double xscale, double yscale, int translation, double alpha, uint32_t fillcolor, FRenderStyle renderstyle)
+{
+	if (tex == nullptr || !tex->isValid())
+	{
+		return;
+	}
+	if (xscale < 0)
+	{
+		flip = !flip;
+		xscale = -xscale;
+	}
+	if (am_rotate == 1 || (am_rotate == 2 && viewactive))
+	{
+		rotatePoint(&x, &y);
+	}
+
+	DrawTexture(twod, tex, CXMTOF(x) + f_x, CYMTOF(y) + yadjust + f_y,
+		DTA_DestWidthF, tex->GetDisplayWidth() * CleanXfac * xscale,
+		DTA_DestHeightF, tex->GetDisplayHeight() * CleanYfac * yscale,
+		DTA_ClipTop, f_y,
+		DTA_ClipBottom, f_y + f_h,
+		DTA_ClipLeft, f_x,
+		DTA_ClipRight, f_x + f_w,
+		DTA_FlipX, flip,
+		DTA_TranslationIndex, translation,
+		DTA_Alpha, alpha,
+		DTA_FillColor, fillcolor,
+		DTA_RenderStyle, renderstyle.AsDWORD,
+		DTA_BilinearFilter, true,
+		DTA_Rotate, angle,
 		TAG_DONE);
 }
 
@@ -3398,7 +3510,7 @@ void DAutomap::Drawer (int bottom)
 	{
 		doFollowPlayer();
 	}
-	else
+	if (!am_followplayer || g_SelacoMode)	// Selaco can pan in follow mode too
 	{
 		m_paninc.x = m_paninc.y = 0;
 		if (buttonMap.ButtonDown(Button_AM_PanLeft))

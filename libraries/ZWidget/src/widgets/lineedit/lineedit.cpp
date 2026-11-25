@@ -21,6 +21,8 @@ LineEdit::LineEdit(Widget* parent) : Widget(parent)
 
 LineEdit::~LineEdit()
 {
+	delete timer;
+	delete scroll_timer;
 }
 
 bool LineEdit::IsReadOnly() const

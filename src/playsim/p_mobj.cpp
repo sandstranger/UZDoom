@@ -58,6 +58,7 @@
 #include "p_conversation.h"
 #include "p_effect.h"
 #include "p_enemy.h"
+#include "p_linetracedata.h"
 #include "p_lnspec.h"
 #include "p_local.h"
 #include "p_maputl.h"
@@ -66,6 +67,7 @@
 #include "r_sky.h"
 #include "r_utility.h"
 #include "sbar.h"
+#include "selaco.h"
 #include "serialize_obj.h" // IWYU pragma: keep
 #include "serializer_doom.h"
 #include "shadowinlines.h"
@@ -231,6 +233,7 @@ void AActor::Serialize(FSerializer &arc)
 		A("fountaincolor", fountaincolor)
 		A("alpha", Alpha)
 		A("fillcolor", fillcolor)
+		A("selfLighting", selfLighting)
 		A("sector", Sector)
 		A("floorz", floorz)
 		A("ceilingz", ceilingz)
@@ -373,6 +376,7 @@ void AActor::Serialize(FSerializer &arc)
 		A("angledrolloffset", AngledRollOffset)
 		("alternative", alternative)
 		A("thrubits", ThruBits)
+		A("lineBlockBits", lineBlockBits)
 		A("cameraheight", CameraHeight)
 		A("camerafov", CameraFOV)
 		A("tag", Tag)
@@ -397,6 +401,7 @@ void AActor::Serialize(FSerializer &arc)
 		A("WorldOffset", WorldOffset)
 		("modelData", modelData)
 		A("LandingSpeed", LandingSpeed)
+		A("HeavyProbeIndex", HeavyProbeIndex)
 		("unmorphtime", UnmorphTime)
 		("morphflags", MorphFlags)
 		("premorphproperties", PremorphProperties)
@@ -2612,7 +2617,9 @@ static double P_XYMovement (AActor *mo, DVector2 scroll)
 			{	// try to slide along it
 				if (BlockingMobj == NULL)
 				{ // slide against wall
-					if (BlockingLine != NULL &&
+					// [Selaco] @Cocaktrice - This little water jump is supremely annoying and not controllable by script at all
+					// So Selaco turns it off and replicates it in ZScript if it wants the same behaviour
+					if (!g_SelacoMode && BlockingLine != NULL &&
 						mo->player && mo->waterlevel && mo->waterlevel < 3 &&
 						(mo->player->cmd.forwardmove | mo->player->cmd.sidemove) &&
 						mo->BlockingLine->sidedef[1] != NULL)
@@ -2659,26 +2666,88 @@ static double P_XYMovement (AActor *mo, DVector2 scroll)
 				}
 				else
 				{ // slide against another actor
-					DVector2 t;
-					t.X = 0, t.Y = onestep.Y;
-					walkplane = P_CheckSlopeWalk (mo, t);
-					if (P_TryMove (mo, mo->Pos().XY() + t, true, walkplane, tm))
-					{
-						mo->Vel.X = 0;
+					// [Selaco] Selaco moves the pusher up to pushable things and slides it by what the push didn't consume
+					if (g_SelacoMode && !(mo->flags2 & MF2_CANNOTPUSH) && BlockingMobj && (BlockingMobj->flags2 & MF2_PUSHABLE)) {
+
+						// Move object as close to pushable object as possible by vel
+						AActor* b = BlockingMobj;
+						auto mp = mo->Pos().XY(), bp = b->Pos().XY();
+						auto v = onestep;
+						double mr = mo->radius, br = b->radius;
+						double le = mp.X - mr, ble = bp.X - br;
+						double re = mp.X + mr, bre = bp.X + br;
+						double te = mp.Y + mr, bte = bp.Y + br;
+						double be = mp.Y - mr, bbe = bp.Y - br;
+
+						// @Cockatrice - I don't think the math is right here but I'm too stupid to figure it out right now
+						if (v.X != 0) {
+							double mvx =	v.X > 0 ? 
+											min(re < ble ? ble - re : v.X, v.X) : 
+											max(le > bre ? bre - le : v.X, v.X);
+							double divx = (mvx / v.X) * 0.9999;
+							double mvy = v.Y * divx;
+
+							// Y overlap?
+							if (v.Y != 0 && te + mvy > bbe && be + mvy < bte && le + mvx < bre && re + mvx > ble) {
+								// Use Y adjustment instead
+								double mvy =	v.Y > 0 ?
+												min(te < bbe ? bbe - te : v.Y, v.Y) :
+												max(be > bte ? bte - be : v.Y, v.Y);
+								double divy = (mvy / v.Y) * 0.9999;
+
+								P_TryMove(mo, mo->Pos().XY() + (v * divy), true, walkplane, tm);
+							}
+							else {
+								P_TryMove(mo, mo->Pos().XY() + (v * divx), true, walkplane, tm);
+							}
+						}
+						else if (v.Y != 0) {
+							double mvy = v.Y > 0 ?
+										min(te < bbe ? bbe - te : v.Y, v.Y) :
+										max(be > bte ? bte - be : v.Y, v.Y);
+							double divy = (mvy / v.Y) * 0.9999;
+
+							P_TryMove(mo, mo->Pos().XY() + (v * divy), true, walkplane, tm);
+						}
+
+						double pf = 1.0 - tm.pushFactor;
+						DVector2 t;
+						t.X = 0, t.Y = onestep.Y * pf;
+						walkplane = P_CheckSlopeWalk(mo, t);
+						if (!P_TryMove(mo, mo->Pos().XY() + t, true, walkplane, tm))
+						{
+							t.X = onestep.X * pf, t.Y = 0;
+							walkplane = P_CheckSlopeWalk(mo, t);
+							P_TryMove(mo, mo->Pos().XY() + t, true, walkplane, tm);
+						}
+
+						if (mo->player) {
+							mo->player->Vel = mo->Vel.XY();
+						}
 					}
-					else
-					{
-						t.X = onestep.X, t.Y = 0;
-						walkplane = P_CheckSlopeWalk (mo, t);
+					else {
+						DVector2 t;
+						t.X = 0, t.Y = onestep.Y;
+						walkplane = P_CheckSlopeWalk(mo, t);
 						if (P_TryMove (mo, mo->Pos().XY() + t, true, walkplane, tm))
 						{
-							mo->Vel.Y = 0;
+							mo->Vel.X = 0;
 						}
 						else
 						{
-							mo->Vel.X = mo->Vel.Y = 0;
+							t.X = onestep.X, t.Y = 0;
+							walkplane = P_CheckSlopeWalk(mo, t);
+							if (P_TryMove(mo, mo->Pos().XY() + t, true, walkplane, tm))
+							{
+								mo->Vel.Y = 0;
+							}
+							else
+							{
+								mo->Vel.X = mo->Vel.Y = 0;
+							}
 						}
 					}
+					
 					if (player && player->mo == mo)
 					{
 						if (mo->Vel.X == 0)
@@ -3704,10 +3773,20 @@ CCMD(utid)
 //
 //==========================================================================
 
+DEFINE_ACTION_FUNCTION(AActor, CalculateMissileDamage)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	ACTION_RETURN_INT(self->DamageVal);
+}
+
 int AActor::GetMissileDamage (int mask, int add)
 {
 	if (DamageVal >= 0)
 	{
+		if (flags9 & MF9_ABSDAMAGE) {
+			return DamageVal;
+		}
+		else
 		if (mask == 0)
 		{
 			return add * DamageVal;
@@ -5427,6 +5506,10 @@ void ConstructActor(AActor *actor, const DVector3 &pos, bool SpawningMapThing)
 	auto Level = actor->Level;
 	actor->SpawnTime = Level->totaltime;
 	actor->SpawnOrder = Level->spawnindex++;
+	actor->lastModelFrame = -1;
+	actor->LastPatch.SetInvalid();
+	actor->lastScaleFlags = -1;
+	actor->HeavyProbeIndex = -1;
 
 	// Set default dialogue
 	actor->ConversationRoot = Level->GetConversation(actor->GetClass()->TypeName);
@@ -6395,7 +6478,7 @@ AActor *FLevelLocals::SpawnPlayer (FPlayerStart *mthing, int playernum, int flag
 		mobj->sprite = Skins[p->userinfo.GetSkin()].sprite;
 	}
 
-	p->DesiredFOV = p->FOV = fov;
+	p->DesiredFOV = p->FOV = p->deltaFOV = fov;
 	p->camera = p->mo;
 	p->playerstate = PST_LIVE;
 	p->refire = 0;
@@ -6840,6 +6923,7 @@ AActor *FLevelLocals::SpawnMapThing (FMapThing *mthing, int position)
 	mobj->SpawnPoint = mthing->pos;
 	mobj->SpawnAngle = mthing->angle;
 	mobj->SpawnFlags = mthing->flags;
+	mobj->HeavyProbeIndex = mthing->HeavyProbeIndex;
 	if (mthing->friendlyseeblocks > 0)
 		mobj->friendlyseeblocks = mthing->friendlyseeblocks;
 	if (mthing->FloatbobPhase >= 0 && mthing->FloatbobPhase < 64) mobj->FloatBobPhase = mthing->FloatbobPhase;
@@ -7019,7 +7103,14 @@ AActor *P_SpawnPuff (AActor *source, PClassActor *pufftype, const DVector3 &pos1
 	// it will enter the crash state. This is used by the StrifeSpark
 	// and BlasterPuff.
 	FState *crashstate;
-	if ((flags & PF_HITSKY) && (crashstate = puff->FindState(NAME_Death, NAME_Sky, true)) != NULL)
+	if ((flags & PF_SPLASHING) && (crashstate = puff->FindState(NAME_Splash)) != NULL) {
+		puff->SetState(crashstate);
+	}
+	else if ((flags & PF_HITTHRU) && (crashstate = puff->FindState(NAME_HitThrough)) != NULL)
+	{
+		puff->SetState(crashstate);
+	}
+	else if ((flags & PF_HITSKY) && (crashstate = puff->FindState(NAME_Death, NAME_Sky, true)) != NULL)
 	{
 		puff->SetState (crashstate);
 	}
@@ -7078,6 +7169,44 @@ DEFINE_ACTION_FUNCTION(AActor, SpawnPuff)
 	ACTION_RETURN_OBJECT(P_SpawnPuff(self, pufftype, DVector3(x, y, z), hitdir, particledir, updown, flags, victim));
 }
 
+// Defaults do nothing
+DEFINE_ACTION_FUNCTION(AActor, PuffSplash)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_FLOAT(x);
+	PARAM_FLOAT(y);
+	PARAM_FLOAT(z);
+	PARAM_FLOAT(dx);
+	PARAM_FLOAT(dy);
+	PARAM_FLOAT(dz);
+	PARAM_POINTER(sect, sector_t);
+	PARAM_POINTER(flr, F3DFloor);
+
+	ACTION_RETURN_BOOL(false);
+}
+// Defaults do nothing
+DEFINE_ACTION_FUNCTION(AActor, PuffThrough)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_OBJECT(victim, AActor);
+	PARAM_FLOAT(x);
+	PARAM_FLOAT(y);
+	PARAM_FLOAT(z);
+	PARAM_FLOAT(dx);
+	PARAM_FLOAT(dy);
+	PARAM_FLOAT(dz);
+
+	return 0;
+}
+// Defaults do nothing
+DEFINE_ACTION_FUNCTION(AActor, PuffHit)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_POINTER(trace_res, FLineTraceData);
+	
+	return 0;
+}
+
 //---------------------------------------------------------------------------
 //
 // P_SpawnBlood
@@ -7103,7 +7232,13 @@ AActor *P_SpawnBlood (const DVector3 &pos1, DAngle dir, int damage, AActor *orig
 		th->Angles.Yaw = dir;
 		// [NG] Applying PUFFGETSOWNER to the blood will make it target the owner
 		if (th->flags5 & MF5_PUFFGETSOWNER) th->target = originator;
-		if (gameinfo.gametype & GAME_DoomChex)
+		// [Selaco] @Cockatrice - Removed blood randomization and damage frame changes
+		// Instead we just set the damage value on the blood so it knows how much damage was done
+		if (g_SelacoMode)
+		{
+			th->SetDamage(damage);
+		}
+		else if (gameinfo.gametype & GAME_DoomChex)
 		{
 			th->tics -= pr_spawnblood() & 3;
 
@@ -7118,7 +7253,7 @@ AActor *P_SpawnBlood (const DVector3 &pos1, DAngle dir, int damage, AActor *orig
 
 		// Moved out of the blood actor so that replacing blood is easier
 		bool foundState = false;
-		if (gameinfo.gametype & GAME_DoomStrifeChex)
+		if (!g_SelacoMode && (gameinfo.gametype & GAME_DoomStrifeChex))
 		{
 			if (gameinfo.gametype == GAME_Strife)
 			{
@@ -7212,6 +7347,7 @@ void P_BloodSplatter (const DVector3 &pos, AActor *originator, DAngle hitangle)
 		AActor *mo;
 
 		mo = Spawn(originator->Level, bloodcls, pos, NO_REPLACE); // GetBloodType already performed the replacement
+		if (g_SelacoMode) mo->SetAngle(hitangle, 0);	// [Selaco] @Cockatrice - Why was the angle of blood splatters never set?
 		mo->target = originator;
 		mo->Vel.X = pr_splatter.Random2 () / 64.;
 		mo->Vel.Y = pr_splatter.Random2() / 64.;
@@ -8101,6 +8237,13 @@ AActor *P_SpawnPlayerMissile (AActor *source, double x, double y, double z,
 		an = angle;
 		pitch = source->Angles.Pitch;
 		pLineTarget->linetarget = NULL;
+
+		// [Selaco] @Cockatrice - Add camera offset pitch
+		if (g_SelacoMode && source->player && source->IsKindOf(NAME_PlayerPawn)) {
+			DVector3 angOff, posOff;
+			P_GetCameraOffsets(source->player, angOff, posOff);
+			pitch += DAngle::fromDeg(angOff.Y);
+		}
 	}
 	else // see which target is to be aimed at
 	{
@@ -8319,6 +8462,38 @@ bool AActor::IsHostile (AActor *other)
 	}
 	return true;
 }
+
+
+//==========================================================================
+//
+// AActor :: CallGrunt
+//
+// Engine used to hardcode grunt sounds on CHAN_VOICE, instead we'll give
+// the object the choice to grunt or not.
+//
+//==========================================================================
+
+
+DEFINE_ACTION_FUNCTION(AActor, Grunt)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	S_Sound(self, CHAN_VOICE, 0, "*grunt", 1, ATTN_IDLE);
+	return 0;
+}
+
+
+void AActor::CallGrunt(line_t* hitWall, int reason)
+{
+	IFVIRTUAL(AActor, Grunt)
+	{
+		VMValue params[3] = { (DObject*)this, hitWall, reason };
+		VMCall(func, params, 3, nullptr, 0);
+		return;
+	}
+	else S_Sound(this, CHAN_VOICE, 0, "*grunt", 1, ATTN_IDLE);
+}
+ 
+
 
 //==========================================================================
 //

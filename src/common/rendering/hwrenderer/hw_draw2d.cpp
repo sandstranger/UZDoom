@@ -172,7 +172,9 @@ void Draw2D(F2DDrawer* drawer, FRenderState& state, int x, int y, int width, int
 			auto flags = cmd.mTexture->GetUseType() >= ETextureType::Special? UF_None : cmd.mTexture->GetUseType() == ETextureType::FontChar? UF_Font : UF_Texture;
 
 			auto scaleflags = cmd.mFlags & F2DDrawer::DTF_Indexed ? CTF_Indexed : 0;
-			state.SetMaterial(cmd.mTexture, flags, scaleflags, cmd.mFlags & F2DDrawer::DTF_Wrap ? CLAMP_NONE : (cache_hw_2dmip ? CLAMP_XY : CLAMP_XY_NOMIP), cmd.mTranslationId, -1, nullptr);
+			state.SetMaterial(	cmd.mTexture, flags, scaleflags,
+								cmd.mFlags & F2DDrawer::DTF_Wrap ? (cmd.mFlags & F2DDrawer::DTF_ForceFilter ? CLAMP_NONE_FORCE_FILTER : CLAMP_NONE) : (cmd.mFlags & F2DDrawer::DTF_ForceFilter ? CLAMP_XY_NOMIP_FORCE_FILTER : (cache_hw_2dmip ? CLAMP_XY : CLAMP_XY_NOMIP)),
+								cmd.mTranslationId, -1, nullptr);
 			state.EnableTexture(true);
 
 			// Canvas textures are stored upside down

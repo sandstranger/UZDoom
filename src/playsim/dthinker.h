@@ -46,13 +46,21 @@ struct FThinkerList
 {
 	// No destructor. If this list goes away it's the GC's task to clean the orphaned thinkers. Otherwise this may clash with engine shutdown.
 	void AddTail(DThinker *thinker);
+	//void AddSleeper(DThinker *thinker);
+	void AddHead(DThinker *thinker);
+	void AddAfter(DThinker *after, DThinker *thinker);
+
 	DThinker *GetHead() const;
 	DThinker *GetTail() const;
+
+	inline void AssertSentinel();
+
 	bool IsEmpty() const;
 	void DestroyThinkers();
 	bool DoDestroyThinkers(bool& destroyed);
 	void RemoveTravellers(bool saveGame);
 	void OnLoad();
+	int CheckSleepingThinkers(int ticsElapsed = 1);			// Check and unsleep thinkers periodically
 	int TickThinkers(FThinkerList *dest, int& counter);	// Returns: # of thinkers ticked
 	int ProfileThinkers(FThinkerList *dest, int& counter, TMap<FName, ProfileInfo>& profiles);
 	void SaveList(FSerializer &arc);
@@ -80,10 +88,18 @@ struct FThinkerCollection
 	void OnLoad();
 	DThinker *FirstThinker(int statnum);
 	void Link(DThinker *thinker, int statnum);
+	void LinkSleeper(DThinker *thinker, int statnum);
+	void CheckSleepers();	// Wake up sleeping thinkers whose time is up
+
+	bool IsSleepCycle() const { return inSleepCycle; }
+	void AddWaker(DThinker* einstein) { tempWakers.Push(einstein); }
 
 private:
 	FThinkerList Thinkers[MAX_STATNUM + 2];
 	FThinkerList FreshThinkers[MAX_STATNUM + 1];
+
+	bool inSleepCycle = false;							// Set when running through sleepers.  If in sleep cycle, we put new sleeping thinkers into FreshThinkers and new wakes into the wake list
+	TArray<DThinker*> tempWakers;
 
 	friend class FThinkerIterator;
 };
@@ -102,6 +118,16 @@ public:
 	virtual void PostBeginPlay ();	// Called just before the first tick
 	virtual void CallPostBeginPlay(); // different in actor.
 	virtual void PostSerialize();
+	void CallPostSerialize();
+
+	virtual bool ShouldWake();		// Should wake from sleep
+	virtual void Wake();
+	virtual void Sleep(int tics = 10);
+	virtual void SleepIndefinite();
+	virtual void CallSleep(int tics = 10);
+	virtual bool CallShouldWake();
+	virtual void CallWake();
+
 	void Serialize(FSerializer &arc) override;
 	size_t PropagateMark();
 
@@ -121,6 +147,10 @@ private:
 
 	int8_t _statNum = -1;
 	DThinker *NextThinker = nullptr, *PrevThinker = nullptr;
+
+	// Sleep info
+	int sleepInterval = 0;	// How many tics to sleep before checking for wake
+	int sleepTimer = 0;		// Timer data
 
 public:
 	FLevelLocals *Level;

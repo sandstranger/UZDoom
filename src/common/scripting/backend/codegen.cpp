@@ -21,6 +21,7 @@
 **
 */
 
+#include "selaco.h"
 #include "basics.h"
 #include "cmdlib.h"
 #include "codegen.h"
@@ -1568,6 +1569,87 @@ ExpEmit FxSoundCast::Emit(VMFunctionBuilder *build)
 	return to;
 }
 
+
+//==========================================================================
+//
+//
+//
+//==========================================================================
+
+FxSoundHandleCast::FxSoundHandleCast(FxExpression* x)
+	: FxExpression(EFX_SoundHandleCast, x->ScriptPosition)
+{
+	basex = x;
+	ValueType = TypeSoundHandle;
+}
+
+//==========================================================================
+//
+//
+//
+//==========================================================================
+
+FxSoundHandleCast::~FxSoundHandleCast()
+{
+	SAFE_DELETE(basex);
+}
+
+//==========================================================================
+//
+//
+//
+//==========================================================================
+
+FxExpression* FxSoundHandleCast::Resolve(FCompileContext& ctx)
+{
+	CHECKRESOLVED();
+	SAFE_RESOLVE(basex, ctx);
+
+	if (basex->ValueType == TypeSound || basex->ValueType->isInt())
+	{
+		FxExpression* x = basex;
+		x->ValueType = TypeSound;
+		basex = nullptr;
+		delete this;
+		return x;
+	}
+	else if (basex->ValueType == TypeString)
+	{
+		if (basex->isConstant())
+		{
+			ExpVal constval = static_cast<FxConstant*>(basex)->GetValue();
+			FxExpression* x = new FxConstant(FSoundHandle(constval.GetInt()), ScriptPosition);
+			delete this;
+			return x;
+		}
+		return this;
+	}
+	else
+	{
+		ScriptPosition.Message(MSG_ERROR, "Cannot convert to sound handle");
+		delete this;
+		return nullptr;
+	}
+}
+
+//==========================================================================
+//
+//
+//
+//==========================================================================
+
+ExpEmit FxSoundHandleCast::Emit(VMFunctionBuilder* build)
+{
+	ExpEmit from = basex->Emit(build);
+	assert(!from.Konst);
+	assert(basex->ValueType == TypeString);
+	from.Free(build);
+	ExpEmit to(build, REGT_INT);
+	build->Emit(OP_CAST, to.RegNum, from.RegNum, CAST_S2So);
+	return to;
+}
+
+
 //==========================================================================
 //
 //
@@ -1902,6 +1984,14 @@ FxExpression *FxTypeCast::Resolve(FCompileContext &ctx)
 	else if (ValueType == TypeSound)
 	{
 		FxExpression *x = new FxSoundCast(basex);
+		x = x->Resolve(ctx);
+		basex = nullptr;
+		delete this;
+		return x;
+	}
+	else if (ValueType == TypeSoundHandle)
+	{
+		FxExpression* x = new FxSoundHandleCast(basex);
 		x = x->Resolve(ctx);
 		basex = nullptr;
 		delete this;
@@ -4873,6 +4963,7 @@ ExpEmit FxConcat::Emit(VMFunctionBuilder *build)
 		else if (left->ValueType == TypeUInt32) cast = CAST_U2S;
 		else if (left->ValueType == TypeName) cast = CAST_N2S;
 		else if (left->ValueType == TypeSound) cast = CAST_So2S;
+		else if (left->ValueType == TypeSoundHandle) cast = CAST_So2S;
 		else if (left->ValueType == TypeColor) cast = CAST_Co2S;
 		else if (left->ValueType == TypeSpriteID) cast = CAST_SID2S;
 		else if (left->ValueType == TypeTextureID) cast = CAST_TID2S;
@@ -4907,6 +4998,7 @@ ExpEmit FxConcat::Emit(VMFunctionBuilder *build)
 		else if (right->ValueType == TypeUInt32) cast = CAST_U2S;
 		else if (right->ValueType == TypeName) cast = CAST_N2S;
 		else if (right->ValueType == TypeSound) cast = CAST_So2S;
+		else if (right->ValueType == TypeSoundHandle) cast = CAST_So2S;
 		else if (right->ValueType == TypeColor) cast = CAST_Co2S;
 		else if (right->ValueType == TypeSpriteID) cast = CAST_SID2S;
 		else if (right->ValueType == TypeTextureID) cast = CAST_TID2S;
@@ -8478,6 +8570,38 @@ PFunction* FindClassMemberFunction(PContainerType* selfcls, PContainerType* func
 		{
 			sc.Message(MSG_WARNING, "Call to deprecated function %s", symbol->SymbolName.GetChars());
 		}
+		// @Cockatrice - Restrict callers to being from the same "unit" which in this case is just going to be the wad/pk3/lump container
+		else if (funcsym->Variants[0].Flags & VARF_Unit) {
+			int calleeLump = cls_target != nullptr ? cls_target->Descriptor->SourceLump : -1;
+			int callerLump = cls_ctx != nullptr ? cls_ctx->Descriptor->SourceLump : -1;
+			const char* calleeName = cls_target != nullptr ? cls_target->DescriptiveName() : nullptr;
+			const char* callerName = cls_ctx != nullptr ? cls_ctx->DescriptiveName() : nullptr;
+
+			if (calleeLump == -1 && cls_target == nullptr && funcsym->OwningClass->isStruct()) {
+				auto strct = static_cast<PStruct*> (funcsym->OwningClass);
+				calleeLump = strct->sourceLump;
+				calleeName = strct->DescriptiveName();
+			}
+
+			if (callerLump == -1 && cls_ctx == nullptr && funccls->isStruct()) {
+				auto strct = static_cast<PStruct*> (funccls);
+				callerLump = strct->sourceLump;
+				callerName = strct->DescriptiveName();
+			}
+
+			// Compare containers and make sure they are the same
+			if (callerLump != -1 && calleeLump != -1) {
+				int callerContainer = fileSystem.GetFileContainer(callerLump);
+				int calleeContainer = fileSystem.GetFileContainer(calleeLump);
+
+				if (! (callerContainer >= 0 && calleeContainer >= 0 && calleeContainer == callerContainer) ) {
+					sc.Message(MSG_ERROR, "%s does not have permission to call (%s) %s", callerName, calleeName, symbol->SymbolName.GetChars());
+				}
+			}
+			else {
+				sc.Message(MSG_ERROR, "%s tries to call %s but the unit context could not be determined.", callerName, calleeName, symbol->SymbolName.GetChars());
+			}
+		}
 	}
 	// return nullptr if the name cannot be found in the symbol table so that the calling code can do other checks.
 	return funcsym;
@@ -8630,6 +8754,7 @@ FxExpression *FxFunctionCall::Resolve(FCompileContext& ctx)
 	case NAME_SpriteID:
 	case NAME_TextureID:
 	case NAME_TranslationID:
+	case NAME_SoundHandle:
 		if (CheckArgSize(MethodName, ArgList, 1, 1, ScriptPosition))
 		{
 			PType *type =
@@ -8641,6 +8766,7 @@ FxExpression *FxFunctionCall::Resolve(FCompileContext& ctx)
 				MethodName == NAME_Name ? TypeName :
 				MethodName == NAME_SpriteID ? TypeSpriteID :
 				MethodName == NAME_TextureID ? TypeTextureID :
+				MethodName == NAME_SoundHandle ? TypeSoundHandle :
 				MethodName == NAME_TranslationID ? TypeTranslationID :
 				MethodName == NAME_State ? TypeState :
 				MethodName == NAME_Color ? TypeColor : (PType*)TypeSound;
@@ -8900,6 +9026,9 @@ FxExpression *FxMemberFunctionCall::Resolve(FCompileContext& ctx)
 		// [ZZ] substitute ccls for String internal type.
 		if (id == NAME_String) ccls = TypeStringStruct;
 		else if (id == NAME_Quat || id == NAME_FQuat) ccls = TypeQuaternionStruct;
+		else if (id == NAME_SoundHandle) {
+			ccls = TypeSoundHandleStruct;
+		}
 		else ccls = FindContainerType(id, ctx);
 		if (ccls != nullptr) static_cast<FxIdentifier *>(Self)->noglobal = true;
 	}
@@ -8984,6 +9113,40 @@ FxExpression *FxMemberFunctionCall::Resolve(FCompileContext& ctx)
 	}
 
 	// Note: These builtins would better be relegated to the actual type objects, instead of polluting this file, but that's a task for later.
+
+	// SoundHandle builtins
+	else if (Self->ValueType == TypeSoundHandle)
+	{
+		if (MethodName == NAME_IsValid || MethodName == NAME_SetInvalid)
+		{
+			if (ArgList.Size() > 0)
+			{
+				ScriptPosition.Message(MSG_ERROR, "Too many parameters in call to %s", MethodName.GetChars());
+				delete this;
+				return nullptr;
+			}
+			// No need to create a dedicated node here, all builtins map directly to trivial operations.
+			Self->ValueType = TypeSInt32;
+			FxExpression* x = nullptr;
+			switch (MethodName.GetIndex())
+			{
+				case NAME_IsValid:
+					x = new FxCompareRel('>', Self, new FxConstant(0, ScriptPosition));
+					break;
+
+				case NAME_SetInvalid:
+					x = new FxAssign(Self, new FxConstant(0, ScriptPosition));
+					break;
+			}
+			Self = nullptr;
+			SAFE_RESOLVE(x, ctx);
+			if (MethodName == NAME_SetInvalid) x->ValueType = TypeVoid; // override the default type of the assignment operator.
+			delete this;
+			return x;
+		}
+
+		Self->ValueType = TypeSoundHandleStruct;
+	}
 
 	// Texture builtins.
 	if (Self->ValueType->isNumeric())
@@ -9217,6 +9380,14 @@ FxExpression *FxMemberFunctionCall::Resolve(FCompileContext& ctx)
 						a = new FxOutVarDereference(a, a->ScriptPosition);
 						SAFE_RESOLVE(a, ctx);
 					}
+				}
+
+				// Scripts older than 4.15 (Selaco's are 4.1): Array<class<T>>.Push/Insert took any pointer - a class of an ancestor
+				// type, even an object - the way the untyped DynArray_Ptr did; Selaco's game code relies on that.
+				if (afd_override && elementType->isClassPointer() && a->ValueType != elementType && a->ValueType->isPointer()
+					&& ctx.Version < MakeVersion(4, 15) && ((MethodName == NAME_Push && idx == 0) || (MethodName == NAME_Insert && idx == 1)))
+				{
+					a->ValueType = elementType;
 				}
 
 				if (isDynArrayObj && ((MethodName == NAME_Push && idx == 0) || (MethodName == NAME_Insert && idx == 1)))
@@ -12383,6 +12554,15 @@ FxClassTypeCast::~FxClassTypeCast()
 //
 //==========================================================================
 
+// Is this a position in the engine pk3's own scripts ("<engine pk3>:zscript/...")?
+static bool IsEngineScriptPosition(const FScriptPosition& pos)
+{
+	const char* base = fileSystem.GetResourceFileName(0);
+	if (base == nullptr || *base == 0) return false;
+	FString prefix = FString(base) + ":";
+	return strnicmp(pos.FileName.GetChars(), prefix.GetChars(), prefix.Len()) == 0;
+}
+
 FxExpression *FxClassTypeCast::Resolve(FCompileContext &ctx)
 {
 	CHECKRESOLVED();
@@ -12432,13 +12612,16 @@ FxExpression *FxClassTypeCast::Resolve(FCompileContext &ctx)
 
 			if (cls == nullptr || cls->VMType == nullptr)
 			{
+				// Selaco: the engine pk3's own scripts may name classes of the files skipped for Selaco (zcc_parser.cpp,
+				// IsSelacoSkippedEngineScript): those other games' functions are never used there - null and a warning.
+				const bool selacoSkipped = g_SelacoMode && IsEngineScriptPosition(ScriptPosition);
 				/* lax */
 				// Since this happens in released WADs it must pass without a terminal error... :(
-				ScriptPosition.Message(MSG_OPTERROR,
+				ScriptPosition.Message(selacoSkipped ? MSG_DEBUGWARN : MSG_OPTERROR,
 					"Unknown class name '%s' of type '%s'",
 					clsname.GetChars(), desttype->TypeName.GetChars());
 				// When originating from DECORATE this must pass, when in ZScript it's an error that must abort the code generation here.
-				if (!ctx.FromDecorate)
+				if (!ctx.FromDecorate && !selacoSkipped)
 				{
 					delete this;
 					return nullptr;

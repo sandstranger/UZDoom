@@ -692,7 +692,7 @@ class PlayerPawn : Actor
 			}
 		}
 
-		if (Alternative)
+		if (Alternative || !g_viewbob)
 		{
 			bob = 0;
 		}
@@ -1027,6 +1027,8 @@ class PlayerPawn : Actor
 		let player = self.player;
 
 		if (!player) return;
+
+		player.deltaFOV = player.FOV;
 
 		// [RH] Zoom the player's FOV
 		float desired = player.DesiredFOV;
@@ -2638,6 +2640,12 @@ class PlayerPawn : Actor
 		return (0, 0, 0) , ( oldBob.x / 4, oldBob.y / -4, 0);
 	}
 
+	// Selaco: per-frame camera offsets (translation, rotation)
+	virtual Vector3, Vector3 CameraOffsets(double ticfrac)
+	{
+		return (0, 0, 0), (0, 0, 0);
+	}
+
 	//----------------------------------------------------------------------------
 	//
 	//
@@ -2776,6 +2784,7 @@ class PSprite : Object native play
 	native int Frame;
 	//native readonly int RenderStyle;	had to be blocked because the internal representation was not ok. Renderstyle is still pending a proper solution.
 	native readonly int ID;
+	native int Flags;
 	native Bool processPending;
 	native double x;
 	native double y;
@@ -2885,6 +2894,7 @@ struct PlayerInfo native play	// self is what internally is known as player_t
 	native Class<PlayerPawn> cls;
 	native float DesiredFOV;
 	native float FOV;
+	native float deltaFOV;		// Selaco: FOV at the start of the tic
 	native double viewz;
 	native double viewheight;
 	native double deltaviewheight;
@@ -2998,6 +3008,13 @@ struct PlayerInfo native play	// self is what internally is known as player_t
 	native clearscope bool GetClassicFlight() const;
 	native void SendPitchLimits();
 	native clearscope bool HasWeaponsInSlot(int slot) const;
+
+	// Selaco
+	native ui Vector3 WorldToView(Vector3 worldPosition);
+	native ui float DepthToViewScale(float depth, float size);
+	native ui float GetNearPlane();
+	native ui float GetFarPlane();
+	native ui float GetFOV();
 
 	native clearscope void SetFullbrightMode(EFullbrightMode mode, bool force = false);
 	native ui EFullbrightMode GetFullbrightMode() const;

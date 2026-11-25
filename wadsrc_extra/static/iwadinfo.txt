@@ -1,5 +1,31 @@
 // Must be sorted in identification order (easiest to recognize first!)
 
+// Selaco (GZSelaco). Selaco.ipk3 carries its own IWADINFO; these entries cover the
+// IWAD names and selaco.wad. Detection requires Selaco's first map so no other game matches.
+IWad
+{
+	Name = "Selaco"
+	Autoname = "selaco"
+	Game = "Doom"
+	Config = "Selaco"
+	IWADName = "selaco.ipk3"
+	Mapinfo = "mapinfo/selaco.txt"
+	MustContain = "IWADINFO", "SE_01A"
+	BannerColors = "32 54 43", "c6 dc d1"
+}
+
+IWad
+{
+	Name = "Selaco Debug"
+	Autoname = "selaco.aos.debug"
+	Game = "Doom"
+	Config = "Selaco"
+	IWADName = "selaco.wad"
+	Mapinfo = "mapinfo/selaco.txt"
+	MustContain = "SE_01A"
+	BannerColors = "32 54 43", "c6 dc d1"
+}
+
 IWad
 {
 	Name = "Rise Of The Wool Ball"
@@ -698,6 +724,8 @@ Names
 	"square1.pk3"
 	"delaweare.wad"
 	"rotwb.wad"
+	"selaco.ipk3"
+	"selaco.wad"
 }
 
 Order
@@ -761,4 +789,7 @@ Order
 	"The Adventures of Square (Square-ware)"
 	"Delaweare"
 	"Rise Of The Wool Ball"
+	// Selaco
+	"Selaco"
+	"Selaco Debug"
 }

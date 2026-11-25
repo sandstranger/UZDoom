@@ -70,6 +70,7 @@ struct RenderJob
 		WallJob,
 		SpriteJob,
 		ParticleJob,
+		ParticlePoolJob,
 		PortalJob,
 		TerminateJob	// inserted when all work is done so that the worker can return.
 	};
@@ -207,6 +208,11 @@ void HWDrawInfo::WorkerThread()
 			front = hw_FakeFlat(job->sub->sector, in_area, false);
 			RenderParticles(job->sub, front);
 			SetupSprite.Unclock();
+			break;
+
+		case RenderJob::ParticlePoolJob:
+			front = hw_FakeFlat(job->sub->sector, in_area, false);
+			RenderDefinedParticles(job->sub, front);
 			break;
 
 		case RenderJob::PortalJob:
@@ -481,8 +487,47 @@ void HWDrawInfo::PolySubsector(subsector_t * sub)
 		if (line->linedef)
 		{
 			AddLine (line, mClipPortal != nullptr);
+
+			if (Level->LMVersion >= 3)
+			{
+				AddLightmapSector(line->frontsector);
+			}
 		}
 		line++;
+	}
+}
+
+//==========================================================================
+//
+// AddLightmapSector
+// Mark this sector as visible this frame, and needs to be checked for
+// a lightmap update
+//
+//==========================================================================
+
+void HWDrawInfo::AddLightmapSector(sector_t* sector)
+{
+	if (sector)
+	{
+		LMSectorInfo* sectorInfo = &Level->LMSectorInfos[sector->sectornum];
+
+		if (sectorInfo->SectorIndex >= 0 && !sectorInfo->QueuedForRender)
+		{
+			if (Level->LMSectorItFirst == nullptr)
+			{
+				Level->LMSectorItFirst = sectorInfo;
+			}
+
+			if (Level->LMSectorItLast != nullptr)
+			{
+				Level->LMSectorItLast->NextIt = sectorInfo;
+			}
+
+			Level->LMSectorItLast = sectorInfo;
+			Level->LMSectorItLast->NextIt = nullptr;
+
+			sectorInfo->QueuedForRender = true;
+		}
 	}
 }
 
@@ -750,6 +795,28 @@ void HWDrawInfo::RenderParticles(subsector_t *sub, sector_t *front)
 		HWSprite sprite;
 		sprite.ProcessParticle(this, &Level->Particles[i], front, nullptr);
 	}
+	
+	SetupSprite.Unclock();
+}
+
+void HWDrawInfo::RenderDefinedParticles(subsector_t* sub, sector_t* front)
+{
+	SetupSprite.Clock();
+
+	for (int i = Level->DefinedParticlesInSubsec[sub->Index()]; i != NO_PARTICLE; i = Level->DefinedParticlePool.Particles[i].snext)
+	{
+		particledata_t& particle = Level->DefinedParticlePool.Particles[i];
+
+		if (mClipPortal)
+		{
+			int clipres = mClipPortal->ClipPoint(particle.pos.XY());
+			if (clipres == PClip_InFront) continue;
+		}
+
+		HWSprite sprite;
+		sprite.ProcessDefinedParticle(this, &particle, front);
+	}
+
 	SetupSprite.Unclock();
 }
 
@@ -896,6 +963,21 @@ void HWDrawInfo::DoSubsector(subsector_t * sub)
 			SetupSprite.Unclock();
 		}
 	}
+	
+	// (Selaco: pooled particles)
+	if (gl_render_things && (unsigned)sub->Index() < Level->DefinedParticlesInSubsec.Size() && Level->DefinedParticlesInSubsec[sub->Index()] != NO_PARTICLE)
+	{
+		if (multithread)
+		{
+			jobQueue.AddJob(RenderJob::ParticlePoolJob, sub);
+		}
+		else
+		{
+			SetupSprite.Clock();
+			RenderDefinedParticles(sub, fakesector);
+			SetupSprite.Unclock();
+		}
+	}
 
 	AddLines(sub, fakesector);
 
@@ -1015,6 +1097,11 @@ void HWDrawInfo::DoSubsector(subsector_t * sub)
 				}
 			}
 		}
+	}
+
+	if (Level->LMVersion >= 3)
+	{
+		AddLightmapSector(sector);
 	}
 }
 

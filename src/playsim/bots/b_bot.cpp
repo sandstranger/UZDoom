@@ -41,6 +41,7 @@
 #include "vm.h"
 #include "g_levellocals.h"
 #include "d_main.h"
+#include "selaco.h"
 
 IMPLEMENT_CLASS(DBot, false, true)
 
@@ -246,6 +247,9 @@ void InitBotStuff()
 	int lastlump = 0;
 	while (-1 != (lump = fileSystem.FindLump("BOTSUPP", &lastlump)))
 	{
+		// (Selaco: the engine's bot data names other games' weapons - some of their classes are not compiled for it)
+		if (g_SelacoMode && fileSystem.GetFileContainer(lump) == 0) continue;
+
 		FScanner sc(lump);
 		sc.SetCMode(true);
 		while (sc.GetString())

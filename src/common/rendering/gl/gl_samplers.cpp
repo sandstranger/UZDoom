@@ -38,8 +38,10 @@ namespace OpenGLRenderer
 extern TexFilter_s TexFilter[];
 
 
-FSamplerManager::FSamplerManager()
+FSamplerManager::FSamplerManager(bool isArc)
 {
+	this->isArc = isArc;
+
 	glGenSamplers(NUMSAMPLERS, mSamplers);
 
 	glSamplerParameteri(mSamplers[CLAMP_X], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -50,6 +52,7 @@ FSamplerManager::FSamplerManager()
 	glSamplerParameteri(mSamplers[CLAMP_NOFILTER_Y], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glSamplerParameteri(mSamplers[CLAMP_NOFILTER_XY], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glSamplerParameteri(mSamplers[CLAMP_NOFILTER_XY], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
 	for (int i = CLAMP_NOFILTER; i <= CLAMP_NOFILTER_XY; i++)
 	{
 		glSamplerParameteri(mSamplers[i], GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -62,6 +65,17 @@ FSamplerManager::FSamplerManager()
 	glSamplerParameteri(mSamplers[CLAMP_XY_NOMIP], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glSamplerParameterf(mSamplers[CLAMP_XY_NOMIP], GL_TEXTURE_MAX_ANISOTROPY_EXT, 1.f);
 	glSamplerParameterf(mSamplers[CLAMP_CAMTEX], GL_TEXTURE_MAX_ANISOTROPY_EXT, 1.f);
+
+	glSamplerParameteri(mSamplers[CLAMP_XY_NOMIP_FORCE_FILTER], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glSamplerParameteri(mSamplers[CLAMP_XY_NOMIP_FORCE_FILTER], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glSamplerParameterf(mSamplers[CLAMP_XY_NOMIP_FORCE_FILTER], GL_TEXTURE_MAX_ANISOTROPY_EXT, 1.f);
+	glSamplerParameterf(mSamplers[CLAMP_NONE_FORCE_FILTER], GL_TEXTURE_MAX_ANISOTROPY_EXT, 1.f);
+
+	glSamplerParameteri(mSamplers[CLAMP_XY_NOMIP_FORCE_FILTER], GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glSamplerParameteri(mSamplers[CLAMP_XY_NOMIP_FORCE_FILTER], GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glSamplerParameteri(mSamplers[CLAMP_NONE_FORCE_FILTER], GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glSamplerParameteri(mSamplers[CLAMP_NONE_FORCE_FILTER], GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	
 
 	SetTextureFilterMode();
 
@@ -115,12 +129,14 @@ void FSamplerManager::SetTextureFilterMode()
 	{
 		glSamplerParameteri(mSamplers[i], GL_TEXTURE_MIN_FILTER, TexFilter[filter].minfilter);
 		glSamplerParameteri(mSamplers[i], GL_TEXTURE_MAG_FILTER, TexFilter[filter].magfilter);
-		glSamplerParameterf(mSamplers[i], GL_TEXTURE_MAX_ANISOTROPY_EXT, aniso);
+		// (Selaco: Intel ARC drivers misbehave with anisotropic filtering on unfiltered textures)
+		glSamplerParameterf(mSamplers[i], GL_TEXTURE_MAX_ANISOTROPY_EXT, (!isArc || TexFilter[filter].magfilter != GL_NEAREST) ? aniso : 1.0f);
 	}
 	glSamplerParameteri(mSamplers[CLAMP_XY_NOMIP], GL_TEXTURE_MIN_FILTER, TexFilter[filter].magfilter);
 	glSamplerParameteri(mSamplers[CLAMP_XY_NOMIP], GL_TEXTURE_MAG_FILTER, TexFilter[filter].magfilter);
 	glSamplerParameteri(mSamplers[CLAMP_CAMTEX], GL_TEXTURE_MIN_FILTER, TexFilter[filter].magfilter);
 	glSamplerParameteri(mSamplers[CLAMP_CAMTEX], GL_TEXTURE_MAG_FILTER, TexFilter[filter].magfilter);
+
 	for(int i = 0; i < IHardwareTexture::MAX_TEXTURES; i++)
 	{
 		glBindSampler(i, bounds[i]);

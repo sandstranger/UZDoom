@@ -36,6 +36,7 @@
 #include "m_argv.h"
 #include "cmdlib.h"
 #include "keydef.h"
+#include "selaco.h"
 
 // MACROS ------------------------------------------------------------------
 
@@ -59,6 +60,28 @@
 extern bool AppActive;
 
 EXTERN_CVAR(Bool, use_joystick)
+EXTERN_CVAR(Bool, joy_feedback)
+EXTERN_CVAR(Float, joy_feedback_scale)
+EXTERN_CVAR(Bool, joy_invert_look)
+
+// Selaco: input queue size of its own XInput code. Not used by this implementation, kept so
+// Selaco's settings and menus find the CVAR.
+CUSTOM_CVAR(Int, joy_xinput_queuesize, 5, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+	if (self > 10) self = 10;
+	if (self < 1) self = 1;
+}
+
+// Selaco: square ("un-circularize") the thumbsticks; 0 = off, 1 = on, 2 = forced.
+// Only used while Selaco is running, other games keep UZDoom's thumbstick handling.
+CUSTOM_CVAR(Int, joy_xinput_squaremove, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+	if (self > 2) self = 2;
+	if (self < 0) self = 0;
+}
+
+CUSTOM_CVAR(Int, joy_xinput_squarelook, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+	if (self > 2) self = 2;
+	if (self < 0) self = 0;
+}
 
 // TYPES -------------------------------------------------------------------
 
@@ -93,6 +116,8 @@ public:
 	float GetAxisDigitalThreshold(int axis);
 	EJoyCurve GetAxisResponseCurve(int axis);
 	float GetAxisResponseCurvePoint(int axis, int point);
+	float GetAxis(int axis) override;
+	float GetRawAxis(int axis) override;
 
 	void SetAxisDeadZone(int axis, float deadzone);
 	void SetAxisScale(int axis, float scale);
@@ -123,6 +148,7 @@ protected:
 	struct AxisInfo
 	{
 		float Value;
+		float RawValue;
 		float DeadZone;
 		float Multiplier;
 		uint8_t ButtonValue;
@@ -163,6 +189,9 @@ protected:
 
 	void Attached();
 	void Detached();
+
+	bool InternalSetVibration(float l, float r) override;
+	void SquareStick(AxisInfo *axisX, AxisInfo *axisY);
 
 	static void ProcessThumbstick(int value1, AxisInfo *axis1, int value2, AxisInfo *axis2, int base);
 	static void ProcessTrigger(int value, AxisInfo *axis, int base);
@@ -306,6 +335,13 @@ void FXInputController::ProcessInput()
 	{
 		Attached();
 	}
+
+	// Selaco's direct vibration API: let active feedback decay (nothing to do unless AddVibration/SetVibration was used)
+	if (lFeed > 0.0f || rFeed > 0.0f)
+	{
+		UpdateFeedback();
+	}
+
 	if (state.dwPacketNumber == LastPacketNumber || !Enabled)
 	{ // Nothing has changed since last time.
 		return;
@@ -325,6 +361,15 @@ void FXInputController::ProcessInput()
 					 -state.Gamepad.sThumbRY, &Axes[AXIS_ThumbRY], KEY_PAD_RTHUMB_RIGHT);
 	ProcessTrigger(state.Gamepad.bLeftTrigger, &Axes[AXIS_LeftTrigger], KEY_PAD_LTRIGGER);
 	ProcessTrigger(state.Gamepad.bRightTrigger, &Axes[AXIS_RightTrigger], KEY_PAD_RTRIGGER);
+
+	// Selaco squares the thumbsticks (joy_xinput_squaremove / joy_xinput_squarelook)
+	if (g_SelacoMode)
+	{
+		if (joy_xinput_squaremove > 0)
+			SquareStick(&Axes[AXIS_ThumbLX], &Axes[AXIS_ThumbLY]);
+		if (joy_xinput_squarelook > 0)
+			SquareStick(&Axes[AXIS_ThumbRX], &Axes[AXIS_ThumbRY]);
+	}
 
 	// Generate events for buttons that have changed.
 	Joy_GenerateButtonEvents(LastButtons, state.Gamepad.wButtons, 16, KEY_PAD_DPAD_UP);
@@ -350,6 +395,9 @@ void FXInputController::ProcessThumbstick(int value1, AxisInfo *axis1,
 
 	axisval1 = (value1 - SHRT_MIN) * 2.0 / 65536 - 1.0;
 	axisval2 = (value2 - SHRT_MIN) * 2.0 / 65536 - 1.0;
+
+	axis1->RawValue = float(axisval1);
+	axis2->RawValue = float(axisval2);
 
 	Joy_ManageThumbstick(
 		&axisval1, &axisval2,
@@ -381,6 +429,7 @@ void FXInputController::ProcessTrigger(int value, AxisInfo *axis, int base)
 	uint8_t buttonstate;
 	double axisval;
 
+	axis->RawValue = float(value / 256.0);
 	axisval = Joy_ManageSingleAxis(
 		value / 256.0,
 		axis->DeadZone, axis->DigitalThreshold, axis->ResponseCurve,
@@ -410,8 +459,10 @@ void FXInputController::Attached()
 	for (i = 0; i < NUM_AXES; ++i)
 	{
 		Axes[i].Value = 0;
+		Axes[i].RawValue = 0;
 		Axes[i].ButtonValue = 0;
 	}
+	lFeed = rFeed = 0;
 	XINPUT_CAPABILITIES capabilities;
 	if (XInputGetCapabilities(Index, XINPUT_FLAG_GAMEPAD, &capabilities) == ERROR_SUCCESS)
 	{
@@ -431,6 +482,62 @@ void FXInputController::Rumble(float low_freq, float high_freq)
 	Vibration.wLeftMotorSpeed  = static_cast<unsigned short>(USHRT_MAX*clamp(high_freq*HapticStrength, 0.f, 1.f));
 	Vibration.wRightMotorSpeed = static_cast<unsigned short>(USHRT_MAX*clamp( low_freq*HapticStrength, 0.f, 1.f));
 	XInputSetState(Index, &Vibration);
+}
+
+//==========================================================================
+//
+// FXInputController :: InternalSetVibration
+//
+// Selaco: set left and right vibration. Converts floating point to internal values
+// These settings may end up being zeroed out after a period of inactivty
+// as we don't want the motors to run forever. This decay is handled in
+// the generic interface
+//
+//==========================================================================
+
+bool FXInputController::InternalSetVibration(float l, float r)
+{
+	XINPUT_VIBRATION vibration;
+	ZeroMemory(&vibration, sizeof(XINPUT_VIBRATION));
+
+	if (!joy_feedback)
+	{
+		if (lFeed != 0.0f || rFeed != 0.0f)
+		{
+			lFeed = rFeed = 0.0f;
+			XInputSetState(Index, &vibration);
+		}
+		return false;
+	}
+
+	lFeed = clamp(l, 0.0f, 1.0f);
+	rFeed = clamp(r, 0.0f, 1.0f);
+
+	vibration.wLeftMotorSpeed = (WORD)round(clamp(lFeed * joy_feedback_scale, 0.0f, 1.0f) * 65535.0);
+	vibration.wRightMotorSpeed = (WORD)round(clamp(rFeed * joy_feedback_scale, 0.0f, 1.0f) * 65535.0);
+
+	return XInputSetState(Index, &vibration) == ERROR_SUCCESS;
+}
+
+//==========================================================================
+//
+// FXInputController :: SquareStick
+//
+// Selaco: un-circularize the processed values of a thumbstick
+//
+//==========================================================================
+
+void FXInputController::SquareStick(AxisInfo *axisX, AxisInfo *axisY)
+{
+	float x = axisX->Value * 1.15f;	// Add a slightly arbitrary bonus value to make up for many sticks that don't fully commit a proper circle
+	float y = axisY->Value * 1.15f;
+	float r = sqrtf(x * x + y * y);
+	float maxMove = max(fabsf(x), fabsf(y));
+	if (maxMove > 0)
+	{
+		axisX->Value = clamp(x * (r / maxMove), -1.0f, 1.0f);
+		axisY->Value = clamp(y * (r / maxMove), -1.0f, 1.0f);
+	}
 }
 
 //==========================================================================
@@ -476,13 +583,16 @@ void FXInputController::AddAxes(float axes[NUM_AXIS_CODES])
 		float axis_value = float(Axes[i].Value * Multiplier * Axes[i].Multiplier);
 		int code = AXIS_CODE_NULL;
 
+		// @Cockatrice - global invert for look only
+		const bool invert = joy_invert_look && i == AXIS_ThumbRY;
+
 		if (axis_value > 0.0f)
 		{
-			code = AxisCodes[i][0];
+			code = AxisCodes[i][invert ? 1 : 0];
 		}
 		else if (axis_value < 0.0f)
 		{
-			code = AxisCodes[i][1];
+			code = AxisCodes[i][invert ? 0 : 1];
 		}
 
 		if (code != AXIS_CODE_NULL)
@@ -710,6 +820,32 @@ float FXInputController::GetAxisResponseCurvePoint(int axis, int point)
 	if (unsigned(axis) < NUM_AXES && unsigned(point) < 4)
 	{
 		return Axes[axis].ResponseCurve.pts[point];
+	}
+	return 0;
+}
+
+//==========================================================================
+//
+// FXInputController :: GetAxis / GetRawAxis
+//
+// Selaco: direct access to the processed and the raw axis values
+//
+//==========================================================================
+
+float FXInputController::GetAxis(int axis)
+{
+	if (unsigned(axis) < NUM_AXES)
+	{
+		return Axes[axis].Value;
+	}
+	return 0;
+}
+
+float FXInputController::GetRawAxis(int axis)
+{
+	if (unsigned(axis) < NUM_AXES)
+	{
+		return Axes[axis].RawValue;
 	}
 	return 0;
 }

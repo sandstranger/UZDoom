@@ -28,6 +28,7 @@
 #include "r_utility.h"
 #include "g_levellocals.h"
 #include "actorinlines.h"
+#include "selaco.h"
 #include <p_maputl.h>
 
 static FCRandom pr_quake ("Quake");
@@ -67,6 +68,7 @@ void DEarthquake::Construct(AActor *center, double intensityX, double intensityY
 	m_DamageMultiplier = damageMultiplier;
 	m_ThrustMultiplier = thrustMultiplier;
 	m_Damage = damage;
+	hasPlayedSound = false;
 }
 
 //==========================================================================
@@ -91,6 +93,7 @@ void DEarthquake::Serialize(FSerializer &arc)
 		("highpoint", m_Highpoint)
 		("minicount", m_MiniCount)
 		("rollintensity", m_RollIntensity)
+		("hasPlayedSound", hasPlayedSound)
 		("rollwave", m_RollWave);
 		("damagemultiplier", m_DamageMultiplier);
 		("thrustmultiplier", m_ThrustMultiplier);
@@ -116,8 +119,10 @@ void DEarthquake::Tick ()
 		return;
 	}
 
-	if (!S_IsActorPlayingSomething (m_Spot, CHAN_BODY, m_QuakeSFX))
+	// [Selaco] Selaco doesn't start (or later stop) anything for quakes without a sound.
+	if ((!g_SelacoMode || m_QuakeSFX.isvalid()) && !S_IsActorPlayingSomething (m_Spot, CHAN_BODY, m_QuakeSFX))
 	{
+		hasPlayedSound = true;
 		S_Sound (m_Spot, CHAN_BODY, CHANF_LOOP, m_QuakeSFX, 1, ATTN_NORM);
 	}
 
@@ -155,7 +160,7 @@ void DEarthquake::Tick ()
 		m_MiniCount--;
 	if (--m_Countdown == 0)
 	{
-		if (S_IsActorPlayingSomething(m_Spot, CHAN_BODY, m_QuakeSFX))
+		if ((!g_SelacoMode || hasPlayedSound) && S_IsActorPlayingSomething(m_Spot, CHAN_BODY, m_QuakeSFX))
 		{
 			S_StopSound(m_Spot, CHAN_BODY);
 		}

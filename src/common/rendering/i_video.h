@@ -20,6 +20,8 @@
 #define __I_VIDEO_H__
 
 #include <cstdint>
+#include <tarray.h>
+#include <zstring.h>
 
 class DFrameBuffer;
 
@@ -34,6 +36,7 @@ public:
 	bool SetResolution();
 
 	virtual void DumpAdapters();
+	virtual void DumpAdapters(TArray<FString>& ar);
 };
 
 void I_InitGraphics();

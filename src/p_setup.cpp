@@ -73,10 +73,13 @@
 #include "texturemanager.h"
 #include "p_lnspec.h"
 #include "d_main.h"
+#include "selaco.h"
 
 extern AActor *SpawnMapThing (int index, FMapThing *mthing, int position);
 
 extern unsigned int R_OldBlend;
+
+CVAR(Bool, debug_precache_actor, false, CVAR_NOSAVE);
 
 
 //===========================================================================
@@ -99,9 +102,16 @@ static void AddToList(uint8_t *hitlist, FTextureID texid, int bitmask)
 		{
 			if (texid == anim.BasePic || (!anim.bDiscrete && anim.BasePic < texid && texid < anim.BasePic + anim.NumFrames))
 			{
-				for (int i = anim.BasePic.GetIndex(); i < anim.BasePic.GetIndex() + anim.NumFrames; i++)
-				{
-					hitlist[i] |= (uint8_t)bitmask;
+				// @Cockatrice - The code for handling discrete animation sequences was missing here
+				if (anim.bDiscrete) {
+					for (int i = 0; i < anim.NumFrames; i++) {
+						hitlist[anim.Frames[i].FramePic.GetIndex()] |= (uint8_t)bitmask;
+					}
+				}
+				else {
+					for (int i = anim.BasePic.GetIndex(); i < anim.BasePic.GetIndex() + anim.NumFrames; i++) {
+						hitlist[i] |= (uint8_t)bitmask;
+					}
 				}
 			}
 		}
@@ -143,6 +153,8 @@ static void AddToList(uint8_t *hitlist, FTextureID texid, int bitmask)
 	}
 }
 
+EXTERN_CVAR(Bool, gl_precache_actors)
+
 static void PrecacheLevel(FLevelLocals *Level)
 {
 	if (demoplayback)
@@ -152,6 +164,7 @@ static void PrecacheLevel(FLevelLocals *Level)
 	TMap<PClassActor *, bool> actorhitlist;
 	int cnt = TexMan.NumTextures();
 	TArray<uint8_t> hitlist(cnt, true);
+	bool precacheActors = !g_SelacoMode || gamestate != GS_TITLELEVEL;	// Selaco doesn't precache actors for its title level
 
 	memset(hitlist.Data(), 0, cnt);
 
@@ -163,16 +176,37 @@ static void PrecacheLevel(FLevelLocals *Level)
 		actorhitlist[actor->GetClass()] = true;
 	}
 
-	for (auto n : gameinfo.PrecachedClasses)
-	{
-		PClassActor *cls = PClass::FindActor(n);
-		if (cls != nullptr) actorhitlist[cls] = true;
-	}
-	for (unsigned i = 0; i < Level->info->PrecacheClasses.Size(); i++)
-	{
-		// Level->info can only store names, no class pointers.
-		PClassActor *cls = PClass::FindActor(Level->info->PrecacheClasses[i]);
-		if (cls != nullptr) actorhitlist[cls] = true;
+	if (precacheActors) {
+		if (!g_SelacoMode || gl_precache_actors) {
+			for (auto n : gameinfo.PrecachedClasses)
+			{
+				PClassActor *cls = PClass::FindActor(n);
+				if (cls != nullptr) actorhitlist[cls] = true;
+			}
+
+			for (unsigned i = 0; i < Level->info->PrecacheClasses.Size(); i++)
+			{
+				// Level->info can only store names, no class pointers.
+				PClassActor *cls = PClass::FindActor(Level->info->PrecacheClasses[i]);
+				if (cls != nullptr) actorhitlist[cls] = true;
+			}
+		}
+
+		// @Cockatrice - Also check the actor classes themselves to see if they are marked for precache
+		for (auto pc : PClassActor::AllActorClasses) {
+			auto act = GetDefaultByType(pc);
+			if (act != NULL && (act->flags9 & MF9_PRECACHEALWAYS))
+			{
+				actorhitlist[static_cast<PClassActor*>(pc)] = true;
+			}
+		}
+
+		// Debug: Precache ALL ACTORS
+		if (debug_precache_actor) {
+			for (auto pc : PClassActor::AllActorClasses) {
+				actorhitlist[pc] = true;
+			}
+		}
 	}
 
 	for (i = Level->sectors.Size() - 1; i >= 0; i--)
@@ -296,6 +330,8 @@ void FLevelLocals::ClearLevelData(bool fullgc)
 	ClientSideThinkers.DestroyAllThinkers(fullgc);
 	ClearAllSubsectorLinks(); // can't be done as part of the polyobj deletion process.
 
+	P_DestroyAllParticleDefinitions(this);
+
 	total_monsters = total_items = total_secrets =
 	killed_monsters = found_items = found_secrets = 0;
 	LocalTimer = LocalWorldTimer = 0;
@@ -414,7 +450,7 @@ void P_FreeLevelData (bool fullgc)
 //
 //===========================================================================
 
-void P_SetupLevel(FLevelLocals *Level, int position, bool newGame)
+void P_SetupLevel(FLevelLocals *Level, int position, bool newGame, int mapVersion)
 {
 	unsigned int i;
 
@@ -461,7 +497,7 @@ void P_SetupLevel(FLevelLocals *Level, int position, bool newGame)
 	// Free all level data from the previous map
 	P_FreeLevelData();
 
-	MapData *map = P_OpenMapData(Level->MapName.GetChars(), true);
+	MapData *map = P_OpenMapData(Level->MapName.GetChars(), true, mapVersion);
 	if (map == nullptr)
 	{
 		I_Error("Unable to open map '%s'\n", Level->MapName.GetChars());
@@ -475,6 +511,7 @@ void P_SetupLevel(FLevelLocals *Level, int position, bool newGame)
 	map->GetChecksum(Level->md5);
 	// find map num
 	Level->lumpnum = map->lumpnum;
+	Level->mapVersion = map->version;
 
 	if (newGame)
 	{
@@ -570,6 +607,11 @@ void P_SetupLevel(FLevelLocals *Level, int position, bool newGame)
 
 	// [RH] Remove all particles
 	P_ClearParticles(Level);
+
+	// @Cockatrice - Flush any background texture loads
+	if (screen->SupportsBackgroundCache()) {
+		screen->FlushBackground();
+	}
 
 	// preload graphics and sounds
 	if (precache)

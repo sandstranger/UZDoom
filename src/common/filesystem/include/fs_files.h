@@ -154,7 +154,6 @@ public:
 		length = 0;
 		owned = true;
 	}
-
 };
 
 
@@ -169,6 +168,8 @@ public:
 	virtual char *Gets(char *strbuf, ptrdiff_t len) = 0;
 	virtual const char *GetBuffer() const { return nullptr; }
 	ptrdiff_t GetLength () const { return Length; }
+
+	virtual void ShiftStart(ptrdiff_t offset) {};
 };
 
 class FileReader
@@ -208,6 +209,10 @@ public:
 		mReader = r.mReader;
 		r.mReader = nullptr;
 		return *this;
+	}
+
+	void ShiftStart(ptrdiff_t offset) {
+		mReader->ShiftStart(offset);
 	}
 
 	// This is for wrapping the actual reader for custom access where a managed FileReader won't work.
@@ -347,6 +352,13 @@ public:
 		uint64_t v = 0;
 		Read(&v, 8);
 		// Prove to me that there's a relevant 64 bit Big Endian architecture and I fix this! :P
+		return v;
+	}
+
+	float ReadFloat()
+	{
+		float v = 0.0f;
+		Read(&v, 4);
 		return v;
 	}
 

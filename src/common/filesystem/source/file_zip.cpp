@@ -99,6 +99,7 @@ static uint32_t Zip_FindCentralDir(FileReader &fin, bool* zip64)
 class FZipFile : public FResourceFile
 {
 	void SetEntryAddress(uint32_t entry) override;
+	void SkipHeader(FileReader& fr) override;
 
 public:
 	FZipFile(const char* filename, FileReader& file, StringPool* sp);
@@ -299,9 +300,8 @@ bool FZipFile::Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 		Entry->CRC32 = zip_fh->CRC32;
 		Entry->CompressedSize = CompressedSize;
 		Entry->Position = LocalHeaderOffset;
-
+		//Printf(FSMessageLevel::Warning, "%s   Start(%d)  Compressed(%d) Size(%d)\n", name.c_str(), Entry->Position, Entry->CompressedSize, Entry->Length);
 		Entry++;
-
 	}
 	// Resize the lump record array to its actual size
 	NumLumps -= skipped;
@@ -311,6 +311,7 @@ bool FZipFile::Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 	PostProcessArchive(filter);
 	return true;
 }
+
 
 //==========================================================================
 //
@@ -359,6 +360,24 @@ void FZipFile::SetEntryAddress(uint32_t entry)
 	Entries[entry].Flags &= ~RESFF_NEEDFILESTART;
 }
 
+
+//==========================================================================
+//
+// @Cockatrice - Skip over ZIP header
+//
+//==========================================================================
+
+void FZipFile::SkipHeader(FileReader& fr) {
+	FZipLocalFileHeader localHeader;
+	int skiplen;
+
+	fr.Seek(0, FileReader::SeekSet);
+	fr.Read(&localHeader, sizeof(localHeader));
+	skiplen = LittleShort(localHeader.NameLength) + LittleShort(localHeader.ExtraLength);
+	fr.Seek(skiplen, FileReader::SeekCur);
+	fr.ShiftStart(sizeof(localHeader) + skiplen);
+}
+
 //==========================================================================
 //
 // File open
@@ -383,6 +402,5 @@ FResourceFile *CheckZip(const char *filename, FileReader &file, LumpFilterInfo* 
 	}
 	return NULL;
 }
-
 
 }

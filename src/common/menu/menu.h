@@ -266,6 +266,8 @@ public:
 	double mTooltipScrollOffset;
 	FFont* mTooltipFont;
 	bool DrawTooltips;
+	bool ReceiveAllInputEvents;		// @Cockatrice - menu also gets the input events that the menu system would otherwise handle itself
+	float BlurAmount;				// @Cockatrice - > 0 forces this blur amount
 	static int InMenu;
 
 	DMenu(DMenu *parent = NULL);

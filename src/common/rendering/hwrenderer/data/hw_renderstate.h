@@ -191,11 +191,18 @@ struct FVector4PalEntry
 
 };
 
+struct HeavyProbeSampleData
+{
+	FVector4 Color;
+	FVector4 Dir;
+};
+
 struct StreamData
 {
 	FVector4PalEntry uObjectColor;
 	FVector4PalEntry uObjectColor2;
 	FVector4 uDynLightColor;
+	FVector4 uLightProbeColor;
 	FVector4PalEntry uAddColor;
 	FVector4PalEntry uTextureAddColor;
 	FVector4PalEntry uTextureModulateColor;
@@ -221,7 +228,13 @@ struct StreamData
 
 	FVector4 uDetailParms;
 	FVector4 uNpotEmulation;
-	FVector4 padding1, padding2, padding3;
+
+	// NL: I'm not happy with how much extra data we need to store here for something that's only used occasionally.
+	//     Ideally this should just be an index into another external array for the HeavyProbe data, 
+	//     but I'm running short on time so this'll have to do.
+	int uHeavyProbeSampleCount, pad1, pad2, pad3;
+	FVector4 uHeavyProbeSampleColors[4];
+	FVector4 uHeavyProbeSampleDirs[4];
 };
 
 //==========================================================================
@@ -503,10 +516,21 @@ public:
 		mStreamData.uSplitTopPlane = { 0.0f, 0.0f, 0.0f, 0.0f };
 		mStreamData.uSplitBottomPlane = { 0.0f, 0.0f, 0.0f, 0.0f };
 		mStreamData.uDynLightColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+		mStreamData.uLightProbeColor = { 0.0f, 0.0f, 0.0f, 1.0f };
 		mStreamData.uDetailParms = { 0.0f, 0.0f, 0.0f, 0.0f };
 #ifdef NPOT_EMULATION
 		mStreamData.uNpotEmulation = { 0,0,0,0 };
 #endif
+
+		mStreamData.uHeavyProbeSampleCount = 0;
+		mStreamData.uHeavyProbeSampleColors[0] = {};
+		mStreamData.uHeavyProbeSampleColors[1] = {};
+		mStreamData.uHeavyProbeSampleColors[2] = {};
+		mStreamData.uHeavyProbeSampleColors[3] = {};
+		mStreamData.uHeavyProbeSampleDirs[0] = {};
+		mStreamData.uHeavyProbeSampleDirs[1] = {};
+		mStreamData.uHeavyProbeSampleDirs[2] = {};
+		mStreamData.uHeavyProbeSampleDirs[3] = {};
 		mModelMatrix.loadIdentity();
 		mTextureMatrix.loadIdentity();
 		ClearClipSplit();
@@ -696,6 +720,29 @@ public:
 		mStreamData.uDynLightColor.Z = b;
 	}
 
+	void SetLightProbe(float r, float g, float b)
+	{
+		mStreamData.uLightProbeColor.X = r;
+		mStreamData.uLightProbeColor.Y = g;
+		mStreamData.uLightProbeColor.Z = b;
+	}
+
+	void SetHeavyProbe(int numSamples, HeavyProbeSampleData samples[4])
+	{
+		mStreamData.uHeavyProbeSampleCount = numSamples;
+
+		for (int i = 0; i < numSamples; i++)
+		{
+			mStreamData.uHeavyProbeSampleColors[i] = samples[i].Color;
+			mStreamData.uHeavyProbeSampleDirs[i] = samples[i].Dir;
+		}
+	}
+
+	void ClearHeavyProbe()
+	{
+		mStreamData.uHeavyProbeSampleCount = 0;
+	}
+
 	void SetScreenFade(float f)
 	{
 		// This component is otherwise unused.
@@ -835,6 +882,7 @@ public:
 		if (!sysCallbacks.PreBindTexture || !sysCallbacks.PreBindTexture(this, tex, upscalemask, scaleflags, clampmode, translation, overrideshader))
 		{
 			if (shouldUpscale(tex, upscalemask)) scaleflags |= CTF_Upscale;
+			if (shouldScaleQuality(tex)) scaleflags |= CTF_ReduceQuality;
 		}
 		auto mat = FMaterial::ValidateTexture(tex, scaleflags);
 		assert(mat);

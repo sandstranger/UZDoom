@@ -18,6 +18,7 @@
 */
 
 
+#include "selaco.h"
 #include "doomtype.h"
 #include "filesystem.h"
 
@@ -251,8 +252,24 @@ void R_InstallSprite (int num, spriteframewithrotate *sprtemp, int &maxframe)
 			for (rot = 0; rot < 16; ++rot)
 			{
 				if (!sprtemp[frame].Texture[rot].isValid())
+				{
+					if (g_SelacoMode)
+					{
+						// Selaco's own graphics in sprites/ have 8-character names that can read as frames of a sprite the
+						// other games' actors use (sprites/decorations/mineralexpoflyer.png = MINERALE = MINE frames R and L):
+						// the gaps are filled with a rotation there is, instead of aborting.
+						FTextureID any;
+						for (int k = 0; k < 16 && !any.isValid(); k++) any = sprtemp[frame].Texture[k];
+						for (int k = 0; k < 16; k++)
+						{
+							if (!sprtemp[frame].Texture[k].isValid()) sprtemp[frame].Texture[k] = any;
+						}
+						DPrintf(DMSG_WARNING, "R_InstallSprite: Sprite %s frame %c is missing rotations\n", sprites[num].name, frame + 'A');
+						break;
+					}
 					I_FatalError ("R_InstallSprite: Sprite %s frame %c is missing rotations",
 									sprites[num].name, frame+'A');
+				}
 			}
 			break;
 		}

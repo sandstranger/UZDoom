@@ -260,6 +260,9 @@ enum ELevelFlags : unsigned int
 	LEVEL3_SECRET				= 0x00200000,   // level is a secret level
 	LEVEL3_SKYMIST				= 0x00400000,   // level skyfog uses the skymist texture
 	LEVEL3_NOAMBIENTOCCLUSION	= 0x00800000,   // disables ambient occlusion on this map
+	LEVEL3_RAINYMAP				= 0x01000000,	// @Cockatrice - Indicates map should draw rain effects under F_SKY (Selaco; was 0x00200000 in GZSelaco)
+	LEVEL3_SAFEROOM				= 0x02000000,	// @Cockatrice - Indicates a saferoom is in this map, available for fast travel (Selaco; was 0x00400000)
+	LEVEL3_WINDYMAP				= 0x04000000,	// @Cocaktrice - Wind effects under F_SKY instead of rain (Selaco; was 0x00800000)
 };
 
 
@@ -318,6 +321,7 @@ struct level_info_t
 	FString		NextMap;
 	FString		NextSecretMap;
 	FString		PName;
+	FString		Description;
 	FString		SkyPic1;
 	FString		SkyPic2;
 	FString		SkyMistPic;
@@ -330,8 +334,11 @@ struct level_info_t
 	TMap<FName, FExitText> ExitMapTexts;
 
 	int			cluster;
+	int			levelgroup, areaNum, minTechModules;
 	int			partime;
 	int			sucktime;
+	int			invasiontier;
+	double		tilt, tiltAngle;
 	int32_t		flags;
 	uint32_t	flags2;
 	uint32_t	flags3;

@@ -42,6 +42,7 @@
 #include "serializer_doom.h"
 #include "p_visualthinker.h"
 #include "m_round.h"
+#include "p_pooledparticles.h"
 
 #include "hwrenderer/scene/hw_drawstructs.h"
 
@@ -351,47 +352,51 @@ void P_ThinkParticles (FLevelLocals *Level)
 	}
 }
 
-void P_SpawnParticle(FLevelLocals *Level, const DVector3 &pos, const DVector3 &vel, const DVector3 &accel, PalEntry color, double startalpha, int lifetime, double size,
+bool P_SpawnParticle(FLevelLocals *Level, const DVector3 &pos, const DVector3 &vel, const DVector3 &accel, PalEntry color, double startalpha, int lifetime, double size,
 	double fadestep, double sizestep, int flags, FTextureID texture, ERenderStyle style, double startroll, double rollvel, double rollacc, double fadeoutstep)
 {
 	particle_t *particle = NewParticle(Level, !!(flags & SPF_REPLACE));
 
-	if (particle)
+	if (!particle)
 	{
-		particle->Pos = pos;
-		particle->Vel = FVector3(vel);
-		particle->Acc = FVector3(accel);
-		particle->color = ParticleColor(color);
-		particle->alpha = float(startalpha);
-		if ((flags & SPF_FADE_IN_OUT) || (flags & SPF_FADE_IN_HOLD_OUT))
-			particle->fadeoutstep = fadeoutstep;
-		if ((fadestep < 0 && !(flags & SPF_NEGATIVE_FADESTEP)) || fadestep <= -1.0)
-		{
-			particle->fadestep = FADEFROMTTL(lifetime);
-			if (flags & SPF_FADE_IN_OUT)
-				particle->fadestep *= (float)-2;
-			else if (flags & SPF_FADE_IN_HOLD_OUT)
-				particle->fadestep *= (float)-3;
-			particle->fadeoutstep = -particle->fadestep;
-		}
-		else
-		{
-			particle->fadestep = float(fadestep);
-		}
-		particle->ttl = lifetime;
-		particle->size = size;
-		particle->sizestep = sizestep;
-		particle->texture = texture;
-		particle->style = style;
-		particle->Roll = (float)startroll;
-		particle->RollVel = (float)rollvel;
-		particle->RollAcc = (float)rollacc;
-		particle->flags = flags;
-		if(flags & SPF_LOCAL_ANIM)
-		{
-			TexAnim.InitStandaloneAnimation(particle->animData, texture, Level->LocalWorldTimer);
-		}
+		return false;
 	}
+
+	particle->Pos = pos;
+	particle->Vel = FVector3(vel);
+	particle->Acc = FVector3(accel);
+	particle->color = ParticleColor(color);
+	particle->alpha = float(startalpha);
+	if ((flags & SPF_FADE_IN_OUT) || (flags & SPF_FADE_IN_HOLD_OUT))
+		particle->fadeoutstep = fadeoutstep;
+	if ((fadestep < 0 && !(flags & SPF_NEGATIVE_FADESTEP)) || fadestep <= -1.0)
+	{
+		particle->fadestep = FADEFROMTTL(lifetime);
+		if (flags & SPF_FADE_IN_OUT)
+			particle->fadestep *= (float)-2;
+		else if (flags & SPF_FADE_IN_HOLD_OUT)
+			particle->fadestep *= (float)-3;
+		particle->fadeoutstep = -particle->fadestep;
+	}
+	else
+	{
+		particle->fadestep = float(fadestep);
+	}
+	particle->ttl = lifetime;
+	particle->size = size;
+	particle->sizestep = sizestep;
+	particle->texture = texture;
+	particle->style = style;
+	particle->Roll = (float)startroll;
+	particle->RollVel = (float)rollvel;
+	particle->RollAcc = (float)rollacc;
+	particle->flags = flags;
+	if(flags & SPF_LOCAL_ANIM)
+	{
+		TexAnim.InitStandaloneAnimation(particle->animData, texture, Level->LocalWorldTimer);
+	}
+
+	return true;
 }
 
 //

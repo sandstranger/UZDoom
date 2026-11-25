@@ -32,6 +32,7 @@
 #include "i_interface.h"
 #include "printf.h"
 #include "r_videoscale.h"
+#include "selaco.h"
 #include "texturemanager.h"
 #include "utf8.h"
 #include "v_draw.h"
@@ -64,7 +65,9 @@ CUSTOM_CVARD(Int, crosshaircolors, 2, CVAR_ARCHIVE, "0: basic, 1: show health, 2
 	ALLOW_DEPRECATED((crosshairhealth = self), "for backwards compatibility");
 };
 CVARD(Float, crosshairscale, 1.0, CVAR_ARCHIVE, "changes the size of the crosshair");
+CVARD(Float, crosshairalpha, 1.0, CVAR_ARCHIVE, "changes the opacity of the crosshair");
 CVARD(Bool, crosshairgrow, false, CVAR_ARCHIVE, "grow crosshair upon pickup");
+CVAR(Bool, crosshairfilter, false, CVAR_ARCHIVE);
 
 CUSTOM_CVARD(Float, hud_scalefactor, 1.f, CVAR_ARCHIVE, "changes the hud scale")
 {
@@ -144,12 +147,15 @@ void ST_DrawCrosshair(int phealth, double xpos, double ypos, double scale, DAngl
 
 	size = ((crosshairscale > 0.0f)? crosshairscale: 1.0) * mult;
 
+	// @Cockatrice - HACK ALERT, but we are going to base our crosshair scaling off a 1920x1080 screen
+	if (g_SelacoMode) size = (crosshairscale > 0.0f)? (twod->GetHeight() / 1080.0) * crosshairscale : 1.0;
+
 	if (crosshairgrow) size *= scale;
 
 	w = static_cast<int>(std::round(CrosshairImage->GetDisplayWidth() * size));
 	h = static_cast<int>(std::round(CrosshairImage->GetDisplayHeight() * size));
 
-	if (crosshaircolors == 0)
+	if (crosshaircolors == 0 || g_SelacoMode)	// GZSelaco always draws the crosshair in crosshaircolor
 	{
 		color = crosshaircolor;
 	}
@@ -199,6 +205,8 @@ void ST_DrawCrosshair(int phealth, double xpos, double ypos, double scale, DAngl
 		DTA_AlphaChannel, true,
 		DTA_RenderStyle, style,
 		DTA_FillColor, color & 0xFFFFFF,
+		DTA_Alpha, (double)crosshairalpha,
+		DTA_BilinearFilter, (bool)crosshairfilter,
 		TAG_DONE);
 }
 

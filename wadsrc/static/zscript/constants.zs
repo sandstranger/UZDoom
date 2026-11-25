@@ -599,6 +599,7 @@ enum ELOFFlags
 
 	CLOFF_MUSTBESOLID =			0x10000,
 	CLOFF_BEYONDTARGET =		0x20000,
+	CLOFF_SKIPLOF =				0x20000,	// Selaco: skip BLOCKLOF actors. Shares the bit with CLOFF_BEYONDTARGET (Selaco mode only)
 
 	CLOFF_FROMBASE =			0x40000,
 	CLOFF_MUL_HEIGHT =			0x80000,
@@ -610,6 +611,12 @@ enum ELOFFlags
 	CLOFF_SETTARGET =			0x800000,
 	CLOFF_SETMASTER =			0x1000000,
 	CLOFF_SETTRACER =			0x2000000,
+	CLOFF_BLOCKLOF_ALWAYS =		0x4000000,	// Always stop on BLOCKLOF flag, regardless of other flags
+	CLOFF_BLOCKLOS_ALWAYS =		0x8000000,	// Always stop on BLOCKLOS flag, regardless of other flags
+	CLOFF_JUMPMONSTER =			0x10000000,	// Jump when any MONSTER is in the way
+	CLOFF_SKIPMONSTER =			0x20000000,	// Skip any MONSTER
+	CLOFF_SKIPWORLD =			0x40000000,	// Skip walls/floor/ceiling etc
+	CLOFF_SKIPLOS =				0x80000000,	// Skip anything with BLOCKLOS
 
 	CLOFF_SKIPOBSTACLES = CLOFF_SKIPENEMY|CLOFF_SKIPFRIEND|CLOFF_SKIPOBJECT|CLOFF_SKIPNONHOSTILE,
 	CLOFF_NOAIM = CLOFF_NOAIM_VERT|CLOFF_NOAIM_HORZ
@@ -798,6 +805,7 @@ enum EPSpriteFlags
 	PSPF_PLAYERTRANSLATED = 1 << 10,
 	PSPF_PIVOTPERCENT	= 1 << 11,
 	PSPF_INTERPOLATE	= 1 << 12,
+	PSPF_TOPSPRITE		= 1 << 13,
 };
 
 // Alignment constants for A_OverlayPivotAlign
@@ -1104,6 +1112,7 @@ enum EFindFloorCeiling
 	FFCF_NOCEILING = 64,
 	FFCF_RESTRICTEDPORTAL = 128,	// current values in the iterator's return are through a restricted portal type (i.e. some features are blocked.)
 	FFCF_NODROPOFF = 256,			// Caller does not need a dropoff (saves some time when checking portals)
+	FFCF_ALLOWWATER = 512,			// Allow 3D sectors that are swimmable and non-solid
 };
 
 enum ERaise
@@ -1451,6 +1460,9 @@ enum ELevelFlags
 	LEVEL3_SECRET				= 0x00200000,	// level is a secret level
 	LEVEL3_SKYMIST				= 0x00400000,   // level skyfog uses the skymist texture
 	LEVEL3_NOAMBIENTOCCLUSION	= 0x00800000,   // disables ambient occlusion on this map
+	LEVEL3_RAINYMAP				= 0x01000000,	// Selaco: map draws rain effects under F_SKY
+	LEVEL3_SAFEROOM				= 0x02000000,	// Selaco: a saferoom is in this map, available for fast travel
+	LEVEL3_WINDYMAP				= 0x04000000,	// Selaco: wind effects under F_SKY
 };
 
 // [RH] Compatibility flags.

@@ -197,7 +197,6 @@ void VSMatrix::multQuaternion(const TQuaternion<float>& q)
 	multMatrix(m);
 }
 
-
 // gl LoadMatrix implementation
 void
 VSMatrix::loadMatrix(const float *aMatrix)

@@ -150,6 +150,7 @@ bool FGLRenderState::ApplyShader()
 	activeShader->muFogColor.Set(mStreamData.uFogColor);
 	activeShader->muObjectColor.Set(mStreamData.uObjectColor);
 	activeShader->muDynLightColor.Set(&mStreamData.uDynLightColor.X);
+	activeShader->muLightProbeColor.Set(&mStreamData.uLightProbeColor.X);
 	activeShader->muInterpolationFactor.Set(mStreamData.uInterpolationFactor);
 	activeShader->muTimer.Set((double)(screen->FrameTime - firstFrame) * (double)mShaderTimer / 1000.);
 	activeShader->muAlphaThreshold.Set(mAlphaThreshold);
@@ -165,6 +166,13 @@ bool FGLRenderState::ApplyShader()
 #ifdef NPOT_EMULATION
 	activeShader->muNpotEmulation.Set(&mStreamData.uNpotEmulation.X);
 #endif
+
+	activeShader->muHeavyProbeSampleCount.Set(mStreamData.uHeavyProbeSampleCount);
+	if (mStreamData.uHeavyProbeSampleCount > 0)
+	{
+		activeShader->muHeavyProbeSampleColors.Set(&mStreamData.uHeavyProbeSampleColors[0].X);
+		activeShader->muHeavyProbeSampleDirs.Set(&mStreamData.uHeavyProbeSampleDirs[0].X);
+	}
 
 	if (mGlowEnabled || activeShader->currentglowstate)
 	{
@@ -395,7 +403,7 @@ void FGLRenderState::ApplyMaterial()
 	MaterialLayerInfo* layer;
 	auto base = static_cast<FHardwareTexture*>(mMaterial.mMaterial->GetLayer(0, mMaterial.mTranslation, &layer));
 
-	if (base->BindOrCreate(tex->GetTexture(), 0, clampmode, mMaterial.mTranslation, layer->scaleFlags))
+	if (base->BindOrCreate(tex->GetTexture(), 0, clampmode, mMaterial.mTranslation, layer->scaleFlags, tex->GetNoMipmaps()))
 	{
 		if (!(layer->scaleFlags & CTF_Indexed))
 		{
@@ -403,7 +411,7 @@ void FGLRenderState::ApplyMaterial()
 			{
 				auto systex = static_cast<FHardwareTexture*>(mMaterial.mMaterial->GetLayer(i, 0, &layer));
 				// fixme: Upscale flags must be disabled for certain layers.
-				systex->BindOrCreate(layer->layerTexture, i, clampmode, 0, layer->scaleFlags);
+				systex->BindOrCreate(layer->layerTexture, i, clampmode, 0, layer->scaleFlags, tex->GetNoMipmaps());
 				maxbound = i;
 			}
 		}

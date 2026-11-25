@@ -63,6 +63,7 @@ enum
 	VARF_Abstract		= (1<<24),  // [Player701] Function does not have a body and must be overridden in subclasses
 	VARF_SafeConst		= (1<<25),  // [Jay] properly-working const function/unsafe clearscope field
 	VARF_NoRollback		= (1<<26),	// Field cannot be backed up while predicting.
+	VARF_Unit			= (1<<27),	// @Cockatrice Function is limited to the container in which it is defined
 };
 
 // Basic information shared by all types ------------------------------------
@@ -431,6 +432,12 @@ public:
 	bool ReadValue(FSerializer& ar, const char* key, void* addr) const override;
 };
 
+class PSoundHandle : public PInt
+{
+public:
+	PSoundHandle();
+};
+
 class PColor : public PInt
 {
 public:
@@ -681,6 +688,7 @@ public:
 
 	bool isNative;
 	bool isOrdered = false;
+	int sourceLump = -1;
 	// Some internal structs require explicit construction and destruction of fields the VM cannot handle directly so use these two functions for it.
 	VMFunction *mConstructor = nullptr;
 	VMFunction *mDestructor = nullptr;
@@ -756,6 +764,7 @@ extern PFloat *TypeFloat32, *TypeFloat64;
 extern PString *TypeString;
 extern PName *TypeName;
 extern PSound *TypeSound;
+extern PSoundHandle *TypeSoundHandle;
 extern PColor *TypeColor;
 extern PTextureID *TypeTextureID;
 extern PTranslationID* TypeTranslationID;
@@ -770,6 +779,8 @@ extern PStruct* TypeQuaternion;
 extern PStruct* TypeFQuaternion;
 extern PStruct *TypeColorStruct;
 extern PStruct *TypeStringStruct;
+
+extern PStruct *TypeSoundHandleStruct;
 extern PStruct* TypeQuaternionStruct;
 extern PStatePointer *TypeState;
 extern PPointer *TypeFont;

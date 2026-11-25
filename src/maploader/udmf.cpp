@@ -506,6 +506,7 @@ public:
 		th->Alpha = -1;
 		th->Health = 1;
 		th->FloatbobPhase = -1;
+		th->HeavyProbeIndex = -1;
 		sc.MustGetToken('{');
 		while (!sc.CheckToken('}'))
 		{
@@ -792,6 +793,11 @@ public:
 			case NAME_lm_ao:
 			case NAME_lm_dynamic:
 				CHECK_N(Zd | Zdt)
+					break;
+
+			case NAME_lm_sunenabled:
+				CHECK_N(Zd | Zdt)
+				th->score = 1; // Processed later in MapLoader::ProcessZDRayInfo
 					break;
 
 			default:
@@ -1118,6 +1124,11 @@ public:
 
 			case NAME_blockhitscan:
 				Flag(ld->flags, ML_BLOCKHITSCAN, key);
+				continue;
+
+			// @Cockatice - Get line blocker bits
+			case NAME_BlockBits:
+				ld->blockBits = CheckInt(key);
 				continue;
 
 			// [TP] Locks the special with a key

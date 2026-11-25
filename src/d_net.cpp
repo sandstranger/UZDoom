@@ -55,6 +55,7 @@
 #include "savegamemanager.h"
 #include "sbar.h"
 #include "screenjob.h"
+#include "selaco.h"
 #include "version.h"
 #include "vm.h"
 
@@ -74,6 +75,7 @@ FARG(extratic, "Multiplayer", "Sends backup commands over the network", "",
 extern uint8_t		*demo_p;		// [RH] Special "ticcmds" get recorded in demos
 extern FString	savedescription;
 extern FString	savegamefile;
+extern int32_t	savegameflags;
 
 extern bool AppActive;
 
@@ -2894,6 +2896,7 @@ void Net_DoCommand(int cmd, TArrayView<uint8_t>& stream, int player)
 		{
 			savegamefile = ReadStringConst(stream);
 			savedescription = ReadStringConst(stream);
+			savegameflags = g_SelacoMode ? ReadInt32(stream) : 0; // only Selaco sends its save flags (see G_BuildTiccmd)
 			if (player != consoleplayer)
 			{
 				// Paths sent over the network will be valid for the system that sent
@@ -3289,6 +3292,7 @@ void Net_SkipCommand(int cmd, TArrayView<uint8_t>& stream)
 		case DEM_SAVEGAME:
 			skip = strlen((char *)(stream.Data())) + 1;
 			skip += strlen((char *)(stream.Data()) + skip) + 1;
+			if (g_SelacoMode) skip += sizeof(int32_t); // Selaco's save flags
 			break;
 
 		case DEM_SINFCHANGEDXOR:

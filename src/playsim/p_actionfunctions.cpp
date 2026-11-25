@@ -57,6 +57,7 @@
 #include "shadowinlines.h"
 #include "i_time.h"
 #include "vm.h"
+#include "selaco.h"
 
 static FRandom pr_camissile ("CustomActorfire");
 static FRandom pr_cabullet ("CustomBullet");
@@ -1680,6 +1681,7 @@ DEFINE_ACTION_FUNCTION(AActor, A_SpawnParticleEx)
 	fadestep = clamp(fadestep, -1.0, 1.0);
 
 	size = fabs(size);
+	bool result = false;
 	if (lifetime != 0)
 	{
 		if (flags & SPF_RELANG) angle += self->Angles.Yaw;
@@ -1715,8 +1717,242 @@ DEFINE_ACTION_FUNCTION(AActor, A_SpawnParticleEx)
 			style = STYLE_None;
 		}
 
-		P_SpawnParticle(self->Level, self->Vec3Offset(pos), vel, acc, color, startalpha, lifetime, size, fadestep, sizestep, flags, texid, ERenderStyle(style), startroll, rollvel, rollacc, fadeoutstep);
+		result = P_SpawnParticle(self->Level, self->Vec3Offset(pos), vel, acc, color, startalpha, lifetime, size, fadestep, sizestep, flags, texid, ERenderStyle(style), startroll, rollvel, rollacc, fadeoutstep);
 	}
+	ACTION_RETURN_BOOL(result);
+}
+
+DEFINE_ACTION_FUNCTION(AActor, A_SpawnDefinedParticle)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_CLASS	(definitionClass, DParticleDefinition)
+	PARAM_FLOAT	(xoff)		
+	PARAM_FLOAT	(yoff)		
+	PARAM_FLOAT	(zoff)		
+	PARAM_FLOAT	(xvel)		
+	PARAM_FLOAT	(yvel)		
+	PARAM_FLOAT	(zvel)
+	PARAM_ANGLE	(angle)
+	PARAM_FLOAT	(scale)
+	PARAM_INT	(flags)
+	PARAM_POINTER(refActor, AActor);
+
+	if (!definitionClass)
+	{
+		return 0;
+	}
+
+	if (DParticleDefinition* definition = dynamic_cast<DParticleDefinition*>(definitionClass->LevelInstance))
+	{
+		if (!(flags & DPF_ABSOLUTEANGLE)) angle += self->Angles.Yaw;
+		double s = angle.Sin();
+		double c = angle.Cos();
+		DVector3 pos(xoff, yoff, zoff + self->GetBobOffset());
+		DVector3 vel(xvel, yvel, zvel);
+
+		//[MC] Code ripped right out of A_SpawnItemEx.
+		if (!(flags & DPF_ABSOLUTEPOSITION))
+		{
+			// in relative mode negative y values mean 'left' and positive ones mean 'right'
+			// This is the inverse orientation of the absolute mode!
+			pos.X = xoff * c + yoff * s;
+			pos.Y = xoff * s - yoff * c;
+		}
+		if (!(flags & DPF_ABSOLUTEVELOCITY))
+		{
+			vel.X = xvel * c + yvel * s;
+			vel.Y = xvel * s - yvel * c;
+		}
+		
+		particledata_t* particle = P_SpawnDefinedParticle(self->Level, definition, self->Vec3Offset(pos), vel, scale, flags, refActor ? refActor : self);
+
+		if (particle)
+		{
+			particle->angle = (float)angle.Degrees();
+		}
+	}
+
+	return 0;
+}
+
+particledata_t* SpawnMissileParticle(AActor* source, double z, DParticleDefinition* definition, DAngle angle, double vz, double speed)
+{
+	if (source == nullptr || definition == nullptr)
+	{
+		return nullptr;
+	}
+	
+	if (z != ONFLOORZ && z != ONCEILINGZ)
+	{
+		z -= source->Floorclip;
+	}
+
+	DVector3 vel = DVector3(angle.Cos(), angle.Sin(), vz).Resized(speed);
+
+	particledata_t* particle = P_SpawnDefinedParticle(source->Level, definition, source->PosAtZ(z), vel, 1, SPF_REPLACE, source);
+	if (particle) particle->angle = (float)angle.Degrees();
+
+	return particle;
+}
+
+particledata_t* SpawnMissileParticleXYZ(DVector3 pos, AActor* source, AActor* dest, DParticleDefinition* definition)
+{
+	if (source == nullptr || definition == nullptr)
+	{
+		return nullptr;
+	}
+
+	if (dest == NULL)
+	{
+		Printf("SpawnMissileParticleXYZ: Tried to shoot %s from %s with no destination\n",
+			definition->GetClass()->TypeName.GetChars(), source->GetClass()->TypeName.GetChars());
+		return NULL;
+	}
+
+	if (pos.Z != ONFLOORZ && pos.Z != ONCEILINGZ)
+	{
+		pos.Z -= source->Floorclip;
+	}
+
+	double speed = definition->Speed;
+
+	// [RH]
+	// Hexen calculates the missile velocity based on the source's location.
+	// Would it be more useful to base it on the actual position of the
+	// missile?
+	// Answer: No, because this way, you can set up sets of parallel missiles.
+
+	DVector3 velocity = source->Vec3To(dest);
+	if (pos.Z - source->Z() >= dest->Height)
+	{
+		velocity.Z += (dest->Height - pos.Z + source->Z());
+	}
+
+	particledata_t* particle = P_SpawnDefinedParticle(source->Level, definition, pos, velocity.Resized(speed), 1, SPF_REPLACE, source);
+	if (particle) particle->angle = (float)VecToAngle(particle->vel).Degrees();
+
+	return particle;
+}
+
+particledata_t* A_SpawnDefinedParticleProjectile(AActor* self, PClass* definitionClass, double spawnHeight, double spawnofs_xy, DAngle angle, int flags, DAngle pitch, int ptr, double speedMulti = 1.0)
+{
+	AActor* ref = COPY_AAPTR(self, ptr);
+	int aimmode = flags & CMF_AIMMODE;
+
+	if (!definitionClass || (!ref && aimmode != 2))
+	{
+		return nullptr;
+	}
+
+	DParticleDefinition* definition = dynamic_cast<DParticleDefinition*>(definitionClass->LevelInstance);
+	if (!definition)
+	{
+		return nullptr;
+	}
+
+	particledata_t* particle = nullptr;
+
+	DAngle ourAngle = self->Angles.Yaw - DAngle::fromDeg(90.);
+	double x = spawnofs_xy * ourAngle.Cos();
+	double y = spawnofs_xy * ourAngle.Sin();
+	double z = spawnHeight + self->GetBobOffset() - 32 + (self->player ? self->player->crouchoffset : 0.);
+
+	DVector3 pos = self->Pos();
+	if (aimmode == 2)
+	{
+		self->SetXYZ(self->Vec3Offset(x, y, 0.));
+		particle = SpawnMissileParticle(self, self->Z() + self->GetBobOffset() + spawnHeight, definition, self->Angles.Yaw, 0, definition->Speed);
+		self->SetXYZ(pos);
+
+		flags |= CMF_ABSOLUTEPITCH;
+	}
+	else
+	{
+		self->SetXYZ(self->Vec3Offset(x, y, z));
+		particle = SpawnMissileParticleXYZ(self->PosPlusZ(32.), self, ref, definition);
+		self->SetXYZ(pos);
+	}
+
+	if (particle != NULL)
+	{
+		// Use the actual velocity instead of the missile's Speed property
+		// so that this can handle missiles with a high vertical velocity 
+		// component properly.
+
+		double missilespeed;
+
+		if ((CMF_ABSOLUTEPITCH | CMF_OFFSETPITCH) & flags)
+		{
+			if (!(flags & CMF_BADPITCH))
+			{
+				if (CMF_OFFSETPITCH & flags)
+				{
+					pitch += DAngle::fromDeg(particle->vel.Pitch().Degrees());
+				}
+
+				double velSpeed = particle->vel.Length();
+				missilespeed = abs(pitch.Cos() * velSpeed);
+				particle->vel.Z = -pitch.Sin() * velSpeed;
+			}
+			else
+			{
+				// Replicate the bogus calculation from A_CustomMissile in its entirety.
+				// This tried to do the right thing but in the process effectively inverted the base pitch.
+				if (CMF_OFFSETPITCH & flags)
+				{
+					pitch -= DAngle::fromDeg(particle->vel.Pitch().Degrees());
+				}
+
+				double velSpeed = particle->vel.Length();
+				missilespeed = fabs(pitch.Cos() * velSpeed);
+				particle->vel.Z = pitch.Sin() * velSpeed;
+			}
+		}
+		else
+		{
+			missilespeed = DVector2(particle->vel.X, particle->vel.Y).Length();
+		}
+
+		missilespeed *= speedMulti;
+
+		particle->angle = (CMF_ABSOLUTEANGLE & flags) ? (float)angle.Degrees() : particle->angle + (float)angle.Degrees();
+		particle->vel.X = missilespeed * g_cosdeg(particle->angle);
+		particle->vel.Y = missilespeed * g_sindeg(particle->angle);
+	}
+
+	return particle;
+}
+
+DEFINE_ACTION_FUNCTION(AActor, A_SpawnDefinedParticleProjectile)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_CLASS(definitionClass, DParticleDefinition)
+	PARAM_FLOAT(spawnHeight);
+	PARAM_FLOAT(spawnofs_xy);
+	PARAM_ANGLE(angle)
+	PARAM_INT(flags)
+	PARAM_ANGLE(pitch)
+	PARAM_INT(ptr);
+
+	A_SpawnDefinedParticleProjectile(self, definitionClass, spawnHeight, spawnofs_xy, angle, flags, pitch, ptr);
+
+	return 0;
+}
+
+DEFINE_ACTION_FUNCTION(AActor, A_SpawnDefinedParticleProjectileSpeed)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_CLASS(definitionClass, DParticleDefinition)
+	PARAM_FLOAT(speedMulti)
+	PARAM_FLOAT(spawnHeight);
+	PARAM_FLOAT(spawnofs_xy);
+	PARAM_ANGLE(angle)
+	PARAM_INT(flags)
+	PARAM_ANGLE(pitch)
+	PARAM_INT(ptr);
+
+	A_SpawnDefinedParticleProjectile(self, definitionClass, spawnHeight, spawnofs_xy, angle, flags, pitch, ptr, speedMulti);
+
 	return 0;
 }
 
@@ -2137,6 +2373,7 @@ enum CLOF_flags
 
 	CLOFF_MUSTBESOLID =			0x00010000,
 	CLOFF_BEYONDTARGET =		0x00020000,
+	CLOFF_SKIPLOF =				0x00020000,	// [Selaco] GZSelaco reused BEYONDTARGET's bit, so it means SKIPLOF only in Selaco
 
 	CLOFF_FROMBASE =			0x00040000,
 	CLOFF_MUL_HEIGHT =			0x00080000,
@@ -2148,6 +2385,12 @@ enum CLOF_flags
 	CLOFF_SETTARGET =			0x00800000,
 	CLOFF_SETMASTER =			0x01000000,
 	CLOFF_SETTRACER =			0x02000000,
+	CLOFF_BLOCKLOF_ALWAYS =  	0x04000000,	// @Cockatrice - Always stop on BLOCKLOF flag, regardless of other flags
+	CLOFF_BLOCKLOS_ALWAYS =		0x08000000,	// @Cockatrice - Always stop on BLOCKLOS flag, regardless of other flags
+	CLOFF_JUMPMONSTER =			0x10000000, // Jump when any MONSTER is in the way
+	CLOFF_SKIPMONSTER =			0x20000000, // Skip any MONSTER 
+	CLOFF_SKIPWORLD =			0x40000000, // Skip terrain/wall/floor etc
+	CLOFF_SKIPLOS =				0x80000000,	// Skip objects tagged with BLOCKLOS
 };
 
 struct LOFData
@@ -2165,13 +2408,14 @@ ETraceStatus CheckLOFTraceFunc(FTraceResults &trace, void *userdata)
 
 	if (trace.HitType != TRACE_HitActor)
 	{
-		return TRACE_Stop;
+		return (flags & CLOFF_SKIPWORLD) ? TRACE_Skip : TRACE_Stop;
 	}
 	if (trace.Actor == data->Target)
 	{
 		if (flags & CLOFF_SKIPTARGET)
 		{
-			if (flags & CLOFF_BEYONDTARGET)
+			// [Selaco] @Cocaktrice - Selaco stole the slot for the bitmask (CLOFF_SKIPLOF)
+			if (!g_SelacoMode && (flags & CLOFF_BEYONDTARGET))
 			{
 				return TRACE_Skip;
 			}
@@ -2179,6 +2423,16 @@ ETraceStatus CheckLOFTraceFunc(FTraceResults &trace, void *userdata)
 		}
 		return TRACE_Stop;
 	}
+
+	// @Cockatrice - CLOFF_BLOCKLOF_ALWAYS will always stop if it hits a BLOCKLOF actor
+	if ((flags & CLOFF_BLOCKLOF_ALWAYS) && (trace.Actor->flags8 & MF8_BLOCKLOF)) {
+		return TRACE_Stop;
+	}
+
+	if ((flags & CLOFF_BLOCKLOS_ALWAYS) && trace.Actor->flags9 & MF9_BLOCKLOS) {
+		return TRACE_Stop;
+	}
+
 	if (flags & CLOFF_MUSTBESHOOTABLE)
 	{ // all shootability checks go here
 		if (!(trace.Actor->flags & MF_SHOOTABLE))
@@ -2209,6 +2463,7 @@ ETraceStatus CheckLOFTraceFunc(FTraceResults &trace, void *userdata)
 		}
 	}
 	if (
+			((flags & CLOFF_JUMPMONSTER) && (trace.Actor->flags3 & MF3_ISMONSTER)) ||
 			((flags & CLOFF_JUMPENEMY) && data->Self->IsHostile(trace.Actor)) ||
 			((flags & CLOFF_JUMPFRIEND) && data->Self->IsFriend(trace.Actor)) ||
 			((flags & CLOFF_JUMPOBJECT) && !(trace.Actor->flags3 & MF3_ISMONSTER)) ||
@@ -2218,14 +2473,26 @@ ETraceStatus CheckLOFTraceFunc(FTraceResults &trace, void *userdata)
 		return TRACE_Stop;
 	}
 	if (
+			((flags & CLOFF_SKIPMONSTER) && (trace.Actor->flags3 & MF3_ISMONSTER)) ||
 			((flags & CLOFF_SKIPENEMY) && data->Self->IsHostile(trace.Actor)) ||
 			((flags & CLOFF_SKIPFRIEND) && data->Self->IsFriend(trace.Actor)) ||
-			((flags & CLOFF_SKIPOBJECT) && !(trace.Actor->flags3 & MF3_ISMONSTER)) ||
+			(g_SelacoMode && (flags & CLOFF_SKIPLOF) && (trace.Actor->flags8 & MF8_BLOCKLOF)) ||
+			((flags & CLOFF_SKIPOBJECT) && !(trace.Actor->flags3 & MF3_ISMONSTER) && !(trace.Actor->flags8 & MF8_BLOCKLOF)) ||
 			((flags & CLOFF_SKIPNONHOSTILE) && (trace.Actor->flags3 & MF3_ISMONSTER) && !data->Self->IsHostile(trace.Actor))
 		)
 	{
 		return TRACE_Skip;
 	}
+
+	// @Cocktrice - If all checks pass, blocking actors will always return positive
+	if ((trace.Actor->flags8 & MF8_BLOCKLOF)) {
+		return TRACE_Stop;
+	}
+
+	if (!(flags & CLOFF_SKIPLOS) && trace.Actor->flags9 & MF9_BLOCKLOS) {
+		return TRACE_Stop;
+	}
+
 	data->BadActor = true;
 	return TRACE_Abort;
 }
@@ -2370,7 +2637,7 @@ DEFINE_ACTION_FUNCTION(AActor, CheckLOF)
 	lof_data.Flags = flags;
 	lof_data.BadActor = false;
 
-	Trace(pos, sec, vel, range, ActorFlags::FromInt(0xFFFFFFFF), ML_BLOCKEVERYTHING, self, trace, TRACE_PortalRestrict,
+	Trace(pos, sec, vel, range, ActorFlags::FromInt(0xFFFFFFFF), (flags & CLOFF_SKIPWORLD) ? 0 : ML_BLOCKEVERYTHING, self, trace, TRACE_PortalRestrict,
 		CheckLOFTraceFunc, &lof_data);
 
 	if (trace.HitType == TRACE_HitActor ||
@@ -2386,9 +2653,16 @@ DEFINE_ACTION_FUNCTION(AActor, CheckLOF)
 			if (flags & (CLOFF_SETMASTER))	self->master = trace.Actor;
 			if (flags & (CLOFF_SETTRACER))	self->tracer = trace.Actor;
 		}
+
+		// [Selaco] CheckLOF returns true only when the target can be reached, false when something (actor or geometry) blocks
+		if (g_SelacoMode)
+		{
+			// Only success if we hit our target
+			ACTION_RETURN_BOOL((trace.HitType == TRACE_HitActor && trace.Actor == target) || (flags & CLOFF_JUMP_ON_MISS));
+		}
 		ACTION_RETURN_BOOL(true);
 	}
-	ACTION_RETURN_BOOL(false);
+	ACTION_RETURN_BOOL((flags & CLOFF_SKIPWORLD) || (g_SelacoMode && trace.HitType == TRACE_HitNone));
 }
 
 //==========================================================================

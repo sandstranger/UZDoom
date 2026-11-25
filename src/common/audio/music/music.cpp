@@ -161,7 +161,7 @@ int MusicEnabled() // int return is for scripting
 static std::unique_ptr<SoundStream> musicStream;
 static TArray<SoundStream*> customStreams;
 
-SoundStream *S_CreateCustomStream(size_t size, int samplerate, int numchannels, MusicCustomStreamType sampletype, StreamCallback cb, void *userdata)
+SoundStream *S_CreateCustomStream(size_t size, int samplerate, int numchannels, MusicCustomStreamType sampletype, StreamCallback cb, void *userdata, FFloatCVarRef *volumeCVAR)
 {
 	ChannelConfig chans;
 	if(numchannels == 1)
@@ -172,7 +172,7 @@ SoundStream *S_CreateCustomStream(size_t size, int samplerate, int numchannels, 
 		return nullptr;
 	const SampleType stype{(sampletype == MusicSamplesFloat) ? SampleType_Float32 : SampleType_Int16};
 
-	auto stream = GSnd->CreateStream(cb, int(size), stype, chans, samplerate, userdata);
+	auto stream = GSnd->CreateStream(cb, int(size), stype, chans, samplerate, userdata, volumeCVAR);
 	if (stream)
 	{
 		stream->Play(true, 1);

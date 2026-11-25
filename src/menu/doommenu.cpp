@@ -44,6 +44,7 @@
 #include "p_tick.h"
 #include "r_utility.h"
 #include "s_music.h"
+#include "selaco.h"
 #include "shiftstate.h"
 #include "startscreen.h"
 #include "teaminfo.h"
@@ -253,6 +254,7 @@ bool M_SetSpecialMenu(FName& menu, int param)
 		return false;
 
 	case NAME_SavegameMenu:
+	case NAME_SaveSelacoMenu:
 		if (!usergame || (players[consoleplayer].health <= 0 && !multiplayer) || gamestate != GS_LEVEL)
 		{
 			// cannot save outside the game.
@@ -527,12 +529,13 @@ CCMD (quicksave)
 	{
 		S_Sound(CHAN_VOICE, CHANF_UI|(haptics_do_menus?CHANF_RUMBLE:CHANF_NORUMBLE), "menu/activate", snd_menuvolume, ATTN_NONE);
 		M_StartControlPanel(false);
-		M_SetMenu(NAME_SavegameMenu);
+		M_SetMenu(g_SelacoMode ? NAME_SaveSelacoMenu : NAME_SavegameMenu);
 		return;
 	}
 
 	// [mxd]. Just save the game, no questions asked.
-	if (!saveloadconfirmation)
+	// (Selaco has no quicksave confirmation menu, so it always saves right away)
+	if (!saveloadconfirmation || g_SelacoMode)
 	{
 		G_SaveGame(savegameManager.quickSaveSlot->Filename.GetChars(), savegameManager.quickSaveSlot->SaveTitle.GetChars());
 		return;
@@ -574,7 +577,7 @@ CCMD (quickload)
 		M_StartControlPanel(true);
 		// signal that whatever gets loaded should be the new quicksave
 		savegameManager.quickSaveSlot = (FSaveGameNode *)1;
-		M_SetMenu(NAME_LoadgameMenu);
+		M_SetMenu(g_SelacoMode ? NAME_LoadSelacoMenu : NAME_LoadgameMenu);
 		return;
 	}
 
@@ -584,6 +587,15 @@ CCMD (quickload)
 		G_LoadGame(savegameManager.quickSaveSlot->Filename.GetChars());
 		return;
 	}
+
+	if (g_SelacoMode)
+	{
+		// Selaco confirms quickloads with its own menu
+		M_StartControlPanel(true);
+		M_SetMenu(NAME_QuickLoadgamemenu);
+		return;
+	}
+
 	FString tempstring = GStrings.GetString("QLPROMPT");
 	tempstring.Substitute("%s", savegameManager.quickSaveSlot->SaveTitle.GetChars());
 
@@ -1495,13 +1507,13 @@ CCMD (menu_main)
 CCMD (menu_load)
 {	// F3
 	M_StartControlPanel (true);
-	M_SetMenu(NAME_LoadgameMenu, -1);
+	M_SetMenu(g_SelacoMode ? NAME_LoadSelacoMenu : NAME_LoadgameMenu, -1);
 }
 
 CCMD (menu_save)
 {	// F2
 	M_StartControlPanel (true);
-	M_SetMenu(NAME_SavegameMenu, -1);
+	M_SetMenu(g_SelacoMode ? NAME_SaveSelacoMenu : NAME_SavegameMenu, -1);
 }
 
 CCMD (menu_help)

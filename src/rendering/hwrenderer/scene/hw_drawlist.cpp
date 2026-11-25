@@ -26,6 +26,7 @@
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "r_sky.h"
 #include "r_utility.h"
+#include "selaco.h"
 
 FMemArena RenderDataAllocator(1024*1024);	// Use large blocks to reduce allocation time.
 
@@ -439,7 +440,7 @@ void HWDrawList::SortWallIntoWall(HWDrawInfo *di, SortNode * head,SortNode * sor
 		w->ztop[0]=ws->ztop[1]=izt;
 		w->zbottom[0]=ws->zbottom[1]=izb;
 		w->tcs[HWWall::LOLFT].u = w->tcs[HWWall::UPLFT].u = ws->tcs[HWWall::LORGT].u = ws->tcs[HWWall::UPRGT].u = iu;
-		w->lightuv[HWWall::LOLFT].u = w->lightuv[HWWall::UPLFT].u = ws->lightuv[HWWall::LORGT].u = ws->lightuv[HWWall::UPRGT].u = iu;
+		w->lightuv[HWWall::LOLFT].u = w->lightuv[HWWall::UPLFT].u = ws->lightuv[HWWall::LORGT].u = ws->lightuv[HWWall::UPRGT].u = ilmu;
 		ws->MakeVertices(false);
 		w->MakeVertices(false);
 
@@ -509,12 +510,12 @@ void HWDrawList::SortSpriteIntoWall(HWDrawInfo *di, SortNode * head,SortNode * s
 	}
 	else
 	{
-		const bool drawWithXYBillboard = ((ss->particle && gl_billboard_particles) || (!(ss->actor && ss->actor->renderflags & RF_FORCEYBILLBOARD)
+		const bool drawWithXYBillboard = ((ss->isparticle && gl_billboard_particles) || (!(ss->actor && ss->actor->renderflags & RF_FORCEYBILLBOARD)
 			&& (gl_billboard_mode == 1 || (ss->actor && ss->actor->renderflags & RF_FORCEXYBILLBOARD))));
 
-		const bool drawBillboardFacingCamera = hw_force_cambbpref ? gl_billboard_faces_camera :
+		const bool drawBillboardFacingCamera = !g_SelacoMode && (hw_force_cambbpref ? gl_billboard_faces_camera :
 			(gl_billboard_faces_camera && (ss->actor && !(ss->actor->renderflags2 & RF2_BILLBOARDNOFACECAMERA)))
-			|| (ss->actor && ss->actor->renderflags2 & RF2_BILLBOARDFACECAMERA);
+			|| (ss->actor && ss->actor->renderflags2 & RF2_BILLBOARDFACECAMERA));
 
 		// [Nash] has +ROLLSPRITE
 		const bool rotated = (ss->actor != nullptr && ss->actor->renderflags & (RF_ROLLSPRITE | RF_WALLSPRITE | RF_FLATSPRITE));

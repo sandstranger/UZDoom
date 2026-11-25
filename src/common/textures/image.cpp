@@ -34,6 +34,9 @@
 #include "fs_filesystem.h"
 #include "image.h"
 #include "palettecontainer.h"
+#include "printf.h"
+#include "files.h"
+#include "resourcefile.h"
 
 struct PalEntry;
 
@@ -90,13 +93,11 @@ PalettedPixels FImageSource::GetCachedPalettedPixels(int conversion, int frame)
 
 		if (cache->RefCount > 1)
 		{
-			//Printf("returning reference to %s, refcount = %d\n", name.GetChars(), cache->RefCount);
 			ret.Pixels.Set(cache->Pixels.Data(), cache->Pixels.Size());
 			cache->RefCount--;
 		}
 		else if (cache->Pixels.Size() > 0)
 		{
-			//Printf("returning contents of %s, refcount = %d\n", name.GetChars(), cache->RefCount);
 			ret = std::move(cache->Pixels);
 			precacheDataPaletted.Delete(index);
 		}
@@ -112,12 +113,10 @@ PalettedPixels FImageSource::GetCachedPalettedPixels(int conversion, int frame)
 		if (!info || info->second <= 1 || conversion != normal)
 		{
 			// This is either the only copy needed or some access outside the caching block. In these cases create a new one and directly return it.
-			//Printf("returning fresh copy of %s\n", name.GetChars());
 			return CreatePalettedPixels(conversion, frame);
 		}
 		else
 		{
-			//Printf("creating cached entry for %s, refcount = %d\n", name.GetChars(), info->second);
 			// This is the first time it gets accessed and needs to be placed in the cache.
 			PrecacheDataPaletted *pdp = &precacheDataPaletted[precacheDataPaletted.Reserve(1)];
 
@@ -179,6 +178,74 @@ int FImageSource::CopyTranslatedPixels(FBitmap *bmp, const PalEntry *remap, int 
 	bmp->CopyPixelData(0, 0, ppix.Data(), Width, Height, Height, 1, FBitmap::Transform::NONE, remap, nullptr);
 	return 0;
 }
+
+// @Cockatrice: Thread safe(ish) version of CopyPixels. 
+// Default does not do much
+int FImageSource::ReadPixels(FImageLoadParams *params, FBitmap *bmp)
+{
+	/*if (conversion == luminance) conversion = normal;	// luminance images have no use as an RGB source.
+	PalEntry *palette = GPalette.BaseColors;
+	auto ppix = CreatePalettedPixels(conversion);
+	bmp->CopyPixelData(0, 0, ppix.Data(), Width, Height, Height, 1, 0, palette, nullptr);*/
+
+	return 0;
+}
+
+int FImageSource::ReadPixels(FileReader *reader, FBitmap *bmp, int conversion) {
+	return 0;
+}
+
+// @Cockatrice: Thread safe(ish) version of CopyTranslatedPixels
+int FImageSource::ReadTranslatedPixels(FileReader *reader, FBitmap *bmp, const PalEntry *remap, int conversion)
+{
+	// TODO: It
+	return 0;
+}
+
+// @Cockatrice: This should only ever be used for textures that are in a GPU readable compressed format
+int FImageSource::ReadCompressedPixels(FileReader* reader, unsigned char** data, size_t& size, size_t& unitSize, int& mipLevels) {
+	FString lumpname = fileSystem.GetFileFullName(SourceLump);
+	I_FatalError("FImageSource::ReadCompressedPixels() was called on an image source that does not support it! (%s)", lumpname.GetChars());
+	return 0;
+}
+
+// Call this on the main thread to prepare params for a background thread load
+// convoluted I know, but some formats require more information than others
+// Default version should work for some formats like PNG
+FImageLoadParams *FImageSource::NewLoaderParams(int conversion, int translation, FRemapTable *remap) {
+	FImageLoadParams *il = new FImageLoadParams();
+	il->lump = SourceLump;
+	il->conversion = conversion;
+	il->translation = translation;
+	il->remap = remap;
+
+	return il;
+}
+
+
+bool FImageSource::SerializeForTextureDef(FILE* fp, FString& name, int useType, FGameTexture* gameTex) {
+	const char* fullName = fileSystem.GetFileFullName(SourceLump, false);
+	fprintf(fp, "%d:%s:%s:%d:%dx%d:%dx%d\n", 999, name.GetChars(), fullName != NULL ? fullName : "-", useType, Width, Height, LeftOffset, TopOffset);
+	return true;
+}
+
+int FImageSource::DeSerializeFromTextureDef(FileReader &fr) {
+	int fileType = 0, useType = 0;
+	char id[9], path[1024];
+	char str[1800];
+
+	if (fr.Gets(str, 1800)) {
+		int count = sscanf(str,
+			"%d:%8[^:]:%1023[^:]:%d:%dx%d:%dx%d",
+			&fileType, id, path, &useType, &Width, &Height, &LeftOffset, &TopOffset
+		);
+
+		return (int)(count == 8);
+	}
+
+	return 0;
+}
+
 
 //==========================================================================
 //
@@ -312,7 +379,8 @@ void FImageSource::RegisterForPrecache(FImageSource *img, bool requiretruecolor)
 //
 //==========================================================================
 
-typedef FImageSource * (*CreateFunc)(FileReader & file, int lumpnum);
+typedef FImageSource* (*CreateFunc)(FileReader & file, int lumpnum);
+typedef FImageSource* (*MakeFunc)(FileReader& fr, int lumpnum, bool* hasExtraInfo);
 
 struct TexCreateInfo
 {
@@ -337,22 +405,35 @@ FImageSource *AutomapImage_TryCreate(FileReader &, int lumpnum);
 FImageSource *StartupPageImage_TryCreate(FileReader &, int lumpnum);
 
 
+FImageSource* PNGImage_TryMake(FileReader& fr, int lumpnum, bool* hasExtraInfo);
+//FImageSource* JPEGImage_TryMake(FileReader& fr, int lumpnum, bool* hasExtraInfo);
+FImageSource* DDSImage_TryMake(FileReader& fr, int lumpnum, bool* hasExtraInfo);
+//FImageSource* DDSImage_TryMake(const char* str, int lumpnum);
+//FImageSource* PCXImage_TryMake(const char* str, int lumpnum);
+//FImageSource* TGAImage_TryMake(const char* str, int lumpnum);
+//FImageSource* FlatImage_TryMake(const char* str, int lumpnum);
+//FImageSource* PatchImage_TryMake(const char* str, int lumpnum);
+//FImageSource* EmptyImage_TryMake(const char* str, int lumpnum);
+//FImageSource* StartupPageImage_TryMake(const char* str, int lumpnum);
+//FImageSource* AutomapImage_TryMake(const char* str, int lumpnum);
+
+
 // Examines the lump contents to decide what type of texture to create,
 // and creates the texture.
 FImageSource * FImageSource::GetImage(int lumpnum, bool isflat)
 {
 	static TexCreateInfo CreateInfo[] = {
-		{ IMGZImage_TryCreate,			false },
+		//{ IMGZImage_TryCreate,			false },
 		{ PNGImage_TryCreate,			false },
 		{ DDSImage_TryCreate,			false },
-		{ PCXImage_TryCreate,			false },
-		{ StbImage_TryCreate,			false },
+		//{ PCXImage_TryCreate,			false },
+		//{ StbImage_TryCreate,			false },
 		{ QOIImage_TryCreate, 			false },
 		{ WebPImage_TryCreate,			false },
 		{ TGAImage_TryCreate,			false },
-		{ AnmImage_TryCreate,			false },
+		//{ AnmImage_TryCreate,			false },
 		{ StartupPageImage_TryCreate,	false },
-		{ RawPageImage_TryCreate,		false },
+		//{ RawPageImage_TryCreate,		false },
 		{ FlatImage_TryCreate,			true },	// flat detection is not reliable, so only consider this for real flats.
 		{ PatchImage_TryCreate,			false },
 		{ EmptyImage_TryCreate,			false },
@@ -388,4 +469,54 @@ FImageSource * FImageSource::GetImage(int lumpnum, bool isflat)
 		}
 	}
 	return nullptr;
+}
+
+
+FImageSource* FImageSource::CreateImageFromDef(FileReader& fr, int filetype, int lumpnum, bool *hasExtraInfo)
+{
+	static MakeFunc MakeInfo[] = {
+		//IMGZImage_TryMake
+		PNGImage_TryMake,
+		//JPEGImage_TryMake,
+		DDSImage_TryMake,
+		//DDSImage_TryMake,
+		//PCXImage_TryMake,
+		//StbImage_TryMake,
+		//TGAImage_TryMake,
+		//AnmImage_TryMake,
+		//StartupPageImage_TryMake,
+		//RawPageImage_TryMake,
+		//FlatImage_TryMake,
+		//PatchImage_TryMake,
+		//EmptyImage_TryMake,
+		//AutomapImage_TryMake
+	};
+
+	if (lumpnum == -1) 
+		return nullptr;
+
+	unsigned size = ImageForLump.Size();
+	if (size <= (unsigned)lumpnum)
+	{
+		// Hires textures can be added dynamically to the end of the lump array, so this must be checked each time.
+		ImageForLump.Resize(lumpnum + 1);
+		for (; size < ImageForLump.Size(); size++) ImageForLump[size] = nullptr;
+	}
+
+	// An image for this lump already exists. We do not need another one.
+	if (ImageForLump[lumpnum] != nullptr) {
+		// Skip the next line
+		char buf[1800];
+		fr.Gets(buf, 1800);	// Ignore results
+		return ImageForLump[lumpnum];
+	}
+
+	// Use the specified type to create an empty image of that type
+	auto image = MakeInfo[filetype](fr, lumpnum, hasExtraInfo);
+
+	if (image != nullptr) {
+		ImageForLump[lumpnum] = image;
+	}
+
+	return image;
 }

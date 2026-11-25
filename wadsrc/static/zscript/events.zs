@@ -149,6 +149,14 @@ struct ConsoleEvent native version("2.4")
 	native readonly bool IsManual;
 }
 
+// Selaco: achievement/stat events (StaticEventHandler.StatProcess)
+struct StatsEvent native version("4.1")
+{
+	native readonly String Name, Text;
+	native readonly double Value;
+	native readonly bool IsAchievement;
+}
+
 struct ReplaceEvent native version("2.4")
 {
 	native readonly Class<Actor> Replacee;
@@ -162,6 +170,25 @@ struct ReplacedEvent native version("3.7")
 	native readonly Class<Actor> Replacement;
 	native bool IsFinal;
 }
+
+// Selaco: save types passed to the savegame event handler callbacks
+enum SaveType
+{
+	SAVE_MANUAL = 0,
+	SAVE_QUICK  = 1,
+	SAVE_AUTO   = 2
+}
+
+// Selaco: error types passed to StaticEventHandler.HandleError
+enum EventManagerError
+{
+	ERR_UNKNOWN			= 0,
+	ERR_UNKNOWN_ABORT	= 1,
+	ERR_LOADGAME		= 2,
+	ERR_MISSINGMAP		= 3,
+	ERR_LOADOBJECTS		= 4,
+	ERR_SAVEGAMEVERSION	= 5
+};
 
 class StaticEventHandler : Object native play version("2.4")
 {
@@ -195,6 +222,15 @@ class StaticEventHandler : Object native play version("2.4")
 	virtual void WorldLightning(WorldEvent e) {} // for the sake of completeness.
 	virtual void WorldTick() {}
 
+	// Selaco: savegame and error hooks
+	virtual String, Int GetSavegameComment() { return "", 0; }				// Supply additional information to the savegame comment field during a save
+	virtual String, Int GetSavegameTitle(int type) { return "", 0; }		// Apply a title to an automatic savegame (quicksave, autosave); the highest priority title will be used
+	virtual Int GetSavegameFlags(bool quicksave, bool autosave) { return 0; }	// Supply additional flags to be saved with the savegame, which can be used to identify certain conditions when listing savegames
+	virtual bool IsSaveAllowed(bool quicksave) { return true; }				// Returning false from any event manager will prevent a savegame
+	virtual void PreSave(int type) {}										// Called before any type of save. Use this to alter the world before save
+	virtual void PostSave(int type) {}										// Called after any type of save. Use this to alter the world after save (not saving the changes)
+	virtual ui bool HandleError(int type, string message) { return false; }	// Handle a fatal error that prevents game from continuing. Return TRUE to signal that it has been displayed to user.
+
 	//
 	//virtual ui void RenderFrame(RenderEvent e) {}
 	virtual ui void RenderOverlay(RenderEvent e) {}
@@ -223,6 +259,13 @@ class StaticEventHandler : Object native play version("2.4")
 	//
 	virtual void CheckReplacement(ReplaceEvent e) {}
 	virtual void CheckReplacee(ReplacedEvent e) {}
+
+	// Selaco
+	virtual ui void StatProcess(StatsEvent e) {}
+
+	// Selaco
+	virtual void SkillChanged(int oldSkill, int newSkill) {}
+	virtual bool SkillShouldChange(int oldSkill, int newSkill) { return true; }
 
 	//
 	virtual  void NewGame() {}

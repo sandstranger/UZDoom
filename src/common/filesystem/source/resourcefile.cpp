@@ -676,8 +676,13 @@ FileReader FResourceFile::GetEntryReader(uint32_t entry, int readertype, int rea
 	{
 		if (Entries[entry].Flags & RESFF_NEEDFILESTART)
 		{
-			SetEntryAddress(entry);
+			// @Cockatrice - the file start may only be written on the main thread. Other threads open their own
+			// file reader and skip the local header themselves (SkipHeader), without storing the result.
+			// (Memory backed files have no such reader of their own, so they still get the address set here.)
+			if (mainThread || Reader.GetBuffer() != nullptr)
+				SetEntryAddress(entry);
 		}
+		const bool skipHeader = (Entries[entry].Flags & RESFF_NEEDFILESTART) != 0;
 		if (!(Entries[entry].Flags & RESFF_COMPRESSED))
 		{
 			auto buf = Reader.GetBuffer();
@@ -697,9 +702,11 @@ FileReader FResourceFile::GetEntryReader(uint32_t entry, int readertype, int rea
 				else if (readertype == READER_NEW)
 				{
 					fr.OpenFile(FileName, Entries[entry].Position, Entries[entry].Length);
+					if (skipHeader) SkipHeader(fr);
 				}
 				else if (readertype == READER_CACHED)
 				{
+					assert(mainThread);
 					Reader.Seek(Entries[entry].Position, FileReader::SeekSet);
 					auto data = Reader.Read(Entries[entry].Length);
 					fr.OpenMemoryArray(data);
@@ -711,7 +718,13 @@ FileReader FResourceFile::GetEntryReader(uint32_t entry, int readertype, int rea
 				FileReader fri;
 				auto buf = Reader.GetBuffer();
 				if (buf != nullptr) fri.OpenMemory(buf + Entries[entry].Position, Entries[entry].CompressedSize);
-				else if (readertype == READER_NEW || !mainThread) fri.OpenFile(FileName, Entries[entry].Position, Entries[entry].CompressedSize);
+				else if (readertype == READER_NEW || !mainThread)
+				{
+					fri.OpenFile(FileName, Entries[entry].Position, Entries[entry].CompressedSize);
+					// @Cockatrice - To make this properly thread safe we CANNOT write the filestart info
+					// in a thread, so skip to the correct location without storing
+					if (skipHeader) SkipHeader(fri);
+				}
 				else fri.OpenFilePart(Reader, Entries[entry].Position, Entries[entry].CompressedSize);
 				int flags = DCF_TRANSFEROWNER | DCF_EXCEPTIONS;
 				if (readertype == READER_CACHED) flags |= DCF_CACHED;
@@ -721,6 +734,12 @@ FileReader FResourceFile::GetEntryReader(uint32_t entry, int readertype, int rea
 	}
 	return fr;
 }
+
+
+void FResourceFile::SkipHeader(FileReader& fr) {
+	// Do nothing by defualt
+}
+
 
 FileData FResourceFile::Read(uint32_t entry)
 {

@@ -524,7 +524,7 @@ void OpenGLFrameBuffer::PostProcessScene(bool swscene, int fixedcm, float flash,
 }
 
 // Menu background blur: a post-process effect (GLES 3.0 with gles_postprocess)
-void OpenGLFrameBuffer::BlurScene(float amount)
+void OpenGLFrameBuffer::BlurScene(float amount, bool force)
 {
 	if (GLRenderer != nullptr)
 		GLRenderer->BlurScene(amount);

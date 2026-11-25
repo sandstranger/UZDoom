@@ -829,6 +829,8 @@ void ZCCCompiler::CreateStructTypes()
 			auto etype = NewEnum(e->NodeName, s->Type());
 			s->Type()->Symbols.AddSymbol(Create<PSymbolType>(e->NodeName, etype));
 		}
+
+		(static_cast<PStruct*> (s->Type()))->sourceLump = s->strct->SourceLump;
 	}
 }
 
@@ -922,6 +924,7 @@ void ZCCCompiler::CreateClassTypes()
 					}
 					c->cls->Type = NewClassType(me, AST.FileNo);
 					me->SourceLumpName = *c->cls->SourceName;
+					me->SourceLump = c->cls->SourceLump;
 				}
 				else
 				{
@@ -956,8 +959,13 @@ void ZCCCompiler::CreateClassTypes()
 					c->cls->Type = NewClassType(parent->FindClassTentative(c->NodeName()), AST.FileNo);
 				}
 
+				c->ClassType()->SourceLump = c->cls->SourceLump;
+
 				if (c->cls->Flags & ZCC_Abstract)
 					c->ClassType()->bAbstract = true;
+
+				if (c->cls->Flags & ZCC_Unit)
+					c->ClassType()->bUnitOnly = true;
 
 				if (c->cls->Flags & ZCC_Version)
 				{
@@ -1961,6 +1969,10 @@ PType *ZCCCompiler::DetermineType(PType *outertype, ZCC_TreeNode *field, FName n
 				retval = TypeSpriteID;
 				break;
 
+			case NAME_SoundHandle:
+				retval = TypeSoundHandle;
+				break;
+
 			case NAME_TextureID:
 				retval = TypeTextureID;
 				break;
@@ -2541,9 +2553,23 @@ void ZCCCompiler::CompileFunction(ZCC_StructWork *c, ZCC_FuncDeclarator *f, bool
 		if (f->Flags & ZCC_Virtual) varflags |= VARF_Virtual;
 		if (f->Flags & ZCC_Override) varflags |= VARF_Override;
 		if (f->Flags & ZCC_Abstract) varflags |= VARF_Abstract;
+		if (f->Flags & ZCC_Unit) varflags |= VARF_Unit;
 		if (f->Flags & ZCC_VarArg) varflags |= VARF_VarArg;
 		if (f->Flags & ZCC_FuncConst) varflags |= (mVersion >= MakeVersion(4, 15, 1) ? VARF_ReadOnly | VARF_SafeConst : VARF_ReadOnly); // FuncConst method is internally marked as VARF_ReadOnly
 		if (f->Flags & ZCC_FuncConstUnsafe) varflags |= VARF_ReadOnly;
+
+
+		// @Cockatrice: This is truly some bullshit and if you came looking for this and found it, feel free to hate me
+		if (c->NodeName() == NAME_StatDatabase &&
+			(f->Name == NAME_AddStat || f->Name == NAME_SetStat || f->Name == NAME_SetAchievement)) {
+			varflags |= VARF_Unit;
+
+			// Only the engine and IWAD containers may define these (GZSelaco hardcoded 'container > 2' here).
+			auto container = fileSystem.GetFileContainer(f->SourceLump);
+			if (container > fileSystem.GetMaxIwadNum()) {
+				Error(f, "Redefinition of %s not allowed", FName(f->Name).GetChars());
+			}
+		}
 
 		if (mVersion >= MakeVersion(2, 4, 0))
 		{
@@ -2825,6 +2851,12 @@ void ZCCCompiler::CompileFunction(ZCC_StructWork *c, ZCC_FuncDeclarator *f, bool
 
 		PFunction *sym = Create<PFunction>(c->Type(), f->Name);
 		sym->AddVariant(NewPrototype(rets, args), argflags, argnames, afd == nullptr ? nullptr : *(afd->VMPointer), varflags, useflags);
+		// (native functions get their argument flags as well: PClass::FindVirtualIndex compares an override's flags with
+		// them - with none, overriding a native virtual that takes a struct, passed by reference, never matched)
+		if ((f->Flags & ZCC_Native) && sym->Variants[0].Implementation != nullptr && sym->Variants[0].Implementation->ArgFlags.Size() == 0)
+		{
+			sym->Variants[0].Implementation->ArgFlags = sym->Variants[0].ArgFlags;
+		}
 		c->Type()->Symbols.ReplaceSymbol(sym);
 
 		if (f->DeprecationMessage != nullptr)
@@ -3498,6 +3530,16 @@ FxExpression *ZCCCompiler::ConvertNode(ZCC_TreeNode *ast, bool substitute)
 		auto iff = static_cast<ZCC_IfStmt *>(ast);
 		FxExpression *const truePath = ConvertImplicitScopeNode(ast, iff->TruePath);
 		FxExpression *const falsePath = ConvertImplicitScopeNode(ast, iff->FalsePath);
+		
+		// @Cockatrice - Check for an empty if statement by making sure one path with expressions exists
+		// Blame Nexxtic for constantly putting a ; after IF statement
+		// (GZSelaco made this an error; a warning here so existing mods that have such statements still compile)
+		if ((truePath == nullptr || dynamic_cast<FxNop*>(truePath) != nullptr) &&
+			(falsePath == nullptr || dynamic_cast<FxNop*>(falsePath) != nullptr)
+			) {
+			Warn(iff->Condition, "IF statement with no body. Check for a rogue semicolon.");
+		}
+
 		return new FxIfStatement(ConvertNode(iff->Condition), truePath, falsePath, *ast);
 	}
 

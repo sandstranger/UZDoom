@@ -65,6 +65,7 @@ struct UiEvent native ui version("2.4")
 		Key_Left        = 5,
 		Key_Right       = 6,
 		Key_Alert       = 7,        // ASCII bell
+		Key_CTRL        = 7,        // Selaco: Control key (GZSelaco replaced Key_Alert)
 		Key_Backspace   = 8,        // ASCII
 		Key_Tab         = 9,        // ASCII
 		Key_LineFeed    = 10,       // ASCII
@@ -72,6 +73,7 @@ struct UiEvent native ui version("2.4")
 		Key_VTab        = 11,       // ASCII
 		Key_Up          = 11,
 		Key_FormFeed    = 12,       // ASCII
+		Key_Menu        = 12,       // Selaco: Alt/Menu key (GZSelaco replaced Key_FormFeed)
 		Key_Return      = 13,       // ASCII
 		Key_F1          = 14,
 		Key_F2          = 15,
@@ -89,6 +91,8 @@ struct UiEvent native ui version("2.4")
 		Key_Escape      = 27,        // ASCII
 		Key_Free1       = 28,
 		Key_Free2       = 29,
+		Key_CapsLock    = 28,       // Selaco (GZSelaco replaced Key_Free1)
+		Key_Shift       = 29,       // Selaco (GZSelaco replaced Key_Free2)
 		Key_Back        = 30,        // browser back key
 		Key_CEscape     = 31         // color escape
 	}

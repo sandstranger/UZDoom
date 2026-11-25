@@ -31,13 +31,14 @@ class VulkanRenderDevice;
 class VkCommandBufferManager
 {
 public:
-	VkCommandBufferManager(VulkanRenderDevice* fb);
+	VkCommandBufferManager(VulkanRenderDevice* fb, VkQueue* queue, int queueFamily, bool uploadOnly = false);
 	~VkCommandBufferManager();
 
 	void BeginFrame();
 
 	VulkanCommandBuffer* GetTransferCommands();
 	VulkanCommandBuffer* GetDrawCommands();
+	std::unique_ptr<VulkanCommandBuffer> CreateUnmanagedCommands();
 
 	void FlushCommands(bool finish, bool lastsubmit = false, bool uploadOnly = false);
 
@@ -47,6 +48,8 @@ public:
 	void PushGroup(const FString& name);
 	void PopGroup();
 	void UpdateGpuStats();
+
+	VulkanRenderDevice *GetRenderDevice() { return fb; }
 
 	class DeleteList
 	{
@@ -80,13 +83,16 @@ public:
 
 	void DeleteFrameObjects(bool uploadOnly = false);
 
+	bool IsUploadOnly() const { return mIsUploadOnly; }
+
 private:
-	void FlushCommands(VulkanCommandBuffer** commands, size_t count, bool finish, bool lastsubmit);
+	void FlushCommands(VulkanCommandBuffer** commands, size_t count, VkQueue *queue, bool finish, bool lastsubmit);
 
 	VulkanRenderDevice* fb = nullptr;
+	VkQueue* fbQueue = nullptr;
+	bool mIsUploadOnly;
 
 	std::unique_ptr<VulkanCommandPool> mCommandPool;
-
 	std::unique_ptr<VulkanCommandBuffer> mTransferCommands;
 	std::unique_ptr<VulkanCommandBuffer> mDrawCommands;
 

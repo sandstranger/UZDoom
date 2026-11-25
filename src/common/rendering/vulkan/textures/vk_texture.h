@@ -44,7 +44,9 @@ public:
 
 	void BeginFrame();
 
-	void SetLightmap(int LMTextureSize, int LMTextureCount, const TArray<uint16_t>& LMTextureData);
+	void SetLightmap(IVector2 LMTextureSize, int LMTextureCount, const TArray<uint8_t>& LMTextureData, bool LMCompressed);
+	void SetLightmap(int LMTextureSize, int LMTextureCount, const TArray<uint16_t>& LMTextureData);	// (UZDoom's RGB16F lightmaps)
+	void BlitLightmap(VkHardwareTexture* lightmap, int lightmapIndex);
 
 	VkTextureImage* GetTexture(const PPTextureType& type, PPTexture* tex);
 	VkFormat GetTextureFormat(PPTexture* texture);
@@ -60,7 +62,8 @@ public:
 
 	VkTextureImage Shadowmap;
 	VkTextureImage Lightmap;
-
+	std::vector<VkTextureImageView> LightmapSlices;
+	
 private:
 	void CreateNullTexture();
 	void CreateShadowmap();

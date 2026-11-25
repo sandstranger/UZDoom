@@ -83,6 +83,7 @@ EXTERN_CVAR (Int, vid_defheight)
 EXTERN_CVAR (Bool, cl_capfps)
 EXTERN_CVAR(Bool, vk_debug)
 EXTERN_FARG(glversion);
+EXTERN_CVAR(Int, gl_max_transfer_threads)
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
@@ -170,6 +171,8 @@ namespace Priv
 
 		FString caption;
 		caption.Format(GAMENAME " %s (%s)", GetVersionString(), GetGitTime());
+
+		SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
 
 		const uint32_t windowFlags = (win_maximized ? SDL_WINDOW_MAXIMIZED : 0) | SDL_WINDOW_RESIZABLE | extraFlags;
 		Priv::window = SDL_CreateWindow(caption.GetChars(), xWindowPos, yWindowPos, win_w, win_h, windowFlags);
@@ -339,6 +342,7 @@ public:
 	~SDLVideo ();
 
 	void DumpAdapters();
+	void DumpAdapters(TArray<FString>& ar);
 
 	DFrameBuffer *CreateFrameBuffer ();
 
@@ -423,6 +427,21 @@ void SDLVideo::DumpAdapters()
 		Priv::displayBounds[i].y
 	  );
   }
+}
+
+void SDLVideo::DumpAdapters(TArray<FString>& ar) {
+	Priv::updateDisplayInfo();
+	for (int i = 0; i < Priv::numberOfDisplays; i++) {
+		FString s;
+		s.Format("%d. [%dx%d @ (%d,%d)]\n",
+			i,
+			Priv::displayBounds[i].w,
+			Priv::displayBounds[i].h,
+			Priv::displayBounds[i].x,
+			Priv::displayBounds[i].y
+		);
+		ar.Push(s);
+	}
 }
 
 
@@ -626,6 +645,36 @@ SystemGLFrameBuffer::SystemGLFrameBuffer(void *hMonitor, bool fullscreen)
 			continue;
 		}
 
+		// @Cockatrice - Create the aux contexts first with the expectation that they will be shared with the main context
+		/*if(gl_max_transfer_threads > 0) {
+			Printf("R_OPENGL: Creating additional contexts...\n");
+
+			const int numAux = min((int)gl_max_transfer_threads, 4);
+			int numCreated = 0;
+
+			for (int x = 0; x < numAux; x++) {
+				GLAuxContexts[x] = SDL_GL_CreateContext(Priv::window);
+
+				
+				if (GLAuxContexts[x] == NULL) {
+					break;
+				}
+				
+				numCreated++;
+			}
+
+			if (numCreated < numAux) {
+				if (numCreated == 0) {
+					Printf("R_OPENGL: Warning - Unable to create any additional context(s) [0/%d] (%s) \n\tTexture loading may be main-thread only.\n", numAux, SDL_GetError());
+				} else {
+					Printf("R_OPENGL: Warning - %d Contexts could not be created. Created %d of %d requested.\n\t(%s)\n", numAux - numCreated, numCreated, numAux, SDL_GetError());
+				}
+			}
+			else {
+				Printf("R_OPENGL: Created %d additional contexts\n", numCreated);
+			}
+		}*/
+
 		GLContext = SDL_GL_CreateContext(Priv::window);
 		if (GLContext == nullptr)
 		{
@@ -653,6 +702,10 @@ SystemGLFrameBuffer::~SystemGLFrameBuffer ()
 		if (GLContext)
 		{
 			SDL_GL_DeleteContext(GLContext);
+		}
+
+		for(int x = 0; x < int(sizeof(GLAuxContexts) / sizeof(GLAuxContexts[0])); x++) {
+			if(GLAuxContexts[x]) SDL_GL_DeleteContext(GLAuxContexts[x]);
 		}
 
 		Priv::DestroyWindow();
@@ -752,6 +805,75 @@ void SystemGLFrameBuffer::SwapBuffers()
 }
 
 
+// @Cockatrice - This is messy but these are some accessors for basic context usage
+// Aux and null contexts should only be used in texture load threads
+void SystemGLFrameBuffer::setNULLContext() {
+	SDL_GL_MakeCurrent(0, 0);
+}
+
+bool SystemGLFrameBuffer::setMainContext() {
+	return SDL_GL_MakeCurrent(Priv::window, GLContext) == 0;
+}
+
+bool SystemGLFrameBuffer::setAuxContext(int index) {
+	return SDL_GL_MakeCurrent(Priv::window, GLAuxContexts[index]) == 0;
+}
+
+int SystemGLFrameBuffer::numAuxContexts() {
+	int num = 0;
+	for (int x = 0; x < int(sizeof(GLAuxContexts) / sizeof(GLAuxContexts[0])); x++) if (GLAuxContexts[x] != NULL) num++;
+	return num;
+}
+
+static const char* getGLErrorStr(GLenum err) {
+	switch (err) {
+		case GL_NO_ERROR:                      return "GL_NO_ERROR";
+		case GL_INVALID_ENUM:                  return "GL_INVALID_ENUM";
+		case GL_INVALID_VALUE:                 return "GL_INVALID_VALUE";
+		case GL_INVALID_OPERATION:             return "GL_INVALID_OPERATION";
+		case GL_OUT_OF_MEMORY:                 return "GL_OUT_OF_MEMORY";
+#ifdef GL_STACK_UNDERFLOW
+		case GL_STACK_UNDERFLOW:               return "GL_STACK_UNDERFLOW";
+		case GL_STACK_OVERFLOW:                return "GL_STACK_OVERFLOW";
+#endif
+#ifdef GL_CONTEXT_LOST
+		case GL_CONTEXT_LOST:				   return "GL_CONTEXT_LOST";
+#endif
+		default:                               return "Unknown OpenGL Error";
+	}
+}
+
+int SystemGLFrameBuffer::createAuxContext() {
+	// Find a free context
+	int index = 0;
+
+	for (; index < int(sizeof(GLAuxContexts) / sizeof(GLAuxContexts[0])); index++) {
+		if (GLAuxContexts[index] == NULL)
+			break;
+	}
+
+	if (index >= int(sizeof(GLAuxContexts) / sizeof(GLAuxContexts[0]))) {
+		Printf(TEXTCOLOR_ORANGE"R_OPENGL: Warning - Ran out of space for more OpenGL contexts! (Current: %d)\n", numAuxContexts());
+		return -1;
+	}
+
+	// Set main context so we can force sharing
+	setMainContext();
+	SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+	GLAuxContexts[index] = SDL_GL_CreateContext(Priv::window);
+	setNULLContext();
+
+				
+	if (GLAuxContexts[index] == NULL) {
+		GLenum err = glGetError();
+		Printf(TEXTCOLOR_ORANGE"R_OPENGL: Warning - Unable to create additional context [%d] (%d : %s)\n", index, err, getGLErrorStr(err));
+		return -1;
+	}
+
+	return index;
+}
+
+
 void ProcessSDLWindowEvent(const SDL_WindowEvent &event)
 {
 	switch (event.event)
@@ -821,6 +943,11 @@ void I_SetWindowTitle(const char* caption)
 	}
 }
 
+
+void I_FocusWindow()
+{
+	SDL_RaiseWindow(Priv::window);
+}
 
 #ifdef ANDROID
 extern "C" {

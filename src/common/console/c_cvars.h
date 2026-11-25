@@ -201,7 +201,7 @@ public:
 	static void ResetColors ();		// recalc color cvars' indices after screen change
 	virtual void Callback() = 0;
 
-	static void ListVars (const char *filter, int listtype);
+	static void ListVars (const char *filter, int listtype, int is_default = 0);
 
 	const FString &GetDescription() const { return Description; };
 	const FString& GetToggleMessage(int which) { return ToggleMessages[which]; }

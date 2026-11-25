@@ -51,6 +51,7 @@
 #include "v_text.h"
 #include "v_video.h"
 #include <string>
+#include "events.h"
 
 extern FILE *Logfile;
 extern bool insave;
@@ -752,6 +753,13 @@ UNSAFE_CCMD(save)
 	if (argv.argc() < 2 || argv.argc() > 3 || argv[1][0] == 0)
 	{
 		Printf ("usage: save <filename> [description]\n");
+		return;
+	}
+
+	// @Cockatrice - Consult the event managers to determine if we are actually allowed to save at this moment
+	if (!staticEventManager.IsSaveAllowed(false)) {
+		if (developer > 0)
+			Printf("Save \"%s\" rejected by event manager.\n", argv[1]);
 		return;
 	}
 	FString fname = argv[1];

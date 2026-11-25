@@ -37,6 +37,8 @@
 #include "g_levellocals.h"
 #include "a_decalfx.h"
 #include "texturemanager.h"
+#include "selaco.h"
+#include "filesystem.h"
 
 FDecalLib DecalLibrary;
 
@@ -528,6 +530,8 @@ void FDecalLib::ParseGenerator (FScanner &sc)
 	sc.MustGetString ();
 	optional = sc.Compare("optional");
 	if (optional) sc.MustGetString();
+	// (Selaco: the engine's generators for other games' actors - some are not compiled for it)
+	if (g_SelacoMode && fileSystem.GetFileContainer(sc.LumpNum) == 0) optional = true;
 
 	type = PClass::FindActor (sc.String);
 	if (type == NULL)

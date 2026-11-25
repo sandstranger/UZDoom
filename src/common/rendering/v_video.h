@@ -49,6 +49,7 @@ class FMaterial;
 class FGameTexture;
 class FRenderState;
 class BoneBuffer;
+class FModel;
 
 enum EHWCaps
 {
@@ -167,6 +168,8 @@ public:
 	virtual void InitializeState() = 0;	// For stuff that needs 'screen' set.
 	virtual bool IsVulkan() { return false; }
 	virtual bool IsPoly() { return false; }
+	virtual void OnApplicationActivated(bool active) {};
+	virtual bool CanDisplay(bool active) { return true; }
 	virtual int GetShaderCount();
 	virtual bool CompileNextShader() { return true; }
 	virtual bool HasNVidiaVRAMExt() { return false; }
@@ -231,6 +234,24 @@ public:
 	virtual void SetTextureFilterMode() {}
 	virtual IHardwareTexture *CreateHardwareTexture(int numchannels) { return nullptr; }
 	virtual void PrecacheMaterial(FMaterial *mat, int translation) {}
+	virtual void PrequeueMaterial(FMaterial *mat, int translation) {}
+
+	virtual void PauseBackgroundCache(bool block = false) {};
+	virtual void ResumeBackgroundCache() {};
+	virtual bool BackgroundCachePaused() { return false; }
+
+	virtual void CancelBackgroundCache(FGameTexture* tex) {};
+	virtual bool BackgroundCacheMaterial(FMaterial *mat, FTranslationID translation, bool makeSPI = false, bool secondary = false) { PrecacheMaterial(mat, translation.index()); return true; }	// @Cockatrice - Default implementation for now. DOES NOT BG CACHE 
+	virtual bool BackgroundCacheTextureMaterial(FGameTexture *tex, FTranslationID translation, int scaleFlags, bool makeSPI = false) { return false; }
+	virtual bool BackgroundLoadModel(FModel* model) { return false; }
+	virtual bool CachingActive() { return false; }																	// Is background cache currently running?
+	virtual float CacheProgress() { return 0; }																		// Current progress of background cache op
+	virtual bool SupportsBackgroundCache() { return false; }
+	virtual void UpdateBackgroundCache(bool flush = false) { }
+	virtual void StopBackgroundCache() { }
+	// Wait for all background loads to finish, then update background cache
+	virtual void FlushBackground() { }	
+	
 	virtual FMaterial* CreateMaterial(FGameTexture* tex, int scaleflags);
 	virtual void BeginFrame() {}
 	virtual void SetWindowSize(int w, int h) {}
@@ -239,9 +260,11 @@ public:
 
 	virtual int GetClientWidth() = 0;
 	virtual int GetClientHeight() = 0;
-	virtual void BlurScene(float amount) {}
+	virtual void BlurScene(float amount, bool force = false) {}
 
-	virtual void InitLightmap(int LMTextureSize, int LMTextureCount, TArray<uint16_t>& LMTextureData) {}
+	virtual void InitLightmap(IVector2 LMTextureSize, int LMTextureCount, TArray<uint8_t>& LMTextureData, bool LMCompressed) {}
+	virtual void InitLightmap(int LMTextureSize, int LMTextureCount, TArray<uint16_t>& LMTextureData) {}	// (UZDoom's RGB16F lightmaps)
+	virtual void BlitLightmap(IHardwareTexture* lightmap, int lightmapIndex) {}
 
 	// Interface to hardware rendering resources
 	virtual IVertexBuffer *CreateVertexBuffer() { return nullptr; }
@@ -275,6 +298,7 @@ public:
 	virtual void CopyScreenToBuffer(int width, int height, uint8_t* buffer)	{ memset(buffer, 0, width* height); }
 	virtual bool FlipSavePic() const { return false; }
 	virtual void RenderTextureView(FCanvasTexture* tex, std::function<void(IntRect&)> renderFunc) {}
+	virtual void RenderLightmapSlice(int slice, std::function<void(IntRect&)> renderFunc) {};
 	virtual void SetActiveRenderTarget() {}
 
 	// Screen wiping

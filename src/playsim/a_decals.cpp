@@ -81,6 +81,7 @@ void DBaseDecal::Construct(double z)
 	Z = z;
 	RenderStyle = STYLE_None;
 	PicNum.SetInvalid();
+	LastPatch.SetInvalid();
 }
 
 //----------------------------------------------------------------------------
@@ -98,6 +99,7 @@ void DBaseDecal::Construct(const AActor *basis)
 	AlphaColor = basis->fillcolor;
 	Translation = basis->Translation;
 	PicNum = basis->picnum;
+	LastPatch.SetInvalid();
 	RenderFlags = basis->renderflags;
 	RenderStyle = basis->RenderStyle;
 }
@@ -120,7 +122,7 @@ void DBaseDecal::Construct(const DBaseDecal *basis)
 	PicNum = basis->PicNum;
 	RenderFlags = basis->RenderFlags;
 	RenderStyle = basis->RenderStyle;
-
+	LastPatch.SetInvalid();
 }
 
 //----------------------------------------------------------------------------

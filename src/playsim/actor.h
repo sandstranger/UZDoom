@@ -408,6 +408,7 @@ enum ActorFlag8
 	MF8_FALLDAMAGE		= 0x00000800,	// Monster will take fall damage regardless of map settings.
 	MF8_MINVISIBLE		= 0x00001000,	// Actor not visible to monsters
 	MF8_MVISBLOCKED		= 0x00002000,	// Monster(only) sight checks to actor always fail
+	MF8_BLOCKLOF		= 0x00004000,	// @Cockatrice - Blocks LOF in CHECKLOF
 	MF8_ALLOWTHRUBITS	= 0x00008000,	// [MC] Enable ThruBits property
 	MF8_FULLVOLSEE		= 0x00010000,	// Play see sound at full volume
 	MF8_E1M8BOSS		= 0x00020000,	// MBF21 boss death.
@@ -439,6 +440,13 @@ enum ActorFlag9
 	MF9_ISPUFF					= 0x00000040,	// [AA] Set on actors by P_SpawnPuff
 	MF9_FORCESECTORDAMAGE		= 0x00000080,	// [inkoalawetrust] Actor ALWAYS takes hurt floor damage if there's any. Even if the floor doesn't have SECMF_HURTMONSTERS.
 	MF9_NOAUTOOFFSKULLFLY		= 0x00000100,	// Don't automatically disable MF_SKULLFLY if velocity is 0.
+
+	// Selaco flags. GZSelaco had ABSDAMAGE, HITSCANTHRU and PRECACHEALWAYS in flags8 where UZDoom has no free bits left.
+	MF9_MASTERLIGHTPROBES		= 0x01000000,	// @Cockatrice - When calculating lightprobes, use the master's position instead of the actor position
+	MF9_ABSDAMAGE				= 0x02000000,	// @Cockatrice - Damage value ignores dice roll
+	MF9_HITSCANTHRU				= 0x04000000,	// @Cockatrice - Allow hitscans to pass through, but also damage this actor
+	MF9_PRECACHEALWAYS			= 0x08000000,	// @Cockatrice - Actor is marked for precache on every map
+	MF9_BLOCKLOS				= 0x80000000,	// @Cockatrice - Block LOF when calling CHECKLOF if
 };
 
 // --- mobj.renderflags ---
@@ -657,12 +665,14 @@ class FDecalBase;
 
 inline AActor *GetDefaultByName (const char *name)
 {
-	return (AActor *)(PClass::FindClass(name)->Defaults);
+	PClass *pc = PClass::FindClass(name);
+	return pc != NULL ? (AActor *)pc->Defaults : NULL;
 }
 
 inline AActor* GetDefaultByName(FName name)
 {
-	return (AActor*)(PClass::FindClass(name)->Defaults);
+	PClass *pc = PClass::FindClass(name);
+	return pc != NULL ? (AActor *)pc->Defaults : NULL;
 }
 
 inline AActor *GetDefaultByType (const PClass *type)
@@ -874,6 +884,9 @@ public:
 	void Die (AActor *source, AActor *inflictor, int dmgflags = 0, FName MeansOfDeath = NAME_None);
 	void CallDie(AActor *source, AActor *inflictor, int dmgflags = 0, FName MeansOfDeath = NAME_None);
 
+	// Called when we need the actor to grunt, like when hitting a wall
+	void CallGrunt(line_t* hitWall = nullptr, int reason = 0);
+
 	// Perform some special damage action. Returns the amount of damage to do.
 	// Returning -1 signals the damage routine to exit immediately
 	int DoSpecialDamage (AActor *target, int damage, FName damagetype);
@@ -1070,6 +1083,21 @@ public:
 		return (Pos() - otherpos).Length();
 	}
 
+	// @Cockatrice - Distance between POS of OTHER and the closest point inside the actor bounds
+	// Used for more precise explosion calculations against the hull of the actor instead of its bottom-center point
+	double Distance3DWithBounds(AActor* other, bool absolute = false) {
+		const DVector3 otherpos = absolute ? other->Pos() : other->PosRelative(this);
+		const DVector3 pos = Pos();
+		DVector3 ourPos(
+			std::clamp(otherpos.X, pos.X - radius, pos.X + radius),
+			std::clamp(otherpos.Y, pos.Y - radius, pos.Y + radius),
+			std::clamp(otherpos.Z, pos.Z, pos.Z + Height)
+		);
+
+		return (ourPos - otherpos).Length();
+	}
+
+
 	DAngle AngleTo(AActor *other, bool absolute = false)
 	{
 		DVector3 otherpos = absolute ? other->Pos() : other->PosRelative(this);
@@ -1157,13 +1185,19 @@ public:
 	uint8_t			frame;				// sprite frame to draw
 	uint8_t			effects;			// [RH] see p_effect.h
 	uint8_t			fountaincolor;		// Split out of 'effect' to have easier access.
+	PalEntry		selfLighting;		// (@Cockatrice) Self illumination, add this value to lighting calculations
 	FRenderStyle	RenderStyle;		// Style to draw this actor with
 	FTextureID		picnum;				// Draw this instead of sprite if valid
 	uint32_t			fillcolor;			// Color to draw when STYLE_Shaded
 	FTranslationID			Translation;
+	FTextureID		LastPatch;			// @Cockatrice - Used by the hardware renderer to determine the last rendered patch
+	int				lastScaleFlags;		// And scale flags
+	int				lastModelSprite;	// Likewise used for the last rendered model sprite, only used when unimportant
+	uint8_t			lastModelFrame;		// And the frame index
+	
 
-	uint32_t			RenderRequired;		// current renderer must have this feature set
-	uint32_t			RenderHidden;		// current renderer must *not* have any of these features
+	uint32_t		RenderRequired;		// current renderer must have this feature set
+	uint32_t		RenderHidden;		// current renderer must *not* have any of these features
 
 	bool				NoLocalRender;		// DO NOT EXPORT THIS! This is a way to disable rendering such that the playsim cannot access it.
 	ActorRenderFlags	renderflags;		// Different rendering flags
@@ -1202,6 +1236,7 @@ public:
 	double			dropoffz;		// killough 11/98: the lowest floor over all contacted Sectors.
 
 	uint32_t		ThruBits;
+	uint32_t		lineBlockBits;		// @Cockatrice - Compared to line bits for blocking
 	FTextureID		floorpic;			// contacted sec floorpic
 	int				floorterrain;
 	FTextureID		ceilingpic;			// contacted sec ceilingpic
@@ -1415,6 +1450,8 @@ public:
 	// (note: this is put into AActor instead of the PlayerPawn because non-players also use the value)
 	double LandingSpeed;
 	TMap<FName, TObjPtr<DBehavior*>> Behaviors;
+
+	int HeavyProbeIndex; // NL: Index of HeavyProbe for static models
 
 
 	// ThingIDs
@@ -1704,6 +1741,20 @@ public:
 	double DistanceBySpeed(AActor *dest, double speed) const
 	{
 		return max(1., Distance2D(dest) / speed);
+	}
+
+	DVector3 GetLightProbeSamplePosition(double wallOffsetDist)
+	{
+		double zPos = __Pos.Z + Height / 2;
+
+		if (renderflags & RF_WALLSPRITE)
+		{
+			return DVector3(__Pos.X + Angles.Yaw.Cos() * wallOffsetDist, __Pos.Y + Angles.Yaw.Sin() * wallOffsetDist, zPos);
+		}
+		else
+		{
+			return DVector3(__Pos.X, __Pos.Y, zPos);
+		}
 	}
 
 	int GetLightLevel(sector_t* rendersector);

@@ -32,6 +32,7 @@
 #include "i_input.h"
 #include "keydef.h"
 #include "m_joy.h"
+#include "selaco.h"
 #include "tarray.h"
 #include "zstring.h"
 
@@ -49,6 +50,31 @@ static const EAxisCodes ControllerAxisCodes[][2] =
 #define HAPTICS_TRIGGERS 0b0010
 
 EXTERN_CVAR(Bool, use_joystick)
+EXTERN_CVAR(Bool, joy_feedback)
+EXTERN_CVAR(Float, joy_feedback_scale)
+EXTERN_CVAR(Bool, joy_invert_look)
+
+// Selaco: square ("un-circularize") the thumbsticks of gamepads; 0 = off, 1 = on, 2 = forced.
+// Only used while Selaco is running, other games keep UZDoom's thumbstick handling.
+CUSTOM_CVAR(Int, joy_sdl_squaremove, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self > 2) self = 2;
+	if (self < 0) self = 0;
+}
+
+CUSTOM_CVAR(Int, joy_sdl_squarelook, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self > 2) self = 2;
+	if (self < 0) self = 0;
+}
+
+// Selaco: input queue size of its own SDL joystick code. Not used by this implementation, kept so
+// Selaco's settings and menus find the CVAR.
+CUSTOM_CVAR(Int, joy_sdl_queuesize, 5, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self > 10) self = 10;
+	if (self < 1) self = 1;
+}
 
 class SDLInputJoystick: public IJoystickConfig
 {
@@ -178,6 +204,21 @@ public:
 			: 0;
 	};
 
+	// Selaco: direct access to the processed and the raw axis values
+	float GetAxis(int axis) override
+	{
+		return unsigned(axis) < Axes.Size() ? float(Axes[axis].Value) : 0.f;
+	}
+	float GetRawAxis(int axis) override
+	{
+		return unsigned(axis) < Axes.Size() ? float(Axes[axis].RawValue) : 0.f;
+	}
+
+	bool IsGamepad() override
+	{
+		return Mapping != NULL;
+	}
+
 	void SetAxisDeadZone(int axis, float zone)
 	{
 		SettingsChanged = true;
@@ -298,6 +339,7 @@ public:
 			}
 
 			Axes[i].Value = 0.0;
+			Axes[i].RawValue = 0.0;
 			Axes[i].ButtonValue = 0;
 
 			if (i < DefaultAxesCount)
@@ -358,6 +400,10 @@ public:
 				{
 					axis_code_pos = ControllerAxisCodes[i][0];
 					axis_code_neg = ControllerAxisCodes[i][1];
+
+					// @Cockatrice - global invert for look only
+					if (joy_invert_look && i == SDL_CONTROLLER_AXIS_RIGHTY)
+						std::swap(axis_code_pos, axis_code_neg);
 				}
 			}
 			else
@@ -395,6 +441,8 @@ public:
 
 		axisval1 = SDL_GameControllerGetAxis(Mapping, static_cast<SDL_GameControllerAxis>(index1)) / 32767.0;
 		axisval2 = SDL_GameControllerGetAxis(Mapping, static_cast<SDL_GameControllerAxis>(index2)) / 32767.0;
+		axis1.RawValue = axisval1;
+		axis2.RawValue = axisval2;
 
 		Joy_ManageThumbstick(
 			&axisval1, &axisval2,
@@ -420,6 +468,7 @@ public:
 		double axisval;
 
 		axisval = SDL_GameControllerGetAxis(Mapping, static_cast<SDL_GameControllerAxis>(index)) / 32767.0;
+		axis.RawValue = axisval;
 		axisval = Joy_ManageSingleAxis(
 			axisval,
 			axis.DeadZone, axis.DigitalThreshold, axis.ResponseCurve,
@@ -438,6 +487,32 @@ public:
 		ProcessGameControllerThumbstick(SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY, KEY_PAD_RTHUMB_RIGHT);
 		ProcessGameControllerTrigger(SDL_CONTROLLER_AXIS_TRIGGERLEFT, KEY_PAD_LTRIGGER);
 		ProcessGameControllerTrigger(SDL_CONTROLLER_AXIS_TRIGGERRIGHT, KEY_PAD_RTRIGGER);
+
+		// Selaco squares the thumbsticks (joy_sdl_squaremove / joy_sdl_squarelook)
+		if (g_SelacoMode)
+		{
+			if (joy_sdl_squaremove > 0)
+				SquareStick(SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY);
+			if (joy_sdl_squarelook > 0)
+				SquareStick(SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY);
+		}
+	}
+
+	// Selaco: un-circularize the processed values of a thumbstick
+	void SquareStick(int indexX, int indexY)
+	{
+		AxisInfo &axisX = Axes[indexX];
+		AxisInfo &axisY = Axes[indexY];
+
+		float x = float(axisX.Value) * 1.15f;	// Add a slightly arbitrary bonus value to make up for many sticks that don't fully commit a proper circle
+		float y = float(axisY.Value) * 1.15f;
+		float r = sqrtf(x * x + y * y);
+		float maxMove = max(fabsf(x), fabsf(y));
+		if (maxMove > 0)
+		{
+			axisX.Value = clamp(x * (r / maxMove), -1.0f, 1.0f);
+			axisY.Value = clamp(y * (r / maxMove), -1.0f, 1.0f);
+		}
 	}
 
 	void ProcessOldJoystickAxes()
@@ -454,6 +529,7 @@ public:
 				double axisval;
 
 				axisval = SDL_JoystickGetAxis(Device, i) / 32767.0;
+				info.RawValue = axisval;
 
 				info.Value = Joy_ManageSingleAxis(
 					axisval,
@@ -474,6 +550,8 @@ public:
 
 				axisval_x = SDL_JoystickGetAxis(Device, i - 1) / 32767.0;
 				axisval_y = SDL_JoystickGetAxis(Device,     i) / 32767.0;
+				info_x.RawValue = axisval_x;
+				info_y.RawValue = axisval_y;
 				Joy_ManageThumbstick(
 					&axisval_x, &axisval_y,
 					info_x.DeadZone, info_y.DeadZone,
@@ -526,6 +604,12 @@ public:
 
 	void ProcessInput()
 	{
+		// Selaco's direct vibration API: let active feedback decay (nothing to do unless AddVibration/SetVibration was used)
+		if (lFeed > 0.0f || rFeed > 0.0f)
+		{
+			UpdateFeedback();
+		}
+
 		if (Mapping)
 		{
 			// GameController API available
@@ -539,6 +623,38 @@ public:
 	}
 
 protected:
+	// Selaco: per-API implementation of IJoystickConfig::AddVibration/SetVibration
+	bool InternalSetVibration(float l, float r) override
+	{
+		if (!IsValid()) return false;
+
+		if (!joy_feedback)
+		{
+			if (lFeed != 0.0f || rFeed != 0.0f)
+			{
+				rFeed = lFeed = 0.0f;
+				SetRumble(0, 0, 100);
+			}
+			return false;
+		}
+
+		lFeed = clamp(l, 0.0f, 1.0f);
+		rFeed = clamp(r, 0.0f, 1.0f);
+
+		return SetRumble(
+			(Uint16)round(clamp(lFeed * joy_feedback_scale, 0.0f, 1.0f) * 65535.0),
+			(Uint16)round(clamp(rFeed * joy_feedback_scale, 0.0f, 1.0f) * 65535.0),
+			50
+		) == 0;
+	}
+
+	int SetRumble(Uint16 low_freq, Uint16 high_freq, Uint32 duration_ms)
+	{
+		return Mapping
+			? SDL_GameControllerRumble(Mapping, low_freq, high_freq, duration_ms)
+			: SDL_JoystickRumble(Device, low_freq, high_freq, duration_ms);
+	}
+
 	struct AxisInfo
 	{
 		FString Name;
@@ -548,6 +664,7 @@ protected:
 		EJoyCurve ResponseCurvePreset;
 		CubicBezier ResponseCurve;
 		double Value;
+		double RawValue;
 		uint8_t ButtonValue;
 	};
 	struct DefaultAxisConfig

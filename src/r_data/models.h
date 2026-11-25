@@ -56,6 +56,8 @@ enum
 	MDL_CORRECTPIXELSTRETCH			= 1<<13,	// ensure model does not distort with pixel stretch when pitch/roll is applied
 	MDL_FORCECULLBACKFACES			= 1<<14,
 	MDL_FIXROTATING					= 1<<15,
+	MDL_ALWAYSCULLBACKFACES			= 1<<16,	// [Selaco] @Cockatrice - Always cull backfaces
+	MDL_NOPIXELSTRETCH				= 1<<17,	// [Selaco] @Cockatrice - Ignore pixel stretch so we can rotate these suckers
 };
 
 FSpriteModelFrame * FindModelFrame(AActor * thing, int sprite, int frame, bool dropped);

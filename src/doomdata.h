@@ -56,6 +56,8 @@ enum
 						//		and LINEDEFS are also Hexen-style.
 	ML_CONVERSATION,	// Strife dialog (only for TEXTMAP format)
 	ML_LIGHTMAP,		// ZDRay generated lightmap
+	ML_LIGHTGRP,		// ZDRay generated lightgroups
+	ML_LMCHKSUM,		// ZDRay generated nodes checksum
 	ML_MAX,
 
 	// [RH] These are compressed (and extended) nodes. They combine the data from
@@ -377,6 +379,7 @@ struct FMapThing
 	int			FloatbobPhase;
 	int			friendlyseeblocks;
 	FName arg0str;
+	int			HeavyProbeIndex;
 };
 
 

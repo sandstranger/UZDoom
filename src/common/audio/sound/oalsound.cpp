@@ -30,6 +30,10 @@
 #include "i_module.h"
 #include "oalsound.h"
 #include "printf.h"
+#include "stats.h"
+#include "selaco.h"
+
+#include "g_levellocals.h"
 
 const char *GetSampleTypeName(SampleType type);
 const char *GetChannelConfigName(ChannelConfig chan);
@@ -68,6 +72,15 @@ CUSTOM_CVAR (Float, snd_superstereowidth, 0.45f, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 	else if(GSnd)
 		GSnd->UpdateMusicParams();
 }
+
+// @Cockatrice - time in seconds to interpolate between environments
+// set to 0 to instantly switch environments like classic GZDoom
+CVAR (Float, snd_interpeax, 1.65f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+// @Cockatrice - Distance in map units, covering this distance from where an environment has changed will increase interpolation speed between two environments
+// Hitting maxdistance will guarantee a full transition. Distance measured in 2D.
+CVAR (Float, snd_interpeax_maxdistance, 256.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
 
 #ifdef _WIN32
 #define OPENALLIB "soft_oal.dll"
@@ -113,6 +126,7 @@ ReverbContainer *ForcedEnvironment;
 EXTERN_CVAR (Int, snd_channels)
 EXTERN_CVAR (Int, snd_samplerate)
 EXTERN_CVAR (Bool, snd_waterreverb)
+//EXTERN_CVAR (Bool, snd_pitched)
 EXTERN_CVAR (Int, snd_hrtf)
 
 #define MAKE_PTRID(x)  ((void*)(uintptr_t)(x))
@@ -178,7 +192,8 @@ static ALenum checkALError(const char *fn, unsigned int ln)
 			fn = strrchr(fn, '/')+1;
 		else if(strchr(fn, '\\'))
 			fn = strrchr(fn, '\\')+1;
-		Printf(">>>>>>>>>>>> Received AL error %s (%#x), %s:%u\n", alGetString(err), err, fn, ln);
+		const char* errStr = alGetString(err);
+ 		Printf(">>>>>>>>>>>> Received AL error %s (%#x), %s:%u\n", errStr, err, fn, ln);
 	}
 	return err;
 }
@@ -239,6 +254,8 @@ class OpenALSoundStream : public SoundStream
 	uint64_t Offset = 0;
 	std::mutex Mutex;
 
+	FFloatCVarRef* VolumeCVAR = nullptr;
+
 	bool SetupSource()
 	{
 		/* Get a source, killing the farthest, lowest-priority sound if needed */
@@ -252,6 +269,8 @@ class OpenALSoundStream : public SoundStream
 		}
 		Renderer->FreeSfx.Pop(Source);
 
+		alGetError();
+
 		/* Set the default properties for localized playback */
 		alSource3f(Source, AL_DIRECTION, 0.f, 0.f, 0.f);
 		alSource3f(Source, AL_VELOCITY, 0.f, 0.f, 0.f);
@@ -259,7 +278,7 @@ class OpenALSoundStream : public SoundStream
 		alSourcef(Source, AL_MAX_GAIN, 1.f);
 		alSourcef(Source, AL_GAIN, 1.f);
 		alSourcef(Source, AL_PITCH, 1.f);
-		alSourcef(Source, AL_DOPPLER_FACTOR, 0.f);
+		//alSourcef(Source, AL_DOPPLER_FACTOR, 0.f);	// @Cockatrice - This is not a valid enum, did I do this?
 		alSourcef(Source, AL_ROLLOFF_FACTOR, 0.f);
 		alSourcef(Source, AL_SEC_OFFSET, 0.f);
 		alSourcei(Source, AL_SOURCE_RELATIVE, AL_TRUE);
@@ -304,6 +323,7 @@ public:
 	virtual ~OpenALSoundStream()
 	{
 		Renderer->RemoveStream(this);
+		alGetError();
 
 		if(Source)
 		{
@@ -329,6 +349,8 @@ public:
 
 		if(Playing.load())
 			return true;
+
+		alGetError();
 
 		/* Clear the buffer queue, then fill and queue each buffer */
 		Offset = 0;
@@ -361,6 +383,8 @@ public:
 		if(!Playing.load())
 			return;
 
+		alGetError();
+
 		std::unique_lock<std::mutex> lock(Renderer->StreamLock);
 		alSourceStop(Source);
 		alSourcei(Source, AL_BUFFER, 0);
@@ -378,7 +402,12 @@ public:
 
 	void UpdateParams()
 	{
-		alSourcef(Source, AL_GAIN, Renderer->MusicVolume*Volume);
+		if (VolumeCVAR != nullptr) {
+			alSourcef(Source, AL_GAIN, (float)*VolumeCVAR * Volume);
+		}
+		else {
+			alSourcef(Source, AL_GAIN, Renderer->MusicVolume * Volume);
+		}
 		if(Renderer->AL.SOFT_UHJ)
 			alSourcef(Source, AL_SUPER_STEREO_WIDTH_SOFT, *snd_superstereowidth);
 		getALError();
@@ -386,6 +415,8 @@ public:
 
 	virtual bool SetPaused(bool pause)
 	{
+		alGetError();
+
 		if(pause)
 			alSourcePause(Source);
 		else
@@ -445,6 +476,8 @@ public:
 		ALint queued;
 		ALint state;
 		ALenum err;
+		
+		alGetError();
 
 		std::unique_lock<std::mutex> lock(Renderer->StreamLock);
 		alGetSourcef(Source, AL_GAIN, &volume);
@@ -481,6 +514,9 @@ public:
 			return false;
 
 		ALint state, processed;
+		
+		alGetError();
+
 		alGetSourcei(Source, AL_SOURCE_STATE, &state);
 		alGetSourcei(Source, AL_BUFFERS_PROCESSED, &processed);
 		if(getALError() != AL_NO_ERROR)
@@ -530,7 +566,7 @@ public:
 		return ok;
 	}
 
-	bool Init(SoundStreamCallback callback, int buffbytes, SampleType stype, ChannelConfig chans, int samplerate, void *userdata)
+	bool Init(SoundStreamCallback callback, int buffbytes, SampleType stype, ChannelConfig chans, int samplerate, void *userdata, FFloatCVarRef* volumeCVAR = nullptr)
 	{
 		if(!SetupSource())
 			return false;
@@ -538,6 +574,7 @@ public:
 		Callback = callback;
 		UserData = userdata;
 		SampleRate = samplerate;
+		VolumeCVAR = volumeCVAR;
 
 		Format = GetFormat(stype, chans);
 		if(Format == AL_NONE)
@@ -611,6 +648,87 @@ ALCdevice *OpenALSoundRenderer::InitDevice()
 }
 
 
+void OpenALSoundRenderer::InitAudioFX()
+{
+	// The EFX functions are only loaded (and EnvSlot only exists) when EFX is available and enabled
+	if (!EnvSlot)
+		return;
+
+	for (auto def : AudioFXChannelDefs)
+	{
+		OpenALEffectDef effectDef;
+
+		ALint prevEffectSlot = -1;
+		ALint prevEnvEffectSlot = -1;
+
+		for (auto effect : def.effects)
+		{
+			ALuint cid;
+			alGenAuxiliaryEffectSlots(1, &cid);
+			getALError();
+
+			EffectSlots.Push(cid);
+			effectDef.effectSlots.Push(cid);
+
+			ALuint eid;
+			alGenEffects(1, &eid);
+			getALError();
+
+			Effects.Push(eid);
+
+			alEffecti(eid, AL_EFFECT_TYPE, effect.type);
+			getALError();
+
+			for (auto intVal : effect.intValues)
+			{
+				alEffecti(eid, intVal.type, intVal.value);
+				getALError();
+			}
+
+			for (auto floatVal : effect.floatValues)
+			{
+				alEffectf(eid, floatVal.type, floatVal.value);
+				getALError();
+			}
+
+			alAuxiliaryEffectSloti(cid, AL_EFFECTSLOT_EFFECT, eid);
+			alAuxiliaryEffectSlotf(cid, AL_EFFECTSLOT_GAIN, effect.gain);
+
+			// Create an 'environment' version of the EffectSlot for reverb
+			ALuint cidEnv;
+			alGenAuxiliaryEffectSlots(1, &cidEnv);
+			alAuxiliaryEffectSloti(cidEnv, AL_EFFECTSLOT_EFFECT, eid);
+			alAuxiliaryEffectSlotf(cidEnv, AL_EFFECTSLOT_GAIN, effect.gain);
+
+			EffectSlots.Push(cidEnv);
+			effectDef.envEffectSlots.Push(cidEnv);
+
+			if (prevEffectSlot != -1)
+			{
+				alAuxiliaryEffectSloti(prevEffectSlot, AL_EFFECTSLOT_TARGET_SOFT, cid);
+				alAuxiliaryEffectSloti(prevEnvEffectSlot, AL_EFFECTSLOT_TARGET_SOFT, cidEnv);
+			}
+
+			prevEffectSlot = cid;
+			prevEnvEffectSlot = cidEnv;
+
+			getALError();
+		}
+
+		if (prevEnvEffectSlot != -1 && EnvSlot)
+		{
+			alAuxiliaryEffectSloti(prevEnvEffectSlot, AL_EFFECTSLOT_TARGET_SOFT, EnvSlot);
+		}
+
+		EffectDefs.Push(effectDef);
+	}
+
+	alGenFilters(1, &DryFilter);
+	alFilteri(DryFilter, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
+	alFilterf(DryFilter, AL_LOWPASS_GAIN, 0.0f);
+	alFilterf(DryFilter, AL_LOWPASS_GAINHF, 0.0f);
+}
+
 template<typename T>
 static void LoadALFunc(const char *name, T *x)
 {
@@ -626,7 +744,7 @@ static void LoadALCFunc(ALCdevice *device, const char *name, T *x)
 #define LOAD_FUNC(x)  (LoadALFunc(#x, &x))
 #define LOAD_DEV_FUNC(d, x)  (LoadALCFunc(d, #x, &x))
 OpenALSoundRenderer::OpenALSoundRenderer()
-	: QuitThread(false), Device(NULL), Context(NULL), SFXPaused(0), PrevEnvironment(NULL), EnvSlot(0)
+	: QuitThread(false), QuitQueueThread(false), Device(NULL), Context(NULL), SFXPaused(0), PrevEnvironment(NULL), EnvSlot(0)
 {
 	EnvFilters[0] = EnvFilters[1] = 0;
 
@@ -681,6 +799,11 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 		attribs.Push(ALC_OUTPUT_LIMITER_SOFT);
 		attribs.Push(ALC_TRUE);
 	}
+	if(ALC.EXT_EFX)
+	{
+		attribs.Push(ALC_MAX_AUXILIARY_SENDS);
+		attribs.Push(4);
+	}
 	// Other attribs..?
 	attribs.Push(0);
 
@@ -728,6 +851,7 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 	alSpeedOfSound(343.3f);
 	if(ALC.EXT_EFX)
 		alListenerf(AL_METERS_PER_UNIT, 1.0f);
+	alDopplerFactor(0);
 
 	alDistanceModel(AL_INVERSE_DISTANCE);
 	if(AL.EXT_source_distance_model)
@@ -769,6 +893,7 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 	ALCint numMono=0, numStereo=0;
 	alcGetIntegerv(Device, ALC_MONO_SOURCES, 1, &numMono);
 	alcGetIntegerv(Device, ALC_STEREO_SOURCES, 1, &numStereo);
+	alcGetIntegerv(Device, ALC_MAX_AUXILIARY_SENDS, 1, &MaxAuxSends);
 
 	// OpenAL specification doesn't require alcGetIntegerv() to return
 	// meaningful values for ALC_MONO_SOURCES and ALC_MONO_SOURCES.
@@ -913,6 +1038,12 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 		else for(ALint src : Sources)
 			alSourcei(src, AL_SOURCE_RESAMPLER_SOFT, ridx);
 	}
+
+	StreamThread = std::thread(std::mem_fn(&OpenALSoundRenderer::BackgroundProc), this);
+	QueueThread = std::thread(std::mem_fn(&OpenALSoundRenderer::BackgroundQueueProc), this);
+
+	InitTime = std::chrono::steady_clock::now();
+	LastReverb.Instance = -1;	// No previous reverb to interpolate from
 }
 #undef LOAD_DEV_FUNC
 #undef LOAD_FUNC
@@ -931,15 +1062,24 @@ OpenALSoundRenderer::~OpenALSoundRenderer()
 		StreamThread.join();
 	}
 
+	if (QueueThread.joinable())
+	{
+		std::unique_lock<std::mutex> lock(QueueThreadLock);
+		QuitQueueThread.store(true);
+		lock.unlock();
+		QueueWake.notify_all();
+		QueueThread.join();
+	}
+
 	while(Streams.Size() > 0)
 		delete Streams[0];
 
 	alDeleteSources(Sources.Size(), &Sources[0]);
 	Sources.Clear();
 	FreeSfx.Clear();
-	SfxGroup.Clear();
-	PausableSfx.Clear();
-	ReverbSfx.Clear();
+	SfxGroup.clear();
+	//PausableSfx.Clear();
+	//ReverbSfx.Clear();
 
 	if(EnvEffects.CountUsed() > 0)
 	{
@@ -950,6 +1090,10 @@ OpenALSoundRenderer::~OpenALSoundRenderer()
 	}
 	EnvEffects.Clear();
 
+	if (ReverbSlot) {
+		alDeleteEffects(1, &ReverbSlot);
+	}
+
 	if(EnvSlot)
 	{
 		alDeleteAuxiliaryEffectSlots(1, &EnvSlot);
@@ -958,6 +1102,25 @@ OpenALSoundRenderer::~OpenALSoundRenderer()
 	EnvSlot = 0;
 	EnvFilters[0] = EnvFilters[1] = 0;
 
+	for (ALuint effectSlot : EffectSlots)
+	{
+		alDeleteAuxiliaryEffectSlots(1, &effectSlot);
+	}
+
+	for (ALuint effect : Effects)
+	{
+		alDeleteEffects(1, &effect);
+	}
+
+	EffectSlots.clear();
+	Effects.clear();
+	EffectDefs.clear();
+	if (DryFilter)
+		alDeleteFilters(1, &DryFilter);
+	DryFilter = 0;
+	ReverbSlot = 0;
+	LastReverb.Instance = -1;
+
 	alcMakeContextCurrent(NULL);
 	alcDestroyContext(Context);
 	Context = NULL;
@@ -965,25 +1128,63 @@ OpenALSoundRenderer::~OpenALSoundRenderer()
 	Device = NULL;
 }
 
+
 void OpenALSoundRenderer::BackgroundProc()
 {
 	std::unique_lock<std::mutex> lock(StreamLock);
-	while(!QuitThread.load())
+
+	while (!QuitThread.load())
 	{
-		if(Streams.Size() == 0)
+		// Process streams
+		if (Streams.Size() == 0)
 		{
 			// If there's nothing to play, wait indefinitely.
 			StreamWake.wait(lock);
 		}
 		else
 		{
-			// Else, process all active streams and sleep for 100ms
-			for(size_t i = 0;i < Streams.Size();i++)
+
+			for (size_t i = 0; i < Streams.Size(); i++)
 				Streams[i]->Process();
+
 			StreamWake.wait_for(lock, std::chrono::milliseconds(100));
 		}
 	}
 }
+
+
+void OpenALSoundRenderer::BackgroundQueueProc()
+{
+	std::unique_lock<std::mutex> threadLocker(QueueThreadLock);
+
+	alcMakeContextCurrent(Context);
+
+	while (!QuitQueueThread)
+	{
+		bool played = false;
+
+		OpenALQueueItem playInfo;
+		while (PlayQueue.dequeue(playInfo)) {
+			if (playInfo.rolloff.RolloffType >= 0) StartSound3D(playInfo); else StartSound(playInfo);
+			played = true;
+
+			OpenALPlayedItem pl = {
+				playInfo.source,
+				AL_INITIAL,
+				playInfo.channum
+			};
+
+			// Get playing status, should be AL_PLAYING but not 100% of the time
+			alGetSourcei(playInfo.source, AL_SOURCE_STATE, &pl.state);
+			alGetError();	// Clear error status
+
+			PlayedQueue.queue(pl);
+		}
+
+		if (!played) QueueWake.wait_for(threadLocker, std::chrono::milliseconds(5));
+	}
+}
+
 
 void OpenALSoundRenderer::AddStream(OpenALSoundStream *stream)
 {
@@ -1013,16 +1214,38 @@ void OpenALSoundRenderer::SetSfxVolume(float volume)
 		if(schan->SysChannel != NULL)
 		{
 			ALuint source = GET_PTRID(schan->SysChannel);
+			SFXStatus *status = statusForSource(source);
+
 			volume = SfxVolume;
 
-			alDeferUpdatesSOFT();
-			alSourcef(source, AL_MAX_GAIN, volume);
-			alSourcef(source, AL_GAIN, volume * schan->Volume);
+			// Deferred updates are only used when the background play queue is not (Selaco uses it)
+			if (!g_SelacoMode) alDeferUpdatesSOFT();
+
+			if (!status || status->state != AL_INITIAL) {
+				alSourcef(source, AL_MAX_GAIN, volume);
+				alSourcef(source, AL_GAIN, volume * schan->Volume);
+			}
+			else {
+				//alProcessUpdatesSOFT();
+
+				// The sound is most likely being played right now
+				// Flush the queue and wait to see if it plays so we can stop it immediately
+				FlushPlayQueue();
+				UpdatePlayedSounds();
+
+				// Now the state may have changed, change volume
+				if (status->state != AL_INITIAL) {
+					//alDeferUpdatesSOFT();
+
+					alSourcef(source, AL_MAX_GAIN, volume);
+					alSourcef(source, AL_GAIN, volume * schan->Volume);
+				}
+			}
 		}
 		schan = schan->NextChan;
 	}
 
-	alProcessUpdatesSOFT();
+	if (!g_SelacoMode) alProcessUpdatesSOFT();
 
 	getALError();
 }
@@ -1261,12 +1484,12 @@ void OpenALSoundRenderer::UnloadSound(SoundHandle sfx)
 }
 
 
-SoundStream *OpenALSoundRenderer::CreateStream(SoundStreamCallback callback, int buffbytes, SampleType stype, ChannelConfig chans, int samplerate, void *userdata)
+SoundStream *OpenALSoundRenderer::CreateStream(SoundStreamCallback callback, int buffbytes, SampleType stype, ChannelConfig chans, int samplerate, void *userdata, FFloatCVarRef* volumeCVAR)
 {
-	if(StreamThread.get_id() == std::thread::id())
-		StreamThread = std::thread(std::mem_fn(&OpenALSoundRenderer::BackgroundProc), this);
+	/*if(StreamThread.get_id() == std::thread::id())
+		StreamThread = std::thread(std::mem_fn(&OpenALSoundRenderer::BackgroundProc), this);*/
 	OpenALSoundStream *stream = new OpenALSoundStream(this);
-	if (!stream->Init(callback, buffbytes, stype, chans, samplerate, userdata))
+	if (!stream->Init(callback, buffbytes, stype, chans, samplerate, userdata, volumeCVAR))
 	{
 		delete stream;
 		return NULL;
@@ -1274,43 +1497,254 @@ SoundStream *OpenALSoundRenderer::CreateStream(SoundStreamCallback callback, int
 	return stream;
 }
 
-FISoundChannel *OpenALSoundRenderer::StartSound(SoundHandle sfx, float vol, float pitch, int chanflags, FISoundChannel *reuse_chan, float startTime)
-{
-	if(FreeSfx.Size() == 0)
-	{
-		FSoundChan *lowest = FindLowestChannel();
-		if(lowest) StopChannel(lowest);
 
-		if(FreeSfx.Size() == 0)
+FISoundChannel *OpenALSoundRenderer::StartSound(SoundHandle sfx, float vol, float pitch, int chanflags, FISoundChannel *reuse_chan, float startTime, int effectID)
+{
+	ALuint source = 0;
+	bool usingReserved = reuse_chan && (reuse_chan->ChanFlags & CHANF_RESERVED);
+
+	// If we are reusing a channel that was reserved, use the reserved source
+	if (usingReserved) {
+		assert(reuse_chan->SysChannel != NULL);
+		source = GET_PTRID(reuse_chan->SysChannel);
+	}
+	else {
+		if (FreeSfx.Size() == 0)
+		{
+			FSoundChan* lowest = FindLowestChannel();
+			if (lowest) StopChannel(lowest);
+
+			if (FreeSfx.Size() == 0)
+				return NULL;
+		}
+
+		assert(SfxGroup.find(FreeSfx.Last()) == SfxGroup.end());	// Source should be unique!!
+
+		source = FreeSfx.Last();
+		FreeSfx.Pop();
+	}
+
+	OpenALQueueItem playInfo;
+
+	playInfo.sfx = sfx;
+	playInfo.vol = vol;
+	playInfo.priority = 0;
+	playInfo.startTime = startTime;
+	playInfo.chanflags = chanflags;
+	playInfo.buffer = GET_PTRID(sfx.data);
+	playInfo.source = source;
+	playInfo.reuseChan = !usingReserved && reuse_chan != nullptr && reuse_chan->StartTime != 0;
+	playInfo.chanStartTime = !usingReserved && reuse_chan ? reuse_chan->StartTime : 0;
+	playInfo.envSlot = EnvSlot;
+	playInfo.rolloff.RolloffType = -1;
+	playInfo.pitch = pitch;
+	playInfo.effectID = effectID;
+	playInfo.inWater = WasInWater;
+
+	SFXStatus status = {
+		playInfo.source, 
+		AL_INITIAL, 
+		!(chanflags&SNDF_NOREVERB), 
+		!(chanflags&SNDF_NOPAUSE), WasInWater
+	};
+
+	SfxGroup[playInfo.source] = status;
+
+	if (!g_SelacoMode)
+	{
+		// Start the sound right away (Selaco plays its sounds from a background thread instead)
+		if (!StartSound(playInfo))
+		{
+			SfxGroup.erase(source);
+			if (!usingReserved) FreeSfx.Push(source);
+			return NULL;
+		}
+		SfxGroup[source].state = AL_PLAYING;	// Not waiting for the play queue
+	}
+
+	FISoundChannel *chan = reuse_chan;
+	if (!chan) chan = soundEngine->GetChannel(MAKE_PTRID(playInfo.source));
+	else chan->SysChannel = MAKE_PTRID(playInfo.source);
+
+	chan->Rolloff.RolloffType = ROLLOFF_Log;
+	chan->Rolloff.RolloffFactor = 0.f;
+	chan->Rolloff.MinDistance = 1.f;
+	chan->DistanceSqr = 0.f;
+	chan->ManualRolloff = false;
+	chan->ChanFlags &= ~CHANF_RESERVED;
+
+	// Queue the play OP
+	if (g_SelacoMode) PlayQueue.queue(playInfo);
+
+	return chan;
+}
+
+
+FISoundChannel *OpenALSoundRenderer::ReserveChannel(int priority) {
+	if (FreeSfx.Size() == 0) {
+		FSoundChan* lowest = FindLowestChannel();
+		if (lowest)
+		{
+			if (lowest->Priority <= priority)
+				StopChannel(lowest);
+		}
+		if (FreeSfx.Size() == 0)
 			return NULL;
 	}
 
-	ALuint buffer = GET_PTRID(sfx.data);
 	ALuint source = FreeSfx.Last();
+	assert(SfxGroup.find(source) == SfxGroup.end());	// Source should be unique!!
+	
+	SFXStatus status = {
+		source,
+		AL_INITIAL,
+		false, false, false
+	};
+
+	SfxGroup[source] = status;
+	FreeSfx.Pop();
+
+	FISoundChannel* chan = soundEngine->GetChannel(MAKE_PTRID(source));
+	return chan;
+}
+
+
+FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener *listener, float vol,
+	FRolloffInfo *rolloff, float distscale, float pitch, int priority, const FVector3 &pos, const FVector3 &vel,
+	int channum, int chanflags, FISoundChannel *reuse_chan, float startTime, int effectID)
+{
+	float dist_sqr = (float)(pos - listener->position).LengthSquared();
+
+	ALuint source = 0;
+	bool usingReserved = reuse_chan && (reuse_chan->ChanFlags & CHANF_RESERVED);
+
+	// If we are reusing a channel that was reserved, use the reserved source
+	if (usingReserved) {
+		assert(reuse_chan->SysChannel != NULL);
+		source = GET_PTRID(reuse_chan->SysChannel);
+	}
+	else {
+		if (FreeSfx.Size() == 0)
+		{
+			FSoundChan* lowest = FindLowestChannel();
+			if (lowest)
+			{
+				if (lowest->Priority < priority || (lowest->Priority == priority &&
+					lowest->DistanceSqr > dist_sqr))
+					StopChannel(lowest);
+			}
+			if (FreeSfx.Size() == 0)
+				return NULL;
+		}
+
+		source = FreeSfx.Last();
+		assert(SfxGroup.find(source) == SfxGroup.end());	// Source should be unique!!
+		FreeSfx.Pop();
+	}
+
+	// Same rule as StartSound3D(OpenALQueueItem&): only Log, and Linear with AL_EXT_source_distance_model, are done by OpenAL itself
+	bool manualRolloff = !(rolloff->RolloffType == ROLLOFF_Log || (rolloff->RolloffType == ROLLOFF_Linear && AL.EXT_source_distance_model));
+
+	OpenALQueueItem playInfo;
+
+	ALuint buffer = GET_PTRID(sfx.data);
+
+	playInfo.sfx = sfx;
+	playInfo.pos = pos;
+	playInfo.vel = vel;
+	playInfo.dist_sqr = dist_sqr;
+	playInfo.vol = vol;
+	playInfo.priority = 0;
+	playInfo.startTime = startTime;
+	playInfo.chanflags = chanflags;
+	playInfo.buffer = buffer;
+	playInfo.source = source;
+	playInfo.reuseChan = !usingReserved && reuse_chan != nullptr && reuse_chan->StartTime != 0;
+	playInfo.chanStartTime = !usingReserved && reuse_chan ? reuse_chan->StartTime : 0;
+	playInfo.distscale = distscale;
+	playInfo.channum = channum;
+	playInfo.pitch = pitch;
+	playInfo.rolloff = *rolloff;
+	playInfo.inWater = WasInWater;
+	playInfo.envSlot = EnvSlot;
+	playInfo.priority = priority;
+	playInfo.effectID = effectID;
+
+	SFXStatus status = {
+		source,
+		AL_INITIAL,
+		!(chanflags&SNDF_NOREVERB),
+		!(chanflags&SNDF_NOPAUSE), WasInWater
+	};
+
+	SfxGroup[source] = status;
+
+	if (!g_SelacoMode)
+	{
+		// Start the sound right away (Selaco plays its sounds from a background thread instead)
+		if (!StartSound3D(playInfo))
+		{
+			SfxGroup.erase(source);
+			if (!usingReserved) FreeSfx.Push(source);
+			return NULL;
+		}
+		SfxGroup[source].state = AL_PLAYING;	// Not waiting for the play queue
+	}
+
+	FISoundChannel *chan = reuse_chan;
+	if (!chan) chan = soundEngine->GetChannel(MAKE_PTRID(source));
+	else chan->SysChannel = MAKE_PTRID(source);
+
+	chan->Rolloff = *rolloff;
+	chan->DistanceSqr = dist_sqr;
+	chan->ManualRolloff = manualRolloff;
+	chan->ChanFlags &= ~CHANF_RESERVED;
+
+	// Queue the sound on the bg thread
+	if (g_SelacoMode) PlayQueue.queue(playInfo);
+
+	return chan;
+}
+
+
+bool OpenALSoundRenderer::StartSound(OpenALQueueItem &playInfo)
+{
+	ALuint buffer = playInfo.buffer;
+	ALuint source = playInfo.source;
+
+	alGetError();
+
 	alSource3f(source, AL_POSITION, 0.f, 0.f, 0.f);
 	alSource3f(source, AL_VELOCITY, 0.f, 0.f, 0.f);
 	alSource3f(source, AL_DIRECTION, 0.f, 0.f, 0.f);
 	alSourcei(source, AL_SOURCE_RELATIVE, AL_TRUE);
 
-	alSourcei(source, AL_LOOPING, (chanflags&SNDF_LOOP) ? AL_TRUE : AL_FALSE);
+	alSourcei(source, AL_LOOPING, (playInfo.chanflags&SNDF_LOOP) ? AL_TRUE : AL_FALSE);
 
 	alSourcef(source, AL_REFERENCE_DISTANCE, 1.f);
 	alSourcef(source, AL_MAX_DISTANCE, 1000.f);
-	alSourcef(source, AL_DOPPLER_FACTOR, 0.f);
+	//alSourcef(source, AL_DOPPLER_FACTOR, 0.f);
 	alSourcef(source, AL_ROLLOFF_FACTOR, 0.f);
 	alSourcef(source, AL_MAX_GAIN, SfxVolume);
-	alSourcef(source, AL_GAIN, SfxVolume*vol);
-	if(AL.EXT_SOURCE_RADIUS)
+	alSourcef(source, AL_GAIN, SfxVolume*playInfo.vol);
+	if (AL.EXT_SOURCE_RADIUS)
 		alSourcef(source, AL_SOURCE_RADIUS, 0.f);
-	if(AL.SOFT_source_spatialize)
+	if (AL.SOFT_source_spatialize)
 		alSourcei(source, AL_SOURCE_SPATIALIZE_SOFT, AL_AUTO_SOFT);
 
-	if(EnvSlot)
+	ALuint envFilterDirect = AL_FILTER_NULL;
+	ALuint envFilterAux = AL_FILTER_NULL;
+
+	// Set environment
+	if (playInfo.envSlot)
 	{
-		if(!(chanflags&SNDF_NOREVERB))
+		if (!(playInfo.chanflags&SNDF_NOREVERB))
 		{
 			alSourcei(source, AL_DIRECT_FILTER, EnvFilters[0]);
-			alSource3i(source, AL_AUXILIARY_SEND_FILTER, EnvSlot, 0, EnvFilters[1]);
+			alSource3i(source, AL_AUXILIARY_SEND_FILTER, playInfo.envSlot, 0, EnvFilters[1]);
+
+			envFilterDirect = EnvFilters[0];
+			envFilterAux = EnvFilters[1];
 		}
 		else
 		{
@@ -1319,106 +1753,99 @@ FISoundChannel *OpenALSoundRenderer::StartSound(SoundHandle sfx, float vol, floa
 		}
 		alSourcef(source, AL_ROOM_ROLLOFF_FACTOR, 0.f);
 	}
-	if(WasInWater && !(chanflags&SNDF_NOREVERB))
-		alSourcef(source, AL_PITCH, pitch * PITCH_MULT);
+
+	// Set effects
+	if (playInfo.effectID >= 0 && playInfo.effectID < (int)EffectDefs.Size() && EffectDefs[playInfo.effectID].effectSlots.Size() > 0 && MaxAuxSends > 1)
+	{
+		const OpenALEffectDef& effectDef = EffectDefs[playInfo.effectID];
+		alSourcei(source, AL_DIRECT_FILTER, DryFilter);
+		alSource3i(source, AL_AUXILIARY_SEND_FILTER, effectDef.effectSlots[0], 0, envFilterDirect);
+
+		// @Cockatrice - Only route to the env effect slot (which is the reverb slot) if reverb isn't cancelled
+		if (!(playInfo.chanflags&SNDF_NOREVERB))
+			alSource3i(source, AL_AUXILIARY_SEND_FILTER, effectDef.envEffectSlots[0], 1, envFilterAux);
+		else
+			alSource3i(source, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 1, AL_FILTER_NULL);
+	}
+	else if (EnvSlot && MaxAuxSends > 1)
+	{
+		alSource3i(source, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 1, AL_FILTER_NULL);
+	}
+
+	// Adjust pitch
+	if (playInfo.inWater && !(playInfo.chanflags&SNDF_NOREVERB))
+		alSourcef(source, AL_PITCH, playInfo.pitch*PITCH_MULT);
 	else
-		alSourcef(source, AL_PITCH, pitch);
+		alSourcef(source, AL_PITCH, playInfo.pitch);
 	if(AL.SOFT_UHJ)
 		alSourcei(source, AL_STEREO_MODE_SOFT, AL_NORMAL_SOFT);
 	if(AL.SOFT_direct_channels_remix)
 		alSourcei(source, AL_DIRECT_CHANNELS_SOFT, AL_FALSE);
 
-	if(!reuse_chan || reuse_chan->StartTime == 0)
+	if (!playInfo.reuseChan)
 	{
-		float st = (chanflags&SNDF_LOOP) ? fmod(startTime, (float)GetMSLength(sfx) / 1000.f) : clamp<float>(startTime, 0.f, (float)GetMSLength(sfx) / 1000.f);
+		float st = (playInfo.chanflags&SNDF_LOOP) ? fmod(playInfo.startTime, (float)GetMSLength(playInfo.sfx) / 1000.f) : clamp<float>(playInfo.startTime, 0.f, (float)GetMSLength(playInfo.sfx) / 1000.f);
 		alSourcef(source, AL_SEC_OFFSET, st);
 	}
 	else
 	{
-		if((chanflags&SNDF_ABSTIME))
-			alSourcei(source, AL_SAMPLE_OFFSET, ALint(reuse_chan->StartTime));
+		if ((playInfo.chanflags&SNDF_ABSTIME))
+			alSourcei(source, AL_SAMPLE_OFFSET, ALint(playInfo.chanStartTime));
 		else
 		{
 			float offset = std::chrono::duration_cast<std::chrono::duration<float>>(
 				std::chrono::steady_clock::now().time_since_epoch() -
-				std::chrono::steady_clock::time_point::duration(reuse_chan->StartTime)
-			).count();
-			if(offset > 0.f) alSourcef(source, AL_SEC_OFFSET, offset);
+				std::chrono::steady_clock::time_point::duration(playInfo.chanStartTime)
+				).count();
+			if (offset > 0.f) alSourcef(source, AL_SEC_OFFSET, offset);
 		}
 	}
-	if(getALError() != AL_NO_ERROR)
+	if (getALError() != AL_NO_ERROR)
 		return NULL;
 
 	alSourcei(source, AL_BUFFER, buffer);
-	if((chanflags&SNDF_NOPAUSE) || !SFXPaused)
+
+	if((playInfo.chanflags&SNDF_NOPAUSE) || !SFXPaused)
 		alSourcePlay(source);
+
 	if(getALError() != AL_NO_ERROR)
 	{
 		alSourcei(source, AL_BUFFER, 0);
 		getALError();
-		return NULL;
+		return false;
 	}
 
-	if(!(chanflags&SNDF_NOREVERB))
-		ReverbSfx.Push(source);
-	if(!(chanflags&SNDF_NOPAUSE))
-		PausableSfx.Push(source);
-	SfxGroup.Push(source);
-	FreeSfx.Pop();
-
-	FISoundChannel *chan = reuse_chan;
-	if(!chan) chan = soundEngine->GetChannel(MAKE_PTRID(source));
-	else chan->SysChannel = MAKE_PTRID(source);
-
-	chan->Rolloff.RolloffType = ROLLOFF_Log;
-	chan->Rolloff.RolloffFactor = 0.f;
-	chan->Rolloff.MinDistance = 1.f;
-	chan->DistanceSqr = 0.f;
-	chan->ManualRolloff = false;
-
-	return chan;
+	return true;
 }
 
-FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener *listener, float vol,
-	FRolloffInfo *rolloff, float distscale, float pitch, int priority, const FVector3 &pos, const FVector3 &vel,
-	int channum, int chanflags, FISoundChannel *reuse_chan, float startTime)
-{
-	float dist_sqr = (float)(pos - listener->position).LengthSquared();
 
-	if(FreeSfx.Size() == 0)
-	{
-		FSoundChan *lowest = FindLowestChannel();
-		if(lowest)
-		{
-			if(lowest->Priority < priority || (lowest->Priority == priority &&
-											   lowest->DistanceSqr > dist_sqr))
-				StopChannel(lowest);
-		}
-		if(FreeSfx.Size() == 0)
-			return NULL;
-	}
+bool OpenALSoundRenderer::StartSound3D(OpenALQueueItem &playInfo)
+{
+	alGetError();	// Clear any uncaught errors
 
 	bool manualRolloff = true;
-	ALuint buffer = GET_PTRID(sfx.data);
-	ALuint source = FreeSfx.Last();
-	if(rolloff->RolloffType == ROLLOFF_Log)
+	ALuint buffer = playInfo.buffer;
+	ALuint source = playInfo.source;
+
+	if (playInfo.rolloff.RolloffType == ROLLOFF_Log)
 	{
-		if(AL.EXT_source_distance_model)
+		if (AL.EXT_source_distance_model)
 			alSourcei(source, AL_DISTANCE_MODEL, AL_INVERSE_DISTANCE);
-		alSourcef(source, AL_REFERENCE_DISTANCE, rolloff->MinDistance/distscale);
+		alSourcef(source, AL_REFERENCE_DISTANCE, playInfo.rolloff.MinDistance / playInfo.distscale);
 		alSourcef(source, AL_MAX_DISTANCE, std::numeric_limits<float>::max());
-		alSourcef(source, AL_ROLLOFF_FACTOR, rolloff->RolloffFactor);
+		alSourcef(source, AL_ROLLOFF_FACTOR, playInfo.rolloff.RolloffFactor);
 		manualRolloff = false;
 	}
-	else if(rolloff->RolloffType == ROLLOFF_Linear && AL.EXT_source_distance_model)
+	else if (playInfo.rolloff.RolloffType == ROLLOFF_Linear && AL.EXT_source_distance_model)
 	{
 		alSourcei(source, AL_DISTANCE_MODEL, AL_LINEAR_DISTANCE);
-		alSourcef(source, AL_REFERENCE_DISTANCE, rolloff->MinDistance/distscale);
-		alSourcef(source, AL_MAX_DISTANCE, rolloff->MaxDistance/distscale);
+		alSourcef(source, AL_REFERENCE_DISTANCE, playInfo.rolloff.MinDistance / playInfo.distscale);
+		alSourcef(source, AL_MAX_DISTANCE, playInfo.rolloff.MaxDistance / playInfo.distscale);
 		alSourcef(source, AL_ROLLOFF_FACTOR, 1.f);
 		manualRolloff = false;
 	}
-	if(manualRolloff)
+
+	if (manualRolloff)
 	{
 		// How manual rolloff works:
 		//
@@ -1441,11 +1868,11 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 		// The source's reference distance is then set according to the desired
 		// gain and effective distance from the listener, and OpenAL takes care
 		// of the rest.
-		if(AL.EXT_source_distance_model)
+		if (AL.EXT_source_distance_model)
 			alSourcei(source, AL_DISTANCE_MODEL, AL_INVERSE_DISTANCE);
 
-		float dist = sqrtf(dist_sqr);
-		float gain = GetRolloff(rolloff, dist * distscale);
+		float dist = sqrtf(playInfo.dist_sqr);
+		float gain = GetRolloff(&playInfo.rolloff, dist * playInfo.distscale);
 		// Don't let the ref distance go to 0, or else distance attenuation is
 		// lost with the inverse distance model.
 		alSourcef(source, AL_REFERENCE_DISTANCE, max<float>(gain*dist, 0.0004f));
@@ -1453,7 +1880,9 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 		alSourcef(source, AL_ROLLOFF_FACTOR, 1.f);
 	}
 
-	if(dist_sqr < (0.0004f*0.0004f))
+	getALError();
+
+	if (playInfo.dist_sqr < (0.0004f*0.0004f))
 	{
 		// Head relative
 		alSourcei(source, AL_SOURCE_RELATIVE, AL_TRUE);
@@ -1462,27 +1891,35 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 	else
 	{
 		alSourcei(source, AL_SOURCE_RELATIVE, AL_FALSE);
-		alSource3f(source, AL_POSITION, pos[0], pos[1], -pos[2]);
+		alSource3f(source, AL_POSITION, playInfo.pos[0], playInfo.pos[1], -playInfo.pos[2]);
 	}
-	alSource3f(source, AL_VELOCITY, vel[0], vel[1], -vel[2]);
+	alSource3f(source, AL_VELOCITY, playInfo.vel[0], playInfo.vel[1], -playInfo.vel[2]);
 	alSource3f(source, AL_DIRECTION, 0.f, 0.f, 0.f);
-	alSourcef(source, AL_DOPPLER_FACTOR, 0.f);
-	if(AL.EXT_SOURCE_RADIUS)
-		alSourcef(source, AL_SOURCE_RADIUS, (chanflags&SNDF_AREA) ? AREA_SOUND_RADIUS : 0.f);
+	//alSourcef(source, AL_DOPPLER_FACTOR, 0.f);
+	if (AL.EXT_SOURCE_RADIUS)
+		alSourcef(source, AL_SOURCE_RADIUS, (playInfo.chanflags&SNDF_AREA) ? AREA_SOUND_RADIUS : 0.f);
 
-	alSourcei(source, AL_LOOPING, (chanflags&SNDF_LOOP) ? AL_TRUE : AL_FALSE);
+	alSourcei(source, AL_LOOPING, (playInfo.chanflags&SNDF_LOOP) ? AL_TRUE : AL_FALSE);
 
 	alSourcef(source, AL_MAX_GAIN, SfxVolume);
-	alSourcef(source, AL_GAIN, SfxVolume*vol);
-	if(AL.SOFT_source_spatialize)
+	alSourcef(source, AL_GAIN, SfxVolume * playInfo.vol);
+	if (AL.SOFT_source_spatialize)
 		alSourcei(source, AL_SOURCE_SPATIALIZE_SOFT, AL_TRUE);
 
-	if(EnvSlot)
+	getALError();
+
+	ALuint envFilterDirect = AL_FILTER_NULL;
+	ALuint envFilterAux = AL_FILTER_NULL;
+
+	if (EnvSlot)
 	{
-		if(!(chanflags&SNDF_NOREVERB))
+		if (!(playInfo.chanflags & SNDF_NOREVERB))
 		{
 			alSourcei(source, AL_DIRECT_FILTER, EnvFilters[0]);
 			alSource3i(source, AL_AUXILIARY_SEND_FILTER, EnvSlot, 0, EnvFilters[1]);
+
+			envFilterDirect = EnvFilters[0];
+			envFilterAux = EnvFilters[1];
 		}
 		else
 		{
@@ -1491,41 +1928,70 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 		}
 		alSourcef(source, AL_ROOM_ROLLOFF_FACTOR, 0.f);
 	}
-	if(WasInWater && !(chanflags&SNDF_NOREVERB))
-		alSourcef(source, AL_PITCH, pitch * PITCH_MULT);
+
+	if (playInfo.inWater && !(playInfo.chanflags&SNDF_NOREVERB))
+		alSourcef(source, AL_PITCH, playInfo.pitch*PITCH_MULT);
 	else
-		alSourcef(source, AL_PITCH, pitch);
+		alSourcef(source, AL_PITCH, playInfo.pitch);
 	if(AL.SOFT_UHJ)
 		alSourcei(source, AL_STEREO_MODE_SOFT, AL_NORMAL_SOFT);
 	if(AL.SOFT_direct_channels_remix)
 		alSourcei(source, AL_DIRECT_CHANNELS_SOFT, AL_FALSE);
 
-	if(!reuse_chan || reuse_chan->StartTime == 0)
+	// Set effects
+	if (playInfo.effectID >= 0 && playInfo.effectID < (int)EffectDefs.Size() && EffectDefs[playInfo.effectID].effectSlots.Size() > 0 && MaxAuxSends > 1)
 	{
-		float sfxlength = (float)GetMSLength(sfx) / 1000.f;
-		float st = (chanflags & SNDF_LOOP)
-				? (sfxlength > 0 ? fmod(startTime, sfxlength) : 0)
-				: clamp<float>(startTime, 0.f, sfxlength);
+		const OpenALEffectDef& effectDef = EffectDefs[playInfo.effectID];
+		alSourcei(source, AL_DIRECT_FILTER, DryFilter);
+		alSourcef(source, AL_ROOM_ROLLOFF_FACTOR, 1.f);
+		alSource3i(source, AL_AUXILIARY_SEND_FILTER, effectDef.effectSlots[0], 0, envFilterDirect);
+		
+		// @Cockatrice - Only route to the env effect slot (which is the reverb slot) if reverb isn't cancelled
+		if (!(playInfo.chanflags&SNDF_NOREVERB))
+			alSource3i(source, AL_AUXILIARY_SEND_FILTER, effectDef.envEffectSlots[0], 1, envFilterAux);
+		else
+			alSource3i(source, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 1, AL_FILTER_NULL);
+
+		getALError();
+	}
+	else if (EnvSlot && MaxAuxSends > 1)
+	{
+		alSource3i(source, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 1, AL_FILTER_NULL);
+	}
+
+	getALError();
+
+	if (!playInfo.reuseChan)
+	{
+		float sfxlength = (float)GetMSLength(playInfo.sfx) / 1000.f;
+		float st = (playInfo.chanflags & SNDF_LOOP)
+			? (sfxlength > 0 ? fmod(playInfo.startTime, sfxlength) : 0)
+			: clamp<float>(playInfo.startTime, 0.f, sfxlength);
 		alSourcef(source, AL_SEC_OFFSET, st);
 	}
 	else
 	{
-		if((chanflags&SNDF_ABSTIME))
-			alSourcei(source, AL_SAMPLE_OFFSET, ALint(reuse_chan->StartTime));
+		if ((playInfo.chanflags&SNDF_ABSTIME))
+			alSourcei(source, AL_SAMPLE_OFFSET, ALint(playInfo.chanStartTime));
 		else
 		{
 			float offset = std::chrono::duration_cast<std::chrono::duration<float>>(
 				std::chrono::steady_clock::now().time_since_epoch() -
-				std::chrono::steady_clock::time_point::duration(reuse_chan->StartTime)
-			).count();
-			if(offset > 0.f) alSourcef(source, AL_SEC_OFFSET, offset);
+				std::chrono::steady_clock::time_point::duration(playInfo.chanStartTime)
+				).count();
+			if (offset > 0.f) alSourcef(source, AL_SEC_OFFSET, offset);
 		}
 	}
-	if(getALError() != AL_NO_ERROR)
+	if (getALError() != AL_NO_ERROR) {
+		// Temporary: Print more details about the error
+		Printf("AL Error, source: %d  pitch: %f  manual rolloff: %s", source, playInfo.pitch, manualRolloff ? "yes" : "no");
 		return NULL;
+	}
 
 	alSourcei(source, AL_BUFFER, buffer);
-	if((chanflags&SNDF_NOPAUSE) || !SFXPaused)
+	getALError();
+
+	if((playInfo.chanflags&SNDF_NOPAUSE) || !SFXPaused)
 		alSourcePlay(source);
 	if(getALError() != AL_NO_ERROR)
 	{
@@ -1534,32 +2000,22 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 		return NULL;
 	}
 
-	if(!(chanflags&SNDF_NOREVERB))
-		ReverbSfx.Push(source);
-	if(!(chanflags&SNDF_NOPAUSE))
-		PausableSfx.Push(source);
-	SfxGroup.Push(source);
-	FreeSfx.Pop();
-
-	FISoundChannel *chan = reuse_chan;
-	if(!chan) chan = soundEngine->GetChannel(MAKE_PTRID(source));
-	else chan->SysChannel = MAKE_PTRID(source);
-
-	chan->Rolloff = *rolloff;
-	chan->DistanceSqr = dist_sqr;
-	chan->ManualRolloff = manualRolloff;
-
-	return chan;
+	return true;
 }
+
 
 void OpenALSoundRenderer::ChannelVolume(FISoundChannel *chan, float volume)
 {
 	if(chan == NULL || chan->SysChannel == NULL)
 		return;
 
-	alDeferUpdatesSOFT();
+	if (!g_SelacoMode) alDeferUpdatesSOFT();	// Selaco: not with its background play queue
 
 	ALuint source = GET_PTRID(chan->SysChannel);
+	SFXStatus *status = statusForSource(source);
+
+	if (!status || status->state == AL_INITIAL) { return; }		// Sound is not yet playing on this source
+
 	alSourcef(source, AL_GAIN, SfxVolume * volume);
 }
 
@@ -1568,13 +2024,24 @@ void OpenALSoundRenderer::ChannelPitch(FISoundChannel *chan, float pitch)
 	if (chan == NULL || chan->SysChannel == NULL)
 		return;
 
-	alDeferUpdatesSOFT();
+	if (!g_SelacoMode) alDeferUpdatesSOFT();	// Selaco: not with its background play queue
 
 	ALuint source = GET_PTRID(chan->SysChannel);
-	if (WasInWater && !(chan->ChanFlags & CHANF_UI))
-		alSourcef(source, AL_PITCH, max(pitch, 0.0001f)*PITCH_MULT);
-	else
-		alSourcef(source, AL_PITCH, max(pitch, 0.0001f));
+	SFXStatus *s = statusForSource(source);
+
+	if (s && s->state != AL_INITIAL) {
+		if (s->wasInWater && !(chan->ChanFlags & CHANF_UI))
+			alSourcef(source, AL_PITCH, max(pitch, 0.0001f)*PITCH_MULT);
+		else
+			alSourcef(source, AL_PITCH, max(pitch, 0.0001f));
+	}
+}
+
+void OpenALSoundRenderer::FlushPlayQueue() {
+	QueueWake.notify_all();
+	while (!QuitQueueThread && PlayQueue.size()) {
+		std::this_thread::sleep_for(std::chrono::microseconds(10));
+	}
 }
 
 void OpenALSoundRenderer::StopChannel(FISoundChannel *chan)
@@ -1586,17 +2053,42 @@ void OpenALSoundRenderer::StopChannel(FISoundChannel *chan)
 	// Release first, so it can be properly marked as evicted if it's being killed
 	soundEngine->ChannelEnded(chan);
 
-	alSourceRewind(source);
-	alSourcei(source, AL_BUFFER, 0);
-	getALError();
+	// In the event that there is a queued play of this source, remove it
+	bool removedFromQueue = false;
+	PlayQueue.deleteSearch([&](OpenALQueueItem &item) {
+		if (item.source == source) {
+			removedFromQueue = true;
+			return true;
+		}
+		return false;
+	});
 
-	uint32_t i;
-	if((i=PausableSfx.Find(source)) < PausableSfx.Size())
-		PausableSfx.Delete(i);
-	if((i=ReverbSfx.Find(source)) < ReverbSfx.Size())
-		ReverbSfx.Delete(i);
-	if((i=SfxGroup.Find(source)) < SfxGroup.Size())
-		SfxGroup.Delete(i);
+	// Make sure we actually have a sound playing with this source
+	SFXStatus *status = statusForSource(source);
+	if (status) {
+		if (status->state != AL_INITIAL) {
+			alSourceRewind(source);
+			alSourcei(source, AL_BUFFER, 0);
+			getALError();
+		}
+		else if(!removedFromQueue) {
+			// The sound is most likely being played right now
+			// Flush the queue and wait to see if it plays so we can stop it immediately
+			FlushPlayQueue();
+			UpdatePlayedSounds();
+
+			alGetError();	// Clear errors
+
+			// Now the state may have changed, stop the sound if necessary
+			if (status->state != AL_INITIAL) {
+				alSourceRewind(source);
+				alSourcei(source, AL_BUFFER, 0);
+				getALError();
+			}
+		}
+	}
+
+	SfxGroup.erase(source);
 
 	if (!(chan->ChanFlags & CHANF_EVICTED))
 		soundEngine->SoundDone(chan);
@@ -1610,8 +2102,13 @@ unsigned int OpenALSoundRenderer::GetPosition(FISoundChannel *chan)
 	if(chan == NULL || chan->SysChannel == NULL)
 		return 0;
 
+	ALuint source = GET_PTRID(chan->SysChannel);
+	SFXStatus *status = statusForSource(source);
+
+	if (!status || status->state == AL_INITIAL) { return 0; }		// Sound is not yet playing on this source
+
 	ALint pos;
-	alGetSourcei(GET_PTRID(chan->SysChannel), AL_SAMPLE_OFFSET, &pos);
+	alGetSourcei(source, AL_SAMPLE_OFFSET, &pos);
 	if(getALError() == AL_NO_ERROR)
 		return pos;
 	return 0;
@@ -1622,7 +2119,7 @@ void OpenALSoundRenderer::SetSfxPaused(bool paused, int slot)
 {
 	int oldslots = SFXPaused;
 
-	if(paused)
+	/*if(paused)
 	{
 		SFXPaused |= 1 << slot;
 		if(oldslots == 0 && PausableSfx.Size() > 0)
@@ -1638,6 +2135,32 @@ void OpenALSoundRenderer::SetSfxPaused(bool paused, int slot)
 		if(SFXPaused == 0 && oldslots != 0 && PausableSfx.Size() > 0)
 		{
 			alSourcePlayv(PausableSfx.Size(), &PausableSfx[0]);
+			getALError();
+		}
+	}*/
+	if (paused)
+	{
+		SFXPaused |= 1 << slot;
+		if (oldslots == 0 && SfxGroup.size() > 0)
+		{
+			for (const auto &p : SfxGroup) {
+				if (p.second.canPause) alSourcePause(p.second.source);
+			}
+			
+			getALError();
+
+			PurgeStoppedSources();
+		}
+	}
+	else
+	{
+		SFXPaused &= ~(1 << slot);
+		if (SFXPaused == 0 && oldslots != 0 && SfxGroup.size() > 0)
+		{
+			for (const auto &p : SfxGroup) {
+				if (p.second.canPause) alSourcePlay(p.second.source);
+			}
+
 			getALError();
 		}
 	}
@@ -1673,31 +2196,33 @@ void OpenALSoundRenderer::Sync(bool sync)
 {
 	if(sync)
 	{
-		if(SfxGroup.Size() > 0)
+		if(SfxGroup.size() > 0)
 		{
-			alSourcePausev(SfxGroup.Size(), &SfxGroup[0]);
+			//alSourcePausev(SfxGroup.Size(), &SfxGroup[0]);
+			for (const auto &sfx : SfxGroup) {
+				if(sfx.second.state != AL_INITIAL) alSourcePause(sfx.second.source);
+			}
 			getALError();
 			PurgeStoppedSources();
 		}
 	}
 	else
 	{
-		// Might already be something to handle this; basically, get a vector
-		// of all values in SfxGroup that are not also in PausableSfx (when
-		// SFXPaused is non-0).
-		TArray<ALuint> toplay = SfxGroup;
-		if(SFXPaused)
-		{
-			uint32_t i = 0;
-			while(i < toplay.Size())
-			{
-				uint32_t p = PausableSfx.Find(toplay[i]);
-				if(p < PausableSfx.Size())
-					toplay.Delete(i);
-				else
-					i++;
+
+		TArray<ALuint> toplay(SfxGroup.size());
+		if(SFXPaused) {
+			for (const auto &sfx : SfxGroup) {
+				if (!sfx.second.canPause && sfx.second.state != AL_INITIAL) {
+					toplay.Push(sfx.second.source);
+				}
 			}
 		}
+		else {
+			for (const auto &sfx : SfxGroup) {
+				if(sfx.second.state != AL_INITIAL) toplay.Push(sfx.second.source);
+			}
+		}
+
 		if(toplay.Size() > 0)
 		{
 			alSourcePlayv(toplay.Size(), &toplay[0]);
@@ -1714,8 +2239,12 @@ void OpenALSoundRenderer::UpdateSoundParams3D(SoundListener *listener, FISoundCh
 	float dist_sqr = (float)(pos - listener->position).LengthSquared();
 	chan->DistanceSqr = dist_sqr;
 
-	alDeferUpdatesSOFT();
 	ALuint source = GET_PTRID(chan->SysChannel);
+	SFXStatus *status = statusForSource(source);
+
+	if (!status || status->state == AL_INITIAL) { return; }		// Sound is not yet playing on this source
+
+	if (!g_SelacoMode) alDeferUpdatesSOFT();	// Selaco: not with its background play queue
 
 	if(dist_sqr < (0.0004f*0.0004f))
 	{
@@ -1738,14 +2267,15 @@ void OpenALSoundRenderer::UpdateSoundParams3D(SoundListener *listener, FISoundCh
 	getALError();
 }
 
+
 void OpenALSoundRenderer::UpdateListener(SoundListener *listener)
 {
 	if(!listener->valid)
 		return;
 
-	alDeferUpdatesSOFT();
+	if (!g_SelacoMode) alDeferUpdatesSOFT();	// Selaco: not with its background play queue
 
-	float angle = listener->angle;
+	float angle = listener->angle == NAN || listener->angle == -INFINITY ? 0 : listener->angle;
 	ALfloat orient[6];
 	// forward
 	orient[0] = cosf(angle);
@@ -1765,32 +2295,62 @@ void OpenALSoundRenderer::UpdateListener(SoundListener *listener)
 							 -listener->velocity.Z);
 	getALError();
 
-	const ReverbContainer *env = ForcedEnvironment;
-	if(!env)
+	UpdateReverb(listener);
+}
+
+
+
+void OpenALSoundRenderer::UpdateReverb(SoundListener* listener) {
+	const ReverbContainer* env = ForcedEnvironment;
+	auto now = std::chrono::steady_clock::now();
+
+	if (!env)
 	{
 		env = listener->Environment;
-		if(!env)
+		if (!env)
 			env = DefaultEnvironments[0];
 	}
-	if(env != PrevEnvironment || env->Modified)
+	if (env != PrevEnvironment || env->Modified)
 	{
 		PrevEnvironment = env;
-		DPrintf(DMSG_NOTIFY, "Reverb Environment %s\n", env->Name);
+		
+		// Reverb environment interpolation is a Selaco feature; other games keep switching environments instantly
+		if (!g_SelacoMode || EnvSlot == 0 || *snd_interpeax <= 0 || LastReverb.Instance < 0 || level.time < 5) {
+			// Just replace the current environment
+			if (EnvSlot != 0) {
+				LoadReverb(env);
+			}
+			DPrintf(DMSG_NOTIFY, "Reverb Environment %s\n", env->Name);
 
-		if(EnvSlot != 0)
-			LoadReverb(env);
+			LastReverb = env->Properties;
+			LastReverb.Instance = 0;		// Using the unused Instance field as flag
+			CurrentReverb = env->Properties;
+			CurrentReverb.Instance = 1;
+			ReverbTransition = 1.0;
+		}
+		else {
+			DPrintf(DMSG_NOTIFY, "Starting transition to Reverb Environment %s (over %.2f seconds)\n", env->Name, (float)snd_interpeax);
+			TransitionTime = now;
+			ReverbTransition = 0;
+			LastReverb = CurrentReverb;
+			LastReverb.Instance = 0;
+			CurrentReverb = env->Properties;
+			CurrentReverb.Instance = 1;
+			reverbPosition = listener->position;
+		}
 
 		const_cast<ReverbContainer*>(env)->Modified = false;
 	}
 
 	// NOTE: Moving into and out of water will undo pitch variations on sounds.
-	if(listener->underwater || env->SoftwareWater)
+	// It will also kill any transitions currently being done
+	if (listener->underwater || env->SoftwareWater)
 	{
-		if(!WasInWater)
+		if (!WasInWater)
 		{
 			WasInWater = true;
 
-			if(EnvSlot != 0 && *snd_waterreverb)
+			if (EnvSlot != 0 && *snd_waterreverb)
 			{
 				// Find the "Underwater" reverb environment
 				env = S_FindEnvironment(0x1600);
@@ -1802,36 +2362,52 @@ void OpenALSoundRenderer::UpdateListener(SoundListener *listener)
 				alFilterf(EnvFilters[1], AL_LOWPASS_GAINHF, 1.f);
 
 				// Apply the updated filters on the sources
-				FSoundChan *schan = soundEngine->GetChannels();
+				FSoundChan* schan = soundEngine->GetChannels();
 				while (schan)
 				{
 					ALuint source = GET_PTRID(schan->SysChannel);
 					if (source && !(schan->ChanFlags & CHANF_UI))
 					{
-						alSourcei(source, AL_DIRECT_FILTER, EnvFilters[0]);
-						alSource3i(source, AL_AUXILIARY_SEND_FILTER, EnvSlot, 0, EnvFilters[1]);
+						SFXStatus* status = statusForSource(source);
+						if (status) {
+							status->wasInWater = true;
+
+							if (status->state != AL_INITIAL) {
+								alSourcei(source, AL_DIRECT_FILTER, EnvFilters[0]);
+								alSource3i(source, AL_AUXILIARY_SEND_FILTER, EnvSlot, 0, EnvFilters[1]);
+							}
+						}
 					}
 					schan = schan->NextChan;
 				}
 			}
 
-			FSoundChan *schan = soundEngine->GetChannels();
+			FSoundChan* schan = soundEngine->GetChannels();
 			while (schan)
 			{
 				ALuint source = GET_PTRID(schan->SysChannel);
-				if (source && !(schan->ChanFlags & CHANF_UI))
-					alSourcef(source, AL_PITCH, schan->Pitch * PITCH_MULT);
+				if (source && !(schan->ChanFlags & CHANF_UI)) {
+					SFXStatus* status = statusForSource(source);
+					if (status) {
+						status->wasInWater = true;
+
+						if (status->state != AL_INITIAL) {
+							alSourcef(source, AL_PITCH, schan->Pitch * PITCH_MULT);
+						}
+					}
+				}
+
 				schan = schan->NextChan;
 			}
 			getALError();
 		}
 	}
-	else if(WasInWater)
+	else if (WasInWater)
 	{
 
 		WasInWater = false;
 
-		if(EnvSlot != 0)
+		if (EnvSlot != 0)
 		{
 			LoadReverb(env);
 
@@ -1840,30 +2416,75 @@ void OpenALSoundRenderer::UpdateListener(SoundListener *listener)
 			alFilterf(EnvFilters[1], AL_LOWPASS_GAIN, 1.f);
 			alFilterf(EnvFilters[1], AL_LOWPASS_GAINHF, 1.f);
 
-			FSoundChan *schan = soundEngine->GetChannels();
+			FSoundChan* schan = soundEngine->GetChannels();
 			while (schan)
 			{
 				ALuint source = GET_PTRID(schan->SysChannel);
 				if (source && !(schan->ChanFlags & CHANF_UI))
 				{
-					alSourcei(source, AL_DIRECT_FILTER, EnvFilters[0]);
-					alSource3i(source, AL_AUXILIARY_SEND_FILTER, EnvSlot, 0, EnvFilters[1]);
+					SFXStatus* status = statusForSource(source);
+					if (status) {
+						status->wasInWater = false;
+
+						if (status->state != AL_INITIAL) {
+							alSourcei(source, AL_DIRECT_FILTER, EnvFilters[0]);
+							alSource3i(source, AL_AUXILIARY_SEND_FILTER, EnvSlot, 0, EnvFilters[1]);
+						}
+					}
 				}
 				schan = schan->NextChan;
 			}
 		}
 
-		FSoundChan *schan = soundEngine->GetChannels();
+
+		FSoundChan* schan = soundEngine->GetChannels();
 		while (schan)
 		{
 			ALuint source = GET_PTRID(schan->SysChannel);
-			if (source && !(schan->ChanFlags & CHANF_UI))
-				alSourcef(source, AL_PITCH, schan->Pitch);
+			if (source && !(schan->ChanFlags & CHANF_UI)) {
+				SFXStatus* status = statusForSource(source);
+				if (status) {
+					status->wasInWater = false;
+
+					if (status->state != AL_INITIAL) {
+						alSourcef(source, AL_PITCH, schan->Pitch);
+					}
+				}
+			}
+
 			schan = schan->NextChan;
 		}
 		getALError();
 	}
+
+	// Run the reverb transition if we can
+	if (ReverbTransition < 1.0) {
+		// Add time and distance to the transition
+		float elapsedTime = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(now - TransitionTime).count()) / 1000.0f;
+		FVector2 rp(reverbPosition.X, reverbPosition.Z), lp(listener->position.X, listener->position.Z);
+		float distance = (rp - lp).Length();
+
+		ReverbTransition = std::clamp(
+			std::max(elapsedTime / (float)snd_interpeax, distance / (float)snd_interpeax_maxdistance),
+			0.0f,
+			1.0f
+		);
+
+		// Interpolate the two environments and apply
+		InterpolateReverb(ReverbTransition);
+	}
 }
+
+
+// Called with StopAllSounds or whatever
+void OpenALSoundRenderer::ResetReverb() {
+	ReverbTransition = 1;
+	LastReverb = CurrentReverb;
+	LastReverb.Instance = -1;
+	CurrentReverb.Instance = 1;
+	PrevEnvironment = nullptr;
+}
+
 
 void OpenALSoundRenderer::UpdateSounds()
 {
@@ -1963,7 +2584,7 @@ FString OpenALSoundRenderer::GatherStats()
 	getALCError(Device);
 
 	uint32_t total = Sources.Size();
-	uint32_t used = SfxGroup.Size()+Streams.Size();
+	uint32_t used = ((uint32_t)SfxGroup.size()) + Streams.Size();
 	uint32_t unused = FreeSfx.Size();
 
 	out.Format("%u sources (" TEXTCOLOR_YELLOW"%u" TEXTCOLOR_NORMAL" active, " TEXTCOLOR_YELLOW"%u" TEXTCOLOR_NORMAL" free), Update interval: " TEXTCOLOR_YELLOW"%.1f" TEXTCOLOR_NORMAL"ms",
@@ -2004,30 +2625,195 @@ void OpenALSoundRenderer::PrintDriversList()
 	}
 }
 
+// Dequeue any finished sounds and set states accordingly
+void OpenALSoundRenderer::UpdatePlayedSounds() {
+	OpenALPlayedItem played;
+	while (PlayedQueue.dequeue(played)) {
+		SFXStatus *ss = statusForSource(played.source);
+		if (ss) {
+			ss->state = played.state;
+		}
+	}
+}
+
 void OpenALSoundRenderer::PurgeStoppedSources()
 {
-	// Release channels that are stopped
-	for(uint32_t i = 0;i < SfxGroup.Size();++i)
+	// Update played state for sounds that have played and not been checked
+	UpdatePlayedSounds();
+
+	// Gather channels that are stopped
+	// Since stopping a channel alters the map, we need to use a deferred list
+	TArray<FSoundChan *> stopChans;
+	for(auto &pp : SfxGroup)
 	{
-		ALuint src = SfxGroup[i];
-		ALint state = AL_INITIAL;
-		alGetSourcei(src, AL_SOURCE_STATE, &state);
-		if(state == AL_INITIAL || state == AL_PLAYING || state == AL_PAUSED)
+		SFXStatus &ss = pp.second;
+		ALuint &src = ss.source;
+		ALint &state = ss.state;
+
+		if (state == AL_INITIAL) continue;	 // We are currently waiting for the sound to play from the BG thread
+
+		ALint curstate = AL_INITIAL;
+		alGetSourcei(src, AL_SOURCE_STATE, &curstate);
+		if(curstate == AL_INITIAL || curstate == AL_PLAYING || curstate == AL_PAUSED)
+		{
+			if (curstate != AL_INITIAL) state = curstate;	// started while paused: not queued, keep it out of AL_INITIAL
 			continue;
+		}
+		state = curstate;
 
 		FSoundChan *schan = soundEngine->GetChannels();
 		while(schan)
 		{
-			if(schan->SysChannel != NULL && src == GET_PTRID(schan->SysChannel))
+			ALuint chan;
+			if(schan->SysChannel != NULL && src == (chan = GET_PTRID(schan->SysChannel)))
 			{
-				StopChannel(schan);
+				stopChans.Push(schan);
 				break;
 			}
 			schan = schan->NextChan;
 		}
 	}
+
 	getALError();
+
+	// Stop all the channels
+	for (auto sc : stopChans) {
+		StopChannel(sc);
+	}
 }
+
+
+// @Cockatrice - Configures the sound environment in ReverbSlot between LastReverb and CurrentReverb
+void OpenALSoundRenderer::InterpolateReverb(float tm) {
+	REVERB_PROPERTIES newProps;
+
+	if (tm >= 1.0) {
+		newProps = CurrentReverb;
+	}
+	else {
+		REVERB_PROPERTIES::Interpolate(LastReverb, CurrentReverb, tm, newProps);
+	}
+
+
+	bool loadOK = false;
+
+	if (!ReverbSlot && ReverbSlotEnabled) {
+		bool ok = false;
+
+		alGenEffects(1, &ReverbSlot);
+		if (getALError() == AL_NO_ERROR)
+		{
+			alEffecti(ReverbSlot, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
+			ok = (alGetError() == AL_NO_ERROR);
+			if (!ok)
+			{
+				alEffecti(ReverbSlot, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
+				ok = (alGetError() == AL_NO_ERROR);
+			}
+			if (!ok)
+			{
+				alEffecti(ReverbSlot, AL_EFFECT_TYPE, AL_EFFECT_NULL);
+				ok = (alGetError() == AL_NO_ERROR);
+			}
+			
+			if (!ok) {
+				alDeleteEffects(1, &ReverbSlot);
+				getALError();
+			}
+		}
+
+		if (!ok) {
+			// mark ReverbSlot as invalid so we don't keep trying to create it over and over
+			ReverbSlotEnabled = false;
+			DPrintf(DMSG_ERROR, "Reverb failed to initialize!\n");
+		} 
+
+		loadOK = ok;
+	}
+	else if (ReverbSlot) {
+		// Effect was already created on a previous call
+		loadOK = true;
+	}
+
+
+	if (loadOK) {
+		// We can proceed to set values
+		LoadReverbProps(ReverbSlot, newProps);
+	}
+}
+
+
+void OpenALSoundRenderer::LoadReverbProps(ALuint slot, const REVERB_PROPERTIES& props, bool apply) {
+	ALint type = AL_EFFECT_NULL;
+
+	alGetEffecti(slot, AL_EFFECT_TYPE, &type);
+#define mB2Gain(x) ((float)pow(10., (x)/2000.))
+	if (type == AL_EFFECT_EAXREVERB)
+	{
+		ALfloat reflectpan[3] = { props.ReflectionsPan0,
+								  props.ReflectionsPan1,
+								  props.ReflectionsPan2 };
+		ALfloat latepan[3] = { props.ReverbPan0, props.ReverbPan1,
+							   props.ReverbPan2 };
+#undef SETPARAM
+#define SETPARAM(e,t,v) alEffectf((e), AL_EAXREVERB_##t, clamp((v), AL_EAXREVERB_MIN_##t, AL_EAXREVERB_MAX_##t))
+		SETPARAM(slot, DIFFUSION, props.EnvDiffusion);
+		SETPARAM(slot, DENSITY, powf(props.EnvSize, 3.0f) * 0.0625f);
+		SETPARAM(slot, GAIN, mB2Gain(props.Room));
+		SETPARAM(slot, GAINHF, mB2Gain(props.RoomHF));
+		SETPARAM(slot, GAINLF, mB2Gain(props.RoomLF));
+		SETPARAM(slot, DECAY_TIME, props.DecayTime);
+		SETPARAM(slot, DECAY_HFRATIO, props.DecayHFRatio);
+		SETPARAM(slot, DECAY_LFRATIO, props.DecayLFRatio);
+		SETPARAM(slot, REFLECTIONS_GAIN, mB2Gain(props.Reflections));
+		SETPARAM(slot, REFLECTIONS_DELAY, props.ReflectionsDelay);
+		alEffectfv(slot, AL_EAXREVERB_REFLECTIONS_PAN, reflectpan);
+		SETPARAM(slot, LATE_REVERB_GAIN, mB2Gain(props.Reverb));
+		SETPARAM(slot, LATE_REVERB_DELAY, props.ReverbDelay);
+		alEffectfv(slot, AL_EAXREVERB_LATE_REVERB_PAN, latepan);
+		SETPARAM(slot, ECHO_TIME, props.EchoTime);
+		SETPARAM(slot, ECHO_DEPTH, props.EchoDepth);
+		SETPARAM(slot, MODULATION_TIME, props.ModulationTime);
+		SETPARAM(slot, MODULATION_DEPTH, props.ModulationDepth);
+		SETPARAM(slot, AIR_ABSORPTION_GAINHF, mB2Gain(props.AirAbsorptionHF));
+		SETPARAM(slot, HFREFERENCE, props.HFReference);
+		SETPARAM(slot, LFREFERENCE, props.LFReference);
+		SETPARAM(slot, ROOM_ROLLOFF_FACTOR, props.RoomRolloffFactor);
+		alEffecti(slot, AL_EAXREVERB_DECAY_HFLIMIT,
+			(props.Flags & REVERB_FLAGS_DECAYHFLIMIT) ? AL_TRUE : AL_FALSE);
+#undef SETPARAM
+	}
+	else if (type == AL_EFFECT_REVERB)
+	{
+#define SETPARAM(e,t,v) alEffectf((e), AL_REVERB_##t, clamp((v), AL_REVERB_MIN_##t, AL_REVERB_MAX_##t))
+		SETPARAM(slot, DIFFUSION, props.EnvDiffusion);
+		SETPARAM(slot, DENSITY, powf(props.EnvSize, 3.0f) * 0.0625f);
+		SETPARAM(slot, GAIN, mB2Gain(props.Room));
+		SETPARAM(slot, GAINHF, mB2Gain(props.RoomHF));
+		SETPARAM(slot, DECAY_TIME, props.DecayTime);
+		SETPARAM(slot, DECAY_HFRATIO, props.DecayHFRatio);
+		SETPARAM(slot, REFLECTIONS_GAIN, mB2Gain(props.Reflections));
+		SETPARAM(slot, REFLECTIONS_DELAY, props.ReflectionsDelay);
+		SETPARAM(slot, LATE_REVERB_GAIN, mB2Gain(props.Reverb));
+		SETPARAM(slot, LATE_REVERB_DELAY, props.ReverbDelay);
+		SETPARAM(slot, AIR_ABSORPTION_GAINHF, mB2Gain(props.AirAbsorptionHF));
+		SETPARAM(slot, ROOM_ROLLOFF_FACTOR, props.RoomRolloffFactor);
+		alEffecti(slot, AL_REVERB_DECAY_HFLIMIT,
+			(props.Flags & REVERB_FLAGS_DECAYHFLIMIT) ? AL_TRUE : AL_FALSE);
+#undef SETPARAM
+	}
+#undef mB2Gain
+	else {
+		Printf(TEXTCOLOR_RED"No effect type!\n");
+	}
+
+	if (apply) {
+		alAuxiliaryEffectSloti(EnvSlot, AL_EFFECTSLOT_EFFECT, slot);
+		getALError();
+	}
+}
+
+
 
 void OpenALSoundRenderer::LoadReverb(const ReverbContainer *env)
 {
@@ -2067,72 +2853,21 @@ void OpenALSoundRenderer::LoadReverb(const ReverbContainer *env)
 		}
 	}
 
-	if(doLoad)
+	if (doLoad)
 	{
-		const REVERB_PROPERTIES &props = env->Properties;
-		ALint type = AL_EFFECT_NULL;
-
-		alGetEffecti(*envReverb, AL_EFFECT_TYPE, &type);
-#define mB2Gain(x) ((float)pow(10., (x)/2000.))
-		if(type == AL_EFFECT_EAXREVERB)
-		{
-			ALfloat reflectpan[3] = { props.ReflectionsPan0,
-									  props.ReflectionsPan1,
-									  props.ReflectionsPan2 };
-			ALfloat latepan[3] = { props.ReverbPan0, props.ReverbPan1,
-								   props.ReverbPan2 };
-#undef SETPARAM
-#define SETPARAM(e,t,v) alEffectf((e), AL_EAXREVERB_##t, clamp((v), AL_EAXREVERB_MIN_##t, AL_EAXREVERB_MAX_##t))
-			SETPARAM(*envReverb, DIFFUSION, props.EnvDiffusion);
-			SETPARAM(*envReverb, DENSITY, powf(props.EnvSize, 3.0f) * 0.0625f);
-			SETPARAM(*envReverb, GAIN, mB2Gain(props.Room));
-			SETPARAM(*envReverb, GAINHF, mB2Gain(props.RoomHF));
-			SETPARAM(*envReverb, GAINLF, mB2Gain(props.RoomLF));
-			SETPARAM(*envReverb, DECAY_TIME, props.DecayTime);
-			SETPARAM(*envReverb, DECAY_HFRATIO, props.DecayHFRatio);
-			SETPARAM(*envReverb, DECAY_LFRATIO, props.DecayLFRatio);
-			SETPARAM(*envReverb, REFLECTIONS_GAIN, mB2Gain(props.Reflections));
-			SETPARAM(*envReverb, REFLECTIONS_DELAY, props.ReflectionsDelay);
-			alEffectfv(*envReverb, AL_EAXREVERB_REFLECTIONS_PAN, reflectpan);
-			SETPARAM(*envReverb, LATE_REVERB_GAIN, mB2Gain(props.Reverb));
-			SETPARAM(*envReverb, LATE_REVERB_DELAY, props.ReverbDelay);
-			alEffectfv(*envReverb, AL_EAXREVERB_LATE_REVERB_PAN, latepan);
-			SETPARAM(*envReverb, ECHO_TIME, props.EchoTime);
-			SETPARAM(*envReverb, ECHO_DEPTH, props.EchoDepth);
-			SETPARAM(*envReverb, MODULATION_TIME, props.ModulationTime);
-			SETPARAM(*envReverb, MODULATION_DEPTH, props.ModulationDepth);
-			SETPARAM(*envReverb, AIR_ABSORPTION_GAINHF, mB2Gain(props.AirAbsorptionHF));
-			SETPARAM(*envReverb, HFREFERENCE, props.HFReference);
-			SETPARAM(*envReverb, LFREFERENCE, props.LFReference);
-			SETPARAM(*envReverb, ROOM_ROLLOFF_FACTOR, props.RoomRolloffFactor);
-			alEffecti(*envReverb, AL_EAXREVERB_DECAY_HFLIMIT,
-					  (props.Flags&REVERB_FLAGS_DECAYHFLIMIT)?AL_TRUE:AL_FALSE);
-#undef SETPARAM
-		}
-		else if(type == AL_EFFECT_REVERB)
-		{
-#define SETPARAM(e,t,v) alEffectf((e), AL_REVERB_##t, clamp((v), AL_REVERB_MIN_##t, AL_REVERB_MAX_##t))
-			SETPARAM(*envReverb, DIFFUSION, props.EnvDiffusion);
-			SETPARAM(*envReverb, DENSITY, powf(props.EnvSize, 3.0f) * 0.0625f);
-			SETPARAM(*envReverb, GAIN, mB2Gain(props.Room));
-			SETPARAM(*envReverb, GAINHF, mB2Gain(props.RoomHF));
-			SETPARAM(*envReverb, DECAY_TIME, props.DecayTime);
-			SETPARAM(*envReverb, DECAY_HFRATIO, props.DecayHFRatio);
-			SETPARAM(*envReverb, REFLECTIONS_GAIN, mB2Gain(props.Reflections));
-			SETPARAM(*envReverb, REFLECTIONS_DELAY, props.ReflectionsDelay);
-			SETPARAM(*envReverb, LATE_REVERB_GAIN, mB2Gain(props.Reverb));
-			SETPARAM(*envReverb, LATE_REVERB_DELAY, props.ReverbDelay);
-			SETPARAM(*envReverb, AIR_ABSORPTION_GAINHF, mB2Gain(props.AirAbsorptionHF));
-			SETPARAM(*envReverb, ROOM_ROLLOFF_FACTOR, props.RoomRolloffFactor);
-			alEffecti(*envReverb, AL_REVERB_DECAY_HFLIMIT,
-					  (props.Flags&REVERB_FLAGS_DECAYHFLIMIT)?AL_TRUE:AL_FALSE);
-#undef SETPARAM
-		}
-#undef mB2Gain
+		LoadReverbProps(*envReverb, env->Properties, true);
+	}
+	else {
+		alAuxiliaryEffectSloti(EnvSlot, AL_EFFECTSLOT_EFFECT, *envReverb);
+		getALError();
 	}
 
-	alAuxiliaryEffectSloti(EnvSlot, AL_EFFECTSLOT_EFFECT, *envReverb);
-	getALError();
+	// Since we forced reverb here, clear out any transition info
+	LastReverb = env->Properties;
+	LastReverb.Instance = 0;		// Using the unused Instance field as flag
+	CurrentReverb = env->Properties;
+	CurrentReverb.Instance = 1;
+	ReverbTransition = 1.0;
 }
 
 FSoundChan *OpenALSoundRenderer::FindLowestChannel()
@@ -2141,7 +2876,7 @@ FSoundChan *OpenALSoundRenderer::FindLowestChannel()
 	FSoundChan *lowest = NULL;
 	while(schan)
 	{
-		if(schan->SysChannel != NULL)
+		if(schan->SysChannel != NULL && (schan->ChanFlags & CHANF_RESERVED) == 0)
 		{
 			if(!lowest || schan->Priority < lowest->Priority ||
 			   (schan->Priority == lowest->Priority &&

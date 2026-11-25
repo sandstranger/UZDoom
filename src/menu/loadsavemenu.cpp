@@ -35,6 +35,9 @@
 #include "v_video.h"
 #include "fs_findfile.h"
 #include "v_draw.h"
+#include "g_level.h"
+#include "cmdlib.h"
+#include "selaco.h"
 
 // Save name length limit for old binary formats.
 #define OLDSAVESTRINGSIZE		24
@@ -140,9 +143,39 @@ void FSavegameManager::ReadSaveStrings()
 
 		LastSaved = LastAccessed = -1;
 		quickSaveSlot = nullptr;
-		FileSys::FileList list;
-		if (FileSys::ScanDirectory(list, G_GetSavegamesFolder().GetChars(), "*." SAVEGAME_EXT, true))
+
+		TArray<FString> searchPaths;
+		searchPaths.Push(G_GetSavegamesFolder());
+		if (g_SelacoMode)
 		{
+			// @Cockatrice - Selaco also lists the savegames from all the other places GZSelaco may have saved to
+			TArray<FString> selacoPaths;
+			G_BuildSaveNames("", selacoPaths);
+			for (auto& path : selacoPaths)
+			{
+				FString fixedPath = path;
+				FixPathSeperator(fixedPath);
+				bool known = false;
+				for (auto& searchPath : searchPaths)
+				{
+					FString fixedSearchPath = searchPath;
+					FixPathSeperator(fixedSearchPath);
+					if (fixedSearchPath.CompareNoCase(fixedPath) == 0)
+					{
+						known = true;
+						break;
+					}
+				}
+				if (!known) searchPaths.Push(path);
+			}
+		}
+
+		for (auto& searchPath : searchPaths)
+		{
+			FileSys::FileList list;
+			if (!FileSys::ScanDirectory(list, searchPath.GetChars(), "*." SAVEGAME_EXT, true))
+				continue;
+
 			for (auto& entry : list)
 			{
 				std::unique_ptr<FResourceFile> savegame(FResourceFile::OpenResourceFile(entry.FilePath.c_str(), true));
@@ -167,6 +200,30 @@ void FSavegameManager::ReadSaveStrings()
 						FString title = arc.GetString("Title");
 						FString creationtime = arc.GetString("Creation Time");
 						FString uuid = arc.GetString("GameUUID");
+
+						// Selaco's savegame info
+						int32_t flags = 0;
+						arc("Flags", flags);
+
+						int date = 0;
+						arc("Save Date", date);
+
+						int elapsedTime = -1;
+						arc("Elapsed Time", elapsedTime);
+
+						int levelnum = -1;
+						arc("Level Number", levelnum);
+
+						if(levelnum == -1) {
+							// Try to load the wad, and determine the level number from that
+							FString map = arc.GetString("Current Map");
+							if (!map.IsEmpty()) {
+								auto *levelinfo = FindLevelInfo(map.GetChars(), false);
+								if(levelinfo != nullptr) {
+									levelnum = levelinfo->levelnum;
+								}
+							}
+						}
 
 						TArray<FString> allowLoadIn;
 
@@ -216,6 +273,10 @@ void FSavegameManager::ReadSaveStrings()
 						node->bMissingWads = missing;
 						node->SaveTitle = title;
 						node->CreationTime = creationtime;
+						node->saveDate = date;
+						node->saveFlags = flags;
+						node->elapsedTime = elapsedTime;
+						node->levelNum = levelnum;
 						InsertSaveNode(node);
 					}
 				}
@@ -223,6 +284,7 @@ void FSavegameManager::ReadSaveStrings()
 		}
 	}
 }
+
 
 //=============================================================================
 //
@@ -241,9 +303,9 @@ void FSavegameManager::PerformLoadGame(const char *fn, bool flag)
 //
 //=============================================================================
 
-void FSavegameManager::PerformSaveGame(const char *fn, const char *savegamestring)
+void FSavegameManager::PerformSaveGame(const char *fn, const char *savegamestring, int flags)
 {
-	G_SaveGame(fn, savegamestring);
+	G_SaveGame(fn, savegamestring, false, flags);
 }
 
 //=============================================================================
@@ -258,6 +320,9 @@ FString FSavegameManager::ExtractSaveComment(FSerializer &arc)
 
 	FString time = arc.GetString("Creation Time");
 	FString pcomment = arc.GetString("Comment");
+
+	// Selaco's save menu shows only the comment
+	if (g_SelacoMode) return pcomment;
 
 	comment = time;
 	if (time.Len() > 0) comment += "\n";

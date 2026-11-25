@@ -39,6 +39,7 @@
 #include "keydef.h"
 #include "m_haptics.h"
 #include "m_joy.h"
+#include "selaco.h"
 #include "tarray.h"
 #include "utf8.h"
 #include "v_video.h"
@@ -252,6 +253,22 @@ void I_SetMouseCapture()
 void I_ReleaseMouseCapture()
 {
 	SDL_CaptureMouse (SDL_FALSE);
+}
+
+void I_LockMouseToWindow() {
+	auto window = SDL_GetKeyboardFocus();
+	if(window == NULL)
+		return;
+
+	SDL_SetWindowGrab(window, SDL_TRUE);
+}
+
+void I_UnlockMouseFromWindow() {
+	auto window = SDL_GetKeyboardFocus();
+	if(window == NULL)
+		return;
+
+	SDL_SetWindowGrab(window, SDL_FALSE);
 }
 
 static void MouseRead ()
@@ -546,7 +563,43 @@ void MessagePump (const SDL_Event &sev)
 				event.subtype = EV_GUI_KeyRepeat;
 			}
 
-			switch (sev.key.keysym.sym)
+			if (g_SelacoMode)
+			{
+				// Selaco's extra GUI key mappings (modifier keys and the keypad in UI contexts)
+				switch (sev.key.keysym.sym)
+				{
+				case SDLK_CAPSLOCK:	event.data1 = GK_CAPSLOCK;	break;	// @Cockatrice Added Capslock key for Selaco
+				case SDLK_LSHIFT:
+				case SDLK_RSHIFT:	event.data1 = GK_SHIFT;		break;	// Added SHIFT for Selaco
+				case SDLK_LCTRL:
+				case SDLK_RCTRL:	event.data1 = GK_CTRL;		break;	// Added CTRL for Selaco
+				case SDLK_LALT:
+				case SDLK_RALT:		event.data1 = GK_MENU;		break;	// Added MENU/ALT for Selaco
+				// @fhomolka This is ugly
+				//           But it ensures expected behaviour in UI contexts
+				case SDLK_KP_0:     event.data1 = SDLK_0;       break;
+				case SDLK_KP_1:     event.data1 = SDLK_1;       break;
+				case SDLK_KP_2:     event.data1 = SDLK_2;       break;
+				case SDLK_KP_3:     event.data1 = SDLK_3;       break;
+				case SDLK_KP_4:     event.data1 = SDLK_4;       break;
+				case SDLK_KP_5:     event.data1 = SDLK_5;       break;
+				case SDLK_KP_6:     event.data1 = SDLK_6;       break;
+				case SDLK_KP_7:     event.data1 = SDLK_7;       break;
+				case SDLK_KP_8:     event.data1 = SDLK_8;       break;
+				case SDLK_KP_9:     event.data1 = SDLK_9;       break;
+				// @fhomolka If keypad broke the game, check the lines below
+				case SDLK_KP_PLUS:  event.data1 = SDLK_PLUS;    break;
+				case SDLK_KP_MINUS: event.data1 = SDLK_MINUS;   break;
+				case SDLK_KP_MULTIPLY: event.data1 = SDLK_ASTERISK;   break;
+				case SDLK_KP_DIVIDE: event.data1 = SDLK_SLASH;  break;
+				case SDLK_KP_PERIOD: event.data1 = SDLK_PERIOD; break;
+				case SDLK_KP_COMMA:  event.data1 = SDLK_COMMA;  break;
+				case SDLK_KP_EQUALS: event.data1 = SDLK_EQUALS; break;
+				default: break;
+				}
+			}
+
+			if (event.data1 == 0) switch (sev.key.keysym.sym)
 			{
 			case SDLK_KP_ENTER:	event.data1 = GK_RETURN;	break;
 			case SDLK_PAGEUP:	event.data1 = GK_PGUP;		break;

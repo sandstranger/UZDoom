@@ -102,6 +102,16 @@ CCMD(listlights)
 			*/
 
 		}
+
+		// @Cockatrice - Print player lights
+		if (Level->playerLights.Size() > 0) Printf("Player attached lights =============\n");
+		for (auto* dl : Level->playerLights) {
+			Printf("%s at (%f, %f, %f), color = 0x%02x%02x%02x, radius = %f %s %s\n",
+				dl->target->GetClass()->TypeName.GetChars(),
+				dl->X(), dl->Y(), dl->Z(), dl->GetRed(), dl->GetGreen(), dl->GetBlue(),
+				dl->radius, dl->IsAttenuated() ? "attenuated" : "", dl->IsShadowMapped() ? "shadowmapped" : "");
+		}
+
 		Printf("%i dynamic lights, %d shadowmapped, %d walls, %d sectors\n\n\n", i, shadowcount, allwalls, allsectors);
 	}
 }
@@ -379,6 +389,7 @@ CCMD(targetinv)
 CCMD(listmaps)
 {
 	int iwadNum = fileSystem.GetIwadNum();
+	bool all = argv.argc() > 1 && strcmp(argv[1], "all") == 0;
 
 	for (unsigned i = 0; i < wadlevelinfos.Size(); i++)
 	{
@@ -389,18 +400,33 @@ CCMD(listmaps)
 		{
 			int mapWadNum = fileSystem.GetFileContainer(map->lumpnum);
 
-			if (argv.argc() == 1
+			if (argv.argc() == 1 || all
 			    || CheckWildcards(argv[1], info->MapName.GetChars())
 			    || CheckWildcards(argv[1], info->LookupLevelName().GetChars())
 			    || CheckWildcards(argv[1], fileSystem.GetResourceFileName(mapWadNum)))
 			{
 				bool isFromPwad = mapWadNum != iwadNum;
-
 				const char* lineColor = isFromPwad ? TEXTCOLOR_LIGHTBLUE : "";
 
-				Printf("%s%s: '%s' (%s)\n", lineColor, info->MapName.GetChars(),
-					info->LookupLevelName().GetChars(),
-					fileSystem.GetResourceFileName(mapWadNum));
+				if (all) {
+					Printf("\n%s%s: '%s' (%s)\n\tLevelNum: %d\n\tAreaNum: %d\n\tCluster: %d\n",
+						lineColor,
+						info->MapName.GetChars(),
+						info->LookupLevelName().GetChars(),
+						fileSystem.GetResourceFileName(mapWadNum),
+						info->levelnum,
+						info->areaNum,
+						info->cluster
+					);
+				}
+				else {
+					Printf("%s%s: '%s' (%s)\n",
+						lineColor,
+						info->MapName.GetChars(),
+						info->LookupLevelName().GetChars(),
+						fileSystem.GetResourceFileName(mapWadNum)
+					);
+				}
 			}
 			delete map;
 		}

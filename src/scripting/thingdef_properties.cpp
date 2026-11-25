@@ -836,6 +836,17 @@ DEFINE_PROPERTY(stencilcolor, C, Actor)
 //==========================================================================
 //
 //==========================================================================
+DEFINE_PROPERTY(selfLighting, C, Actor)
+{
+	PROP_COLOR_PARM(color, 0, &bag.ScriptPosition);
+
+	defaults->selfLighting = color;
+	defaults->selfLighting.a = 0;
+}
+
+//==========================================================================
+//
+//==========================================================================
 DEFINE_PROPERTY(bloodcolor, C, Actor)
 {
 	PROP_COLOR_PARM(color, 0, &bag.ScriptPosition);
@@ -1287,6 +1298,12 @@ DEFINE_CLASS_PROPERTY(defaultkickback, 0, Weapon)
 	defaults->IntVar(NAME_Kickback) = gameinfo.defKickback;
 }
 
+// (Selaco's WeaponBase: the same property for its alias class)
+DEFINE_CLASS_PROPERTY(defaultkickback, 0, WeaponBase)
+{
+	defaults->IntVar(NAME_Kickback) = gameinfo.defKickback;
+}
+
 //==========================================================================
 //
 //==========================================================================
@@ -1306,10 +1323,34 @@ DEFINE_CLASS_PROPERTY(bobstyle, S, Weapon)
 	defaults->IntVar(NAME_BobStyle) = (int)styles[match];
 }
 
+// (Selaco's WeaponBase: the same property for its alias class)
+DEFINE_CLASS_PROPERTY(bobstyle, S, WeaponBase)
+{
+	static const char *names[] = { "Normal", "Inverse", "Alpha", "InverseAlpha", "Smooth", "InverseSmooth", NULL };
+	static const EBobStyle styles[] = { EBobStyle::BobNormal,
+		EBobStyle::BobInverse, EBobStyle::BobAlpha, EBobStyle::BobInverseAlpha,
+		EBobStyle::BobSmooth, EBobStyle::BobInverseSmooth, };
+	PROP_STRING_PARM(id, 0);
+	int match = MatchString(id, names);
+	if (match < 0)
+	{
+		I_Error("Unknown bobstyle %s", id);
+		match = 0;
+	}
+	defaults->IntVar(NAME_BobStyle) = (int)styles[match];
+}
+
 //==========================================================================
 //
 //==========================================================================
 DEFINE_CLASS_PROPERTY(preferredskin, S, Weapon)
+{
+	PROP_STRING_PARM(str, 0);
+	// NoOp - only for Skulltag compatibility
+}
+
+// (Selaco's WeaponBase: the same property for its alias class)
+DEFINE_CLASS_PROPERTY(preferredskin, S, WeaponBase)
 {
 	PROP_STRING_PARM(str, 0);
 	// NoOp - only for Skulltag compatibility

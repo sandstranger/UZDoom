@@ -39,9 +39,15 @@
 #include "image.h"
 #include "s_soundinternal.h"
 #include "i_time.h"
+#include "v_video.h"
+#include "hw_material.h"
 
 #include "maps.h"
 #include "types.h"
+
+#include "version.h"
+#include "info.h"
+#include "sprites.h"
 
 static ZSMap<FName, DObject*> AllServices;
 
@@ -426,6 +432,10 @@ static int CheckForTexture(const FString& name, int type, int flags)
 	return TexMan.CheckForTexture(name.GetChars(), static_cast<ETextureType>(type), flags).GetIndex();
 }
 
+static int FindTextures(const FString& search, TArray<FTextureID> *out, int type, int flags) {
+	return TexMan.FindTextures(search.GetChars(), out, static_cast<ETextureType>(type), flags);
+}
+
 DEFINE_ACTION_FUNCTION_NATIVE(_TexMan, CheckForTexture, CheckForTexture)
 {
 	PARAM_PROLOGUE;
@@ -433,6 +443,74 @@ DEFINE_ACTION_FUNCTION_NATIVE(_TexMan, CheckForTexture, CheckForTexture)
 	PARAM_INT(type);
 	PARAM_INT(flags);
 	ACTION_RETURN_INT(CheckForTexture(name, type, flags));
+}
+
+
+DEFINE_ACTION_FUNCTION_NATIVE(_TexMan, FindTextures, FindTextures)
+{
+	PARAM_PROLOGUE;
+	PARAM_STRING(search);
+	PARAM_POINTER(out, TArray<FTextureID>);
+	PARAM_INT(type);
+	PARAM_INT(flags);
+	ACTION_RETURN_INT(FindTextures(search, out, type, flags));
+}
+
+extern void hw_unloadTexture(FGameTexture *tex);
+
+DEFINE_ACTION_FUNCTION(_TexMan, UnloadTexture)
+{
+	PARAM_PROLOGUE;
+	PARAM_INT(texid);
+	
+	auto tex = TexMan.GameByIndex(texid, false);
+	hw_unloadTexture(tex);
+	ACTION_RETURN_INT(1);
+}
+
+void UnloadTexture(const FString& textureName)
+{
+	if (FGameTexture* tex = TexMan.GetGameTextureByName(textureName.GetChars(), true))
+	{
+		hw_unloadTexture(tex);
+	}
+}
+
+void UnloadSpriteFrames(const FString& spriteName, const FString& frames, bool unloadAngles)
+{
+	std::string textureName = std::string(spriteName.GetChars()) + "fx";
+	int frameLoc = spriteName.Len();
+	int angleLoc = frameLoc + 1;
+
+	for (size_t i = 0; i < frames.Len(); i++)
+	{
+		textureName[frameLoc] = frames[i];
+
+		if (unloadAngles)
+		{
+			for (char x = '0'; x <= '8'; x++)
+			{
+				textureName[angleLoc] = x;
+				UnloadTexture(textureName);
+			}
+		}
+		else
+		{
+			textureName[angleLoc] = '0';
+			UnloadTexture(textureName);
+		}
+	}
+}
+
+DEFINE_ACTION_FUNCTION(_TexMan, UnloadSpriteFrames)
+{
+	PARAM_PROLOGUE;
+	PARAM_STRING(spriteName);
+	PARAM_STRING(frames);
+	PARAM_BOOL(unloadAngles)
+
+	UnloadSpriteFrames(spriteName, frames, unloadAngles);
+	ACTION_RETURN_INT(1);
 }
 
 //==========================================================================
@@ -585,6 +663,42 @@ DEFINE_ACTION_FUNCTION(_TexMan, GetCanvas)
 	PARAM_INT(type);
 	PARAM_INT(flags);
 	ACTION_RETURN_POINTER(GetTextureCanvas(texturename, static_cast<ETextureType>(type), flags));
+}
+
+
+
+EXTERN_CVAR(Bool, gl_texture_thread);
+
+static int MakeReady(int texid, int translation) {
+
+	if (!gl_texture_thread || !screen->SupportsBackgroundCache()) return 1;
+
+	auto tex = TexMan.GameByIndex(texid);
+	if (tex == NULL) return 1;
+
+	int scaleflags = 0;
+	FMaterial* gltex = FMaterial::ValidateTexture(tex, scaleflags, false);
+	if (!gltex || !gltex->IsHardwareCached(translation)) {
+		if (gltex) {
+			screen->BackgroundCacheMaterial(gltex, FTranslationID::fromInt(translation), true);  // TODO: Prevent calling this every time the sprite wants to render, it's incredibly wasteful
+		}
+		else {
+			screen->BackgroundCacheTextureMaterial(tex, FTranslationID::fromInt(translation), scaleflags, true);
+		}
+
+		return 0;
+	}
+
+	return 1;
+}
+
+// @cockatrice - UI Function to preload and test a texture upload
+DEFINE_ACTION_FUNCTION_NATIVE(_TexMan, MakeReady, MakeReady)
+{
+	PARAM_PROLOGUE;
+	PARAM_INT(texid);
+	PARAM_INT(translation);
+	ACTION_RETURN_INT(MakeReady(texid, translation));
 }
 
 //=====================================================================================
@@ -866,6 +980,27 @@ DEFINE_ACTION_FUNCTION_NATIVE(FFont, GetChar, ::GetChar)
 //
 //==========================================================================
 
+DEFINE_ACTION_FUNCTION(_Wads, GetNumWads)
+{
+	PARAM_PROLOGUE;
+	ACTION_RETURN_INT(fileSystem.GetNumWads());
+}
+
+
+DEFINE_ACTION_FUNCTION(_Wads, GetWadName)
+{
+	PARAM_PROLOGUE;
+	PARAM_INT(wadnum);
+	ACTION_RETURN_STRING(fileSystem.GetWadName(wadnum));
+}
+
+DEFINE_ACTION_FUNCTION(_Wads, HasMods)
+{
+	PARAM_PROLOGUE;
+	ACTION_RETURN_BOOL(fileSystem.HasExtraWads());
+}
+
+
 DEFINE_ACTION_FUNCTION(_Wads, GetNumLumps)
 {
 	PARAM_PROLOGUE;
@@ -949,6 +1084,13 @@ DEFINE_ACTION_FUNCTION(_Wads, GetLumpNamespace)
 	PARAM_PROLOGUE;
 	PARAM_INT(lump);
 	ACTION_RETURN_INT(fileSystem.GetFileNamespace(lump));
+}
+
+DEFINE_ACTION_FUNCTION(_Wads, GetLumpWadNum)
+{
+	PARAM_PROLOGUE;
+	PARAM_INT(lump);
+	ACTION_RETURN_INT(fileSystem.GetFileContainer(lump));
 }
 
 DEFINE_ACTION_FUNCTION(_Wads, ReadLump)

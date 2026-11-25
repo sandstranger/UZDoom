@@ -42,6 +42,9 @@
 #include <zmusic.h>
 #include "filereadermusicinterface.h"
 
+
+EXTERN_CVAR(Float, snd_mastervolume)
+
 class MoviePlayer
 {
 protected:
@@ -92,7 +95,7 @@ public:
 		SampleRate = srate;
 		FrameSize = channels * ((sampletype == MusicSamples16bit) ? sizeof(int16_t) : sizeof(float));
 		int bufsize = 40 * SampleRate / 1000 * FrameSize;
-		AudioStream = S_CreateCustomStream(bufsize, SampleRate, channels, sampletype, callback, ptr);
+		AudioStream = S_CreateCustomStream(bufsize, SampleRate, channels, sampletype, callback, ptr, &snd_mastervolume);
 		return !!AudioStream;
 	}
 

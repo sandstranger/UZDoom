@@ -333,12 +333,19 @@ public:
 	bool WorldRailgunPreFired(FName damageType, PClassActor* pufftype, FRailParams* param);
 	void WorldHitscanFired(AActor* actor, const DVector3& AttackPos, const DVector3& DamagePosition, AActor* Inflictor, int flags);
 	void WorldRailgunFired(AActor* actor, const DVector3& AttackPos, const DVector3& DamagePosition, AActor* Inflictor, int flags);
-	void WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate);
-	void WorldLineActivated(line_t* line, AActor* actor, int activationType);
+	void WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate, DVector3 pos);
+	void WorldLineActivated(line_t* line, AActor* actor, int activationType, DVector3 pos);
 	int WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius);
 	int WorldLineDamaged(line_t* line, AActor* source, int damage, FName damagetype, int side, DVector3 position, bool isradius);
 	void WorldLightning();
 	void WorldTick();
+	FString GetSavegameTitle(int type, int &order); // @Cockatrice - Check for a title to apply to an automatic save (quicksave/autosave), the highest priority title will be used. Returns empty string to use default naming scheme.
+	FString GetSavegameComment(int &order);			// @Cockatrice - Static handlers can append custom data to savegame comments, sorted by order
+	int32_t GetSavegameFlags(bool quicksave, bool autosave);  // @Cockatrice - Static handlers can set flags that get saved with the savegame, which can be used to indicate various things about the save, this is not used in engine but only in script
+	bool IsSaveAllowed(bool quicksave);			// @Cockatrice - Callback to check if game saving is allowed at this moment
+	void PreSave(int saveType);					// @Cockatrice - Called immediately before a save, allowing managers to alter the world before saving
+	void PostSave(int saveType);				// @Cocaktrice - Called immediately after a save
+	bool HandleError(int errorType, FString engineErrMsg);		// @Cockatrice - Give the script a chance to handle a fatal error more gracefully than a console dump
 
 	//
 	void RenderFrame();
@@ -366,6 +373,13 @@ public:
 	//
 	void CheckReplacement(PClassActor* replacee, PClassActor** replacement, bool* final);
 	void CheckReplacee(PClassActor** replacee, PClassActor* replacement, bool* final);
+
+	// 
+	void StatsEvent(FString name, FString text, bool isAchievement, double value = 1);
+
+	//
+	bool SkillShouldChange(int oldSkill, int newSkill);
+	void SkillChanged(int oldSkill, int newSkill);
 
 	//
 	void NewGame();
@@ -450,6 +464,13 @@ struct FConsoleEvent
 	bool IsManual;
 };
 
+struct FStatsEvent
+{
+	FString Name, Text;
+	bool IsAchievement;
+	double Value;
+};
+
 struct FReplaceEvent
 {
 	PClassActor* Replacee;
@@ -463,6 +484,17 @@ struct FReplacedEvent
 	PClassActor* Replacement;
 	bool IsFinal;
 };
+
+
+enum EventManagerError {
+	ERR_UNKNOWN			= 0,
+	ERR_UNKNOWN_ABORT	= 1,
+	ERR_LOADGAME		= 2,
+	ERR_MISSINGMAP		= 3,
+	ERR_LOADOBJECTS		= 4,
+	ERR_SAVEGAMEVERSION = 5
+};
+
 
 struct EventManager
 {
@@ -517,9 +549,9 @@ struct EventManager
 	// called before AActor::Destroy of each actor.
 	void WorldThingDestroyed(AActor* actor);
 	// called in P_ActivateLine before executing special, set shouldactivate to false to prevent activation.
-	void WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate);
+	void WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate, DVector3 *optpos);
 	// called in P_ActivateLine after successful special execution.
-	void WorldLineActivated(line_t* line, AActor* actor, int activationType);
+	void WorldLineActivated(line_t* line, AActor* actor, int activationType, DVector3 *optpos);
 	// called in P_DamageSector and P_DamageLinedef before receiving damage to the sector. returns actual damage
 	int WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius);
 	// called in P_DamageLinedef before receiving damage to the linedef. returns actual damage
@@ -528,6 +560,18 @@ struct EventManager
 	void WorldLightning();
 	// this executes on every tick, before everything, only when in valid level and not paused
 	void WorldTick();
+	// @Cockatrice - Check all static event handlers for an auto-generated name for an automatic save (quicksave/autosave), the highest priority title will be used. Returns empty string to use default naming scheme.
+	FString GetSavegameTitle(int type);
+	// @Cockatrice - Get a compilation of comments from all static event handlers for the savegame text
+	FString GetSavegameComments();
+	int32_t GetSavegameFlags(bool quicksave, bool autosave);
+	// @Cockatrice - Check if any event handler is preventing save games from happening
+	bool IsSaveAllowed(bool quicksave);
+	// @Cockatrice - Save callbacks
+	void PreSave(int saveType);
+	void PostSave(int saveType);
+	bool HandleError(int errorType, FString errMsg);
+
 	// this executes on every tick on UI side, always
 	void UiTick();
 	// this executes on every tick on UI side, always AND immediately after everything else
@@ -564,6 +608,13 @@ struct EventManager
 
 	// called on new game
 	void NewGame();
+
+	void Stat(FString name, FString text, bool isAchievement, double value);
+	
+	// @Cockatrice - A request to change skill has been made
+	// Return false to cancel
+	void SkillChanged(int oldSkill, int newSkill);
+	bool SkillShouldChange(int oldSkill, int newSkill);
 
 	// send networked event. unified function.
 	bool SendNetworkEvent(FString name, int arg1, int arg2, int arg3, bool manual);

@@ -166,6 +166,9 @@ public:
 	EJoyCurve GetAxisResponseCurve(int axis);
 	float GetAxisResponseCurvePoint(int axis, int point);
 
+	float GetAxis(int axis);
+	float GetRawAxis(int axis);
+
 	void SetAxisDeadZone(int axis, float deadzone);
 	void SetAxisScale(int axis, float scale);
 	void SetAxisDigitalThreshold(int axis, float threshold);
@@ -1051,6 +1054,27 @@ float FDInputJoystick::GetAxisResponseCurvePoint(int axis, int point)
 	}
 	return Axes[axis].ResponseCurve.pts[point];
 }
+
+float FDInputJoystick::GetAxis(int axis) {
+	if (unsigned(axis) >= Axes.Size())
+	{
+		return 0;
+	}
+
+	return Axes[axis].Value;
+}
+
+
+
+float FDInputJoystick::GetRawAxis(int axis) {
+	if (unsigned(axis) >= Axes.Size())
+	{
+		return 0;
+	}
+
+	return Axes[axis].Value;
+}
+
 
 //===========================================================================
 //

@@ -35,6 +35,7 @@
 #include "c_cvars.h"
 #include "version.h"
 #include "common/scripting/dap/GameEventEmit.h"
+#include "selaco.h"
 
 #ifdef HAVE_VM_JIT
 #ifdef __DragonFly__
@@ -842,11 +843,21 @@ CVMAbortException::CVMAbortException(EVMAbortException reason, const char *morei
 // Print this only once on the first catch block.
 void CVMAbortException::MaybePrintMessage()
 {
+	if (printedMessage) return;
 	auto m = GetMessage();
 	if (m != nullptr)
 	{
 		Printf(static_cast<PrintFlag>(PRINT_NONOTIFY | PRINT_BOLD), TEXTCOLOR_RED "%s\n", m);
-		SetMessage("");
+		if (g_SelacoMode)
+		{
+			// GZSelaco keeps the message so that StaticEventManager.HandleError() can still present it after
+			// it was printed here; printedMessage makes sure it is printed only once.
+			printedMessage = true;
+		}
+		else
+		{
+			SetMessage("");
+		}
 	}
 }
 

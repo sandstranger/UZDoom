@@ -115,7 +115,7 @@ int HWDrawInfo::SetupLightsForOtherPlane(subsector_t * sub, FDynLightData &light
 			iter_dlightf++;
 
 			p.Set(plane->Normal(), plane->fD());
-			draw_dlightf += GetLight(lightdata, sub->sector->PortalGroup, p, light, true);
+			draw_dlightf += GetLight(lightdata, sub->sector->PortalGroup, p, light, true, Viewpoint.TicFrac);
 		}
 
 		return screen->mLights->UploadLights(lightdata);

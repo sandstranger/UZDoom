@@ -297,10 +297,10 @@ struct TVector2
 	TAngle<vec_t> Angle() const;
 
 	// Returns a rotated vector. angle is in degrees.
-	TVector2 Rotated (double angle) const
+	TVector2 Rotated (vec_t angle) const
 	{
-		double cosval = g_cosdeg (angle);
-		double sinval = g_sindeg (angle);
+		vec_t cosval = (vec_t)g_cosdeg(angle);
+		vec_t sinval = (vec_t)g_sindeg(angle);
 		return TVector2(X*cosval - Y*sinval, Y*cosval + X*sinval);
 	}
 
@@ -1817,6 +1817,8 @@ inline TMatrix3x3<T>::TMatrix3x3(const TVector3<T> &axis, TAngle<T> degrees)
 	Cells[2][1] = T(              u  + sx );
 	Cells[2][2] = T(     (t-txx-tyy) + c  );
 }
+
+typedef TVector2<int>		IVector2;
 
 typedef TVector2<float>		FVector2;
 typedef TVector3<float>		FVector3;

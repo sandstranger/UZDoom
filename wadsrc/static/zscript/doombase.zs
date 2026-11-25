@@ -43,6 +43,9 @@ extend struct _
 
 	native readonly Array<@EpisodeInfo> AllEpisodes;
 	native readonly Array<@SkillInfo> AllSkills;
+
+	// True while the loaded IWAD is Selaco. Gates Selaco-specific behaviour of engine classes.
+	native readonly bool SelacoMode;
 }
 
 struct EpisodeInfo native
@@ -205,10 +208,13 @@ extend class Object
 		return a, b;
 	}
 	deprecated("4.3", "Use S_StartSound() instead") native static void S_Sound (Sound sound_id, int channel, float volume = 1, float attenuation = ATTN_NORM, float pitch = 0.0, float startTime = 0.0);
-	native static void S_StartSound (Sound sound_id, int channel, int flags = 0, float volume = 1, float attenuation = ATTN_NORM, float pitch = 0.0, float startTime = 0.0);
+	native static SoundHandle S_StartSound (Sound sound_id, int channel, int flags = 0, float volume = 1, float attenuation = ATTN_NORM, float pitch = 0.0, float startTime = 0.0);
+	native static SoundHandle S_StartSoundEffect (Sound sound_id, string effect, int channel, int flags = 0, float volume = 1, float attenuation = ATTN_NORM, float pitch = 0.0, float startTime = 0.0);
+	native static void S_StopSound (int channel, Sound sound_id = -1);
 	native static void S_StartSoundAt(Vector3 pos, Sound sound_id, int channel, int flags = 0, double volume = 1, double attenuation = ATTN_NORM, double pitch = 0.0, double startTime = 0.0);
 	native static void S_PauseSound (bool notmusic, bool notsfx);
 	native static void S_ResumeSound (bool notsfx);
+	native static void S_SoundPitch(int channel, float pitch = 1.0);
 	native static bool S_ChangeMusic(String music_name, int order = 0, bool looping = true, bool force = false);
 	native static float S_GetLength(Sound sound_id);
 	native static void MarkSound(Sound snd);
@@ -242,6 +248,9 @@ class Thinker : Object native play
 		STAT_MAPMARKER,							// Map marker actors
 		STAT_DLIGHT,							// Dynamic lights
 
+		STAT_SLEEP = 60,						// Pool of sleepers, don't add to this without Sleep()
+		STAT_SLEEP_FOREVER = 61,				// Pool of indefinite sleepers. Adding to this pool is OK.
+
 		STAT_USER = 70,
 		STAT_USER_MAX = 90,
 
@@ -262,6 +271,12 @@ class Thinker : Object native play
 	native void AddToTravellingList();
 	native void ChangeStatNum(int stat);
 	native clearscope int GetStatNum() const;
+
+	// Selaco: thinker sleeping
+	virtual native void Sleep(int tics);
+	virtual native bool ShouldWake();
+	virtual native void Wake();
+	virtual native void SleepIndefinite();
 
 	static clearscope int Tics2Seconds(int tics)
 	{
@@ -423,7 +438,9 @@ struct DropItem native
 struct LevelInfo native
 {
 	native readonly int levelnum;
+	native readonly int levelgroup, areaNum;		// Selaco
 	native readonly String MapName;
+	native readonly String Description;			// Selaco
 	native readonly String NextMap;
 	native readonly String NextSecretMap;
 	native readonly String SkyPic1;
@@ -433,6 +450,9 @@ struct LevelInfo native
 	native readonly int cluster;
 	native readonly int partime;
 	native readonly int sucktime;
+	native readonly int invasiontier;			// Selaco
+	native readonly int minTechModules;			// Selaco
+	native readonly double tilt, tiltAngle;		// Selaco
 	native readonly int flags;
 	native readonly int flags2;
 	native readonly int flags3;
@@ -527,6 +547,7 @@ struct LevelLocals native
 	native readonly int cluster;
 	native readonly int clusterflags;
 	native readonly int levelnum;
+	native readonly int levelgroup, areaNum;		// Selaco
 	native readonly String LevelName;
 	native readonly String MapName;
 	native String NextMap;
@@ -550,6 +571,9 @@ struct LevelLocals native
 	native int found_items;
 	native int total_monsters;
 	native int killed_monsters;
+	native int invasiontier;					// Selaco
+	native readonly int minTechModules;			// Selaco
+	native double tilt, tiltAngle;				// Selaco
 	native play double gravity;
 	native play double aircontrol;
 	native play double airfriction;
@@ -566,6 +590,9 @@ struct LevelLocals native
 	native readonly bool polygrind;
 	native readonly bool nomonsters;
 	native readonly bool allowrespawn;
+	native readonly bool rainymap;				// Selaco
+	native readonly bool windymap;				// Selaco
+	native readonly bool saferoom;				// Selaco
 	deprecated("3.8", "Use Level.isFrozen() instead") native bool frozen;
 	native readonly bool infinite_flight;
 	native readonly bool no_dlg_freeze;
@@ -592,6 +619,7 @@ struct LevelLocals native
 	native void StartSlideshow(Name whichone = 'none');
 	native static void MakeScreenShot();
 	native static void MakeAutoSave();
+	native static bool MakeQuickSave();			// Selaco
 	native void WorldDone();
 	deprecated("3.8", "This function does nothing") static void RemoveAllBots(bool fromlist) { /* intentionally left as no-op. */ }
 	native ui Vector2 GetAutomapPosition();
@@ -668,6 +696,12 @@ struct LevelLocals native
 	native clearscope void SpawnParticle(FSpawnParticleParams p);
 	native play VisualThinker SpawnVisualThinker(Class<VisualThinker> type);
 	native clearscope VisualThinker SpawnClientSideVisualThinker(Class<VisualThinker> type);
+
+	// Selaco
+	native void StartNewGame(int episode, int skill = -1, string className = "", string levelName = "");
+	native void ReturnToTitle();
+	native void QuitGame();
+	native void SetNewSkill(int newSkill);
 
 	clearscope native static bool WorldPaused(bool checkLag = false);
 }

@@ -24,6 +24,7 @@
 #include "c_cvars.h"
 #include "v_video.h"
 #include "shaderuniforms.h"
+#include "selaco.h"
 
 
 CVAR(Bool, gl_customshader, true, 0);
@@ -50,6 +51,10 @@ FMaterial::FMaterial(FGameTexture * tx, int scaleflags)
 	auto imgtex = tx->GetTexture();
 	mTextureLayers.Push({ imgtex, scaleflags });
 
+	if (scaleflags & CTF_ReduceQuality) {
+		mTextureLayers[0].scaleFlags |= CTF_ReduceQuality;
+	}
+
 	if (tx->GetUseType() == ETextureType::SWCanvas && static_cast<FWrapperTexture*>(imgtex)->GetColorFormat() == 0)
 	{
 		mShaderIndex = SHADER_Paletted;
@@ -65,6 +70,19 @@ FMaterial::FMaterial(FGameTexture * tx, int scaleflags)
 		{
 			mShaderIndex = tx->GetShaderIndex();
 		}
+
+		// @Cockatrice - Hack to add a brightmap onto a camera/canvas texture
+		// [Selaco] gated: this changes the shader used for canvas textures that have a brightmap.
+		if (g_SelacoMode && tx->GetBrightmap())
+		{
+			auto placeholder = TexMan.GetPlaceholderTexture();
+			mTextureLayers.Push({ placeholder->GetTexture(), 0 });
+			mTextureLayers.Push({ placeholder->GetTexture(), 0 });
+			mTextureLayers.Push({ tx->Brightmap.get(), scaleflags });
+			mLayerFlags |= TEXF_Brightmap;
+			mShaderIndex = SHADER_Specular;
+		}
+
 		// no additional layers for cameratexture
 	}
 	else
@@ -146,7 +164,8 @@ FMaterial::FMaterial(FGameTexture * tx, int scaleflags)
 	mScaleFlags = scaleflags;
 
 	mTextureLayers.ShrinkToFit();
-	tx->Material[scaleflags] = this;
+	int index = scaleflags & ~CTF_ReduceQuality;
+	tx->Material[index] = this;
 }
 
 //===========================================================================
@@ -188,6 +207,37 @@ IHardwareTexture* FMaterial::GetLayer(int i, int translation, MaterialLayerInfo*
 	return nullptr;
 }
 
+
+//===========================================================================
+//
+// @Cockatrice - Check if all layers have been successfully hardware cached
+// We don't create the hwtex here because if it hasn't already been created, it's not loaded
+//
+//===========================================================================
+
+
+bool FMaterial::IsHardwareCached(int translation) {
+	if (mScaleFlags & CTF_Indexed) translation = -1;
+
+	MaterialLayerInfo *hwt = &mTextureLayers[0];
+	IHardwareTexture *ihwt = nullptr;
+
+	if (hwt->layerTexture) {
+		ihwt = hwt->layerTexture->SystemTextures.GetHardwareTexture(translation, hwt->scaleFlags);
+		if(!ihwt || !ihwt->IsValid(0)) return false;
+	}
+
+	for (unsigned int i = 1; i < mTextureLayers.Size(); i++) {
+		hwt = &mTextureLayers[i];
+		if (hwt->layerTexture) {
+			ihwt = hwt->layerTexture->SystemTextures.GetHardwareTexture(0, hwt->scaleFlags);
+			if (!ihwt || !ihwt->IsValid(i)) return false;
+		}
+	}
+
+	return true;
+}
+
 //==========================================================================
 //
 // Gets a texture from the texture manager and checks its validity for
@@ -201,10 +251,14 @@ FMaterial * FMaterial::ValidateTexture(FGameTexture * gtex, int scaleflags, bool
 	{
 		if (scaleflags & CTF_Indexed) scaleflags = CTF_Indexed;
 		if (!gtex->expandSprites()) scaleflags &= ~CTF_Expand;
+		
+		FMaterial* hwtex;
+		hwtex = gtex->Material[scaleflags & ~CTF_ReduceQuality];
 
-		FMaterial *hwtex = gtex->Material[scaleflags];
 		if (hwtex == NULL && create)
 		{
+			if (shouldScaleQuality(gtex)) scaleflags |= CTF_ReduceQuality;
+
 			hwtex = screen->CreateMaterial(gtex, scaleflags);
 		}
 		return hwtex;

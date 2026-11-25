@@ -28,6 +28,7 @@
 #include "flatvertices.h"
 #include "hw_renderstate.h"
 #include "texturemanager.h"
+#include "selaco.h"
 
 //==========================================================================
 //
@@ -57,10 +58,30 @@ void HWDecal::DrawDecal(HWDrawInfo *di, FRenderState &state)
 	{
 		double x, y;
 		decal->GetXY(decal->Side, x, y);
-		LightProbe *probe = FindLightProbe(di->Level, x, y, decal->GetRealZ(decal->Side) * 0.5);
-		if (probe)
+
+		if (g_SelacoMode)
 		{
-			state.SetDynLight(probe->Red, probe->Green, probe->Blue);
+			// (Selaco: light probes with light groups, applied as their own color)
+			// We use the normal to nudge out the LightProbe sample location, so it's less likely to be in a wall
+			FVector3 n = Normal * di->Level->LPCellSize;
+
+			FVector3 probeColor;
+			if (TryGetLightProbeColor(di->Level, x + n.X, y + n.Y, decal->GetRealZ(decal->Side), probeColor))
+			{
+				state.SetLightProbe(probeColor.X, probeColor.Y, probeColor.Z);
+			}
+			else
+			{
+				state.SetLightProbe(0, 0, 0);
+			}
+		}
+		else
+		{
+			LightProbe *probe = FindLightProbe(di->Level, x, y, decal->GetRealZ(decal->Side) * 0.5);
+			if (probe)
+			{
+				state.SetDynLight(probe->Red, probe->Green, probe->Blue);
+			}
 		}
 	}
 
@@ -121,6 +142,7 @@ void HWDecal::DrawDecal(HWDrawInfo *di, FRenderState &state)
 	state.SetObjectColor(0xffffffff);
 	state.SetFog(fc, -1);
 	state.SetDynLight(0, 0, 0);
+	state.SetLightProbe(0, 0, 0);
 }
 
 //==========================================================================
@@ -186,6 +208,7 @@ void HWWall::DrawDecalsForMirror(HWDrawInfo *di, FRenderState &state, TArray<HWD
 //
 //
 //==========================================================================
+EXTERN_CVAR(Bool, gl_texture_thread);
 
 void HWWall::ProcessDecal(HWDrawInfo *di, DBaseDecal *decal, const FVector3 &normal)
 {
@@ -210,6 +233,41 @@ void HWWall::ProcessDecal(HWDrawInfo *di, DBaseDecal *decal, const FVector3 &nor
 	auto texture = TexMan.GetGameTexture(decalTile);
 	if (texture == NULL) return;
 
+	// @Cockatrice - If this texture is not loaded, and we are able to BG load it, try to render this sprites last frame instead
+	// Also load the texture
+	FTextureID lastPatch = decal->LastPatch;
+	if (gametic - primaryLevel->starttime > 2 &&	// On the first tic or so, do not use the background loader to avoid pop-in
+		decalTile != lastPatch &&						// only if this is a new frame
+		gl_texture_thread &&
+		screen->SupportsBackgroundCache()) {
+
+		int scaleflags = CTF_ReduceQuality;
+		if (shouldUpscale(texture, UF_Sprite)) scaleflags |= CTF_Upscale;
+
+		FMaterial * gltex = FMaterial::ValidateTexture(texture, scaleflags, false);
+		if (!gltex || !gltex->IsHardwareCached(decal->Translation.index())) {
+			if (gltex) {
+				screen->BackgroundCacheMaterial(gltex, decal->Translation, true);  // TODO: Prevent calling this every time the sprite wants to render, it's incredibly wasteful
+			}
+			else {
+				screen->BackgroundCacheTextureMaterial(texture, decal->Translation, scaleflags, true);
+			}
+
+			// Last ditch, grab the last rendered patch from this sprite
+			if (lastPatch.isValid()) {
+				decalTile = lastPatch;
+				texture = TexMan.GetGameTexture(decalTile, false);
+				if (texture == NULL || !texture->isValid()) return;
+			}
+			else {
+				return;
+			}
+		}
+
+		// If the bg cache func fails, we can't bg load the patch so just move on to the normal render path and load in the main thread
+	}
+
+	decal->LastPatch = decalTile;
 
 	// the sectors are only used for their texture origin coordinates
 	// so we don't need the fake sectors for deep water etc.

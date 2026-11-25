@@ -58,6 +58,7 @@ enum ESoundFlags
 	CHANF_SINGULAR = 0x20000,	// Only start if no sound of this name is already playing.
 	CHANF_RUMBLE = 0x40000,		// Hint to rumble trigger rumble from sound
 	CHANF_NORUMBLE = 0x80000,	// Disable rumble even if it would normally happen
+	CHANF_NOREVERB = 0x200000,	// Selaco: no reverb, passes on SNDF_NOREVERB
 
 	CHANF_LOOPING = CHANF_LOOP | CHANF_NOSTOP, // convenience value for replicating the old 'looping' boolean.
 };
@@ -336,6 +337,7 @@ struct TexMan
 	};
 
 	native static TextureID CheckForTexture(String name, int usetype = Type_Any, int flags = TryAny);
+	native static int FindTextures(String name, out Array<TextureID> output, int usetype = Type_Any, int flags = TryAny);
 	native static String GetName(TextureID tex);
 	native static int, int GetSize(TextureID tex);
 	native static Vector2 GetScaledSize(TextureID tex);
@@ -344,6 +346,28 @@ struct TexMan
 	native static bool OkForLocalization(TextureID patch, String textSubstitute);
 	native static bool UseGamePalette(TextureID tex);
 	native static Canvas GetCanvas(String texture, int usetype = Type_Wall, int flags = 0);
+
+	// Selaco: checks and loads (in background when available) texture. Returns TRUE if fully loaded OR if unloadable/null. Returns FALSE when waiting for load.
+	// Will not function correctly with animated textures
+	native static ui bool MakeReady(TextureID tex, int translation = 0);
+	native static ui bool UnloadTexture(TextureID tex);		// Experimental, used to unload things that are no longer needed, especially in the UI
+
+	native static bool UnloadSpriteFrames(String spriteName, String frames, bool unloadAngles = false);
+}
+
+// SoundHandleStruct: Function holder for SoundHandle type, since SoundHandle is just an INT pseudo-type (Selaco)
+// There is deliberately no way to check the status of a playing sound outside the UI,
+// since that could easily desync a game just by changing out a sound effect.
+struct SoundHandleStruct native
+{
+	native clearscope void SetVolume(float volume);
+	native clearscope void SetPitch(float pitch);
+	native clearscope void StopSound();
+
+	// The first time you play a sound IsPlaying() may not return true because it has to be loaded
+	// in the background first. Only once the sound finishes loading and starts actually playing
+	// will IsPlaying() return true.
+	native clearscope bool IsPlaying();
 }
 
 /*
@@ -448,6 +472,7 @@ enum DrawTextureTags
 	DTA_RenderStyle,	// same as render style for actors
 	DTA_ColorOverlay,	// DWORD: ARGB to overlay on top of image; limited to black for software
 	DTA_Internal1,
+	DTA_Filtering = DTA_Internal1,	// Selaco: bool, apply linear/bilinear filtering depending on texture
 	DTA_Internal2,
 	DTA_Desaturate,		// explicit desaturation factor (does not do anything in Legacy OpenGL)
 	DTA_Fullscreen,		// Draw image fullscreen (same as DTA_VirtualWidth/Height with graphics size.)
@@ -574,6 +599,8 @@ struct Screen native
 	native static int GetWidth();
 	native static int GetHeight();
 	native static Vector2 GetTextScreenSize();
+	native static int GetWindowWidth();
+	native static int GetWindowHeight();
 	native static void Clear(int left, int top, int right, int bottom, Color color, int palcolor = -1);
 	native static void Dim(Color col, double amount, int x, int y, int w, int h, ERenderStyle style = STYLE_Translucent);
 
@@ -606,6 +633,16 @@ struct Screen native
 	native static double GetTextureHeight(TextureID texture, bool animated = false);
 	native static double GetTextureLeftOffset(TextureID texture, bool animated = false);
 	native static double GetTextureTopOffset(TextureID texture, bool animated = false);
+
+	// Selaco
+	native static void SetCursor(String texName = "None");
+	native static ui void CloseAutomap();
+	native static ui void ToggleAutomap();
+
+	// Only works in Vulkan right now.
+	// Returns number of devices found, and fills the devices array with device names in the same order as internal
+	native static ui int GetDeviceList(out Array<String> devices);
+	native static ui int GetScreenList(out Array<String> screens);
 }
 
 struct Font native
@@ -939,6 +976,12 @@ struct Wads	// todo: make FileSystem an alias to 'Wads'
 	native static int GetLumpContainer(int lump);
 	native static string GetContainerName(int lump);
 	native static string GetLumpFullPath(int lump);
+
+	// Selaco
+	native static int GetLumpWadNum(int lump);
+	native static int GetNumWads();
+	native static string GetWadName(int wadnum);
+	native static bool HasMods();
 }
 
 enum EmptyTokenType
@@ -996,6 +1039,10 @@ struct StringStruct native unsafe(internal)
 
 	native bool IsEmpty() const; // strcmp
 	native bool IsNotEmpty() const; // stricmp
+
+	// Selaco
+	native bool WriteOut(String filePath);
+	native bool ReadIn(String filePath);
 }
 
 struct Translation version("2.4")
@@ -1086,4 +1133,15 @@ class ScriptScanner native
 // this struct does not exist. It is just a type for being referenced by an opaque pointer.
 struct VMFunction native version("4.10")
 {
+}
+
+// Selaco: global dictionary saved to an external file
+struct Globals native play
+{
+	native static clearscope string, bool Get(string key);
+	native static clearscope int, bool GetInt(string key);
+	native static clearscope int GetKeys(out Array<string> keys);
+	native static void Set(string key, string value);
+	native static void SetInt(string key, int value);
+	native static void Save();
 }

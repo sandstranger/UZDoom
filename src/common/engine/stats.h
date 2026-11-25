@@ -198,7 +198,7 @@ public:
 	}
 
 private:
-	double Sec;
+	double Sec = 0;
 };
 
 #endif
@@ -305,7 +305,7 @@ public:
 	}
 
 private:
-	int64_t Counter;
+	int64_t Counter = 0;
 };
 
 #endif

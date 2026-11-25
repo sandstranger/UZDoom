@@ -40,6 +40,7 @@
 #include "zcc_parser.h"
 #include "zcc_compile_doom.h"
 #include "r_vanillatrans.h"
+#include "selaco.h"
 
 // EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
 void InitThingdef();
@@ -475,6 +476,23 @@ void LoadActors()
 
 	if (FScriptPosition::ErrorCounter > 0)
 	{
+		if (g_SelacoMode)
+		{
+			// @Cockatrice - Check for mod files and list them, they are the likely cause of the errors.
+			// (GZSelaco located the IWAD with a hardcoded lump number; here it's everything after the IWAD that the user added.)
+			FString wadNames = "";
+			int wadCount = 0;
+			for (int x = fileSystem.GetMaxIwadNum() + 1; x < fileSystem.GetNumWads(); x++) {
+				if (fileSystem.IsOptionalResource(x)) continue;
+				wadNames.AppendFormat("\t%s\n", fileSystem.GetWadName(x));
+				wadCount++;
+			}
+
+			if (!wadNames.IsEmpty()) {
+				I_Error("%d errors while parsing scripts\n\nCheck %d mods for updates, or try disabling mods by launching the game with -NOMODS\n\nMods: \n%s", FScriptPosition::ErrorCounter, wadCount, wadNames.GetChars());
+			}
+		}
+
 		if (FScriptPosition::WarnCounter > 0)
 		{
 			I_Error("%d errors, %d warnings while parsing scripts", FScriptPosition::ErrorCounter, FScriptPosition::WarnCounter);

@@ -92,6 +92,7 @@ enum
 	ZCC_UnsafeClearScope	= 1 << 25,
 	ZCC_VMInternalStruct	= 1 << 26,
 	ZCC_NoRollback			= 1 << 27,
+	ZCC_Unit				= 1 << 28, // @Cockatrice 'singleunit': restricted to the file container it is defined in
 };
 
 // Function parameter modifiers

@@ -34,6 +34,8 @@
 #include "i_sound.h"
 #include "s_soundinternal.h"
 
+#include "TSQueue.h"
+
 #ifndef NO_OPENAL
 
 #ifdef DYN_OPENAL
@@ -48,6 +50,40 @@
 #include "thirdparty/alext.h"
 
 
+struct OpenALQueueItem {
+	SoundHandle sfx;
+	//SoundListener *listener;
+	float vol = 0, dist_sqr = 0, distscale = 0, startTime = 0, pitch = 0;
+	FVector3 pos = { 0.,0.,0.}, vel = { 0.,0.,0.};
+	FRolloffInfo rolloff;
+	int channum = -1, chanflags = 0, priority = 0;
+	uint64_t chanStartTime = 0;
+	ALuint source = 0;
+	ALuint buffer = 0;
+	ALuint envSlot = 0;
+	ALint effectID = -1;
+	bool reuseChan = false;		// Only used to signal what type of offset startTime is
+	bool inWater = false;		// Play as if in water
+};
+
+struct OpenALEffectDef
+{
+	// EffectSlots for the main effect
+	TArray<ALuint> effectSlots;
+
+	// EffectSlots for the 'environment', that gets passed into the reverb effect.
+	// We need this because we need one version to play without reverb, and another to go
+	// through the EnvSlot EffectSlot so the reverb gets applied.
+	TArray<ALuint> envEffectSlots;
+};
+
+struct OpenALPlayedItem {
+	ALuint source	= 0;
+	ALint state		= -1;
+	int channum		= -1;
+};
+
+
 class OpenALSoundStream;
 
 class OpenALSoundRenderer final : public SoundRenderer
@@ -56,6 +92,7 @@ public:
 	OpenALSoundRenderer();
 	virtual ~OpenALSoundRenderer();
 
+	virtual void InitAudioFX();
 	virtual void SetSfxVolume(float volume);
 	virtual void SetMusicVolume(float volume);
 	virtual void UpdateMusicParams();
@@ -67,11 +104,12 @@ public:
 	virtual float GetOutputRate();
 
 	// Streaming sounds.
-	SoundStream *CreateStream(SoundStreamCallback callback, int buffbytes, SampleType stype, ChannelConfig chans, int samplerate, void *userdata) override;
+	SoundStream *CreateStream(SoundStreamCallback callback, int buffbytes, SampleType stype, ChannelConfig chans, int samplerate, void *userdata, FFloatCVarRef* volumeCVAR = nullptr) override;
 
 	// Starts a sound.
-	FISoundChannel *StartSound(SoundHandle sfx, float vol, float pitch, int chanflags, FISoundChannel *reuse_chan, float startTime) override;
-	FISoundChannel *StartSound3D(SoundHandle sfx, SoundListener *listener, float vol, FRolloffInfo *rolloff, float distscale, float pitch, int priority, const FVector3 &pos, const FVector3 &vel, int channum, int chanflags, FISoundChannel *reuse_chan, float startTime) override;
+	FISoundChannel *StartSound(SoundHandle sfx, float vol, float pitch, int chanflags, FISoundChannel *reuse_chan, float startTime, int effectID) override;
+	FISoundChannel *StartSound3D(SoundHandle sfx, SoundListener *listener, float vol, FRolloffInfo *rolloff, float distscale, float pitch, int priority, const FVector3 &pos, const FVector3 &vel, int channum, int chanflags, FISoundChannel *reuse_chan, float startTime, int effectID) override;
+	virtual FISoundChannel *ReserveChannel(int priority);
 
 	// Changes a channel's volume.
 	virtual void ChannelVolume(FISoundChannel *chan, float volume);
@@ -99,6 +137,7 @@ public:
 
 	virtual void UpdateListener(SoundListener *);
 	virtual void UpdateSounds();
+	virtual void ResetReverb();
 
 	virtual void MarkStartTime(FISoundChannel*, float startTime);
 	virtual float GetAudibility(FISoundChannel*);
@@ -180,31 +219,49 @@ private:
 	void (ALC_APIENTRY*alcDeviceResumeSOFT)(ALCdevice *device);
 
 	void BackgroundProc();
+	void BackgroundQueueProc();
+	void FlushPlayQueue();
+	void UpdatePlayedSounds();
+	void UpdateReverb(SoundListener* listener);
 	void AddStream(OpenALSoundStream *stream);
 	void RemoveStream(OpenALSoundStream *stream);
 
 	void LoadReverb(const ReverbContainer *env);
+	void LoadReverbProps(ALuint slot, const REVERB_PROPERTIES& props, bool apply = true);
+	void InterpolateReverb(float tm);
 	void PurgeStoppedSources();
 	static FSoundChan *FindLowestChannel();
 
-	std::thread StreamThread;
-	std::mutex StreamLock;
-	std::condition_variable StreamWake;
-	std::atomic<bool> QuitThread;
+	std::thread StreamThread, QueueThread;
+	std::mutex StreamLock, QueueThreadLock;
+	std::condition_variable StreamWake, QueueWake;
+	std::atomic<bool> QuitThread, QuitQueueThread;
 
 	ALCdevice *Device;
 	ALCcontext *Context;
 
 	TArray<ALuint> Sources;
 
-	ALfloat SfxVolume;
-	ALfloat MusicVolume;
+	std::atomic<ALfloat> SfxVolume;
+	std::atomic<ALfloat> MusicVolume;
 
-	int SFXPaused;
+	struct SFXStatus {
+		ALuint source = 0;
+		ALint state = AL_INITIAL;
+		bool canReverb, canPause, wasInWater;
+	};
+
+	std::atomic<int> SFXPaused;
 	TArray<ALuint> FreeSfx;
-	TArray<ALuint> PausableSfx;
-	TArray<ALuint> ReverbSfx;
-	TArray<ALuint> SfxGroup;
+	//TArray<ALuint> PausableSfx;
+	//TArray<ALuint> ReverbSfx;
+	// TODO: Change this to a map with SOURCE as the key instead of an array
+	std::unordered_map<ALuint, SFXStatus> SfxGroup;
+
+	inline SFXStatus *statusForSource(ALuint src) {
+		auto r = SfxGroup.find(src);
+		return r == SfxGroup.end() ? nullptr : &r->second;
+	}
 
 	const ReverbContainer *PrevEnvironment;
 
@@ -217,9 +274,36 @@ private:
 	bool WasInWater;
 
 	TArray<OpenALSoundStream*> Streams;
+	TSQueue<OpenALQueueItem> PlayQueue;			// Fill PlayQueue to play, once played appears in PlayedQueue
+	TSQueue<OpenALPlayedItem> PlayedQueue;
+
 	friend class OpenALSoundStream;
 
 	ALCdevice *InitDevice();
+
+	// @Cockatrice: Thread safe(ish) - start sound from queue item
+	// Unfortunately makes a lot of assumptions about the safe nature of other funcs
+	// For instance GetRolloff should be safe for now, but if the sound curve is ever changed
+	// at runtime, it's no longer safe. Same goes for AL extensions, if they are changed at 
+	// at runtime this is no longer thread safe
+	bool StartSound3D(OpenALQueueItem &playInfo);
+	bool StartSound(OpenALQueueItem &playInfo);
+
+	ALCint MaxAuxSends = 0;
+	TArray<OpenALEffectDef> EffectDefs;
+	TArray<ALuint> EffectSlots;
+	TArray<ALuint> Effects;
+	
+	// @Cockatrice - Reverb transition info
+	std::chrono::steady_clock::time_point InitTime, TransitionTime;		// Ref time for transitions
+	ALuint ReverbSlot = 0;						// Slot used by reverb when interpolating
+	bool ReverbSlotEnabled = true;				// Flag when failed to create reverb effect slot
+	FVector3 reverbPosition;					// Last reverb position, distance from previous pos will increase speed of interpolation between environments
+	REVERB_PROPERTIES LastReverb, CurrentReverb;
+	float ReverbTransition = 1.0;				// Current transition between reverbs
+
+	// So we can change the volume of 'dry' sounds, so we don't hear both the dry and wet at the same time
+	ALuint DryFilter; 
 };
 
 #endif // NO_OPENAL

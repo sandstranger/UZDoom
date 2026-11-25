@@ -21,6 +21,14 @@
 **
 */
 
+#ifdef WIN32
+// (Selaco: the auxiliary context accessors of win32glvideo.h, included below, need the Windows types)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 #include "gl_system.h"
 #include "v_video.h"
 #include "m_png.h"
@@ -46,6 +54,7 @@
 #include "v_draw.h"
 #include "printf.h"
 #include "gl_hwtexture.h"
+#include "model.h"
 
 #include "flatvertices.h"
 #include "hw_cvars.h"
@@ -60,19 +69,811 @@
 #include "hw_programcache.h"
 #include "gl_renderbuffers.h"
 
+#include "filesystem.h"
+#include "c_dispatch.h"
+#include "selaco.h"
+
 EXTERN_CVAR (Bool, vid_vsync)
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Bool, cl_capfps)
-EXTERN_CVAR(Int, gl_pipeline_depth);
+EXTERN_CVAR(Int, gl_pipeline_depth)
+EXTERN_CVAR(Bool, gl_texture_thread)
+EXTERN_CVAR(Int, gl_max_transfer_threads)
+EXTERN_CVAR(Int, gl_background_flush_count)
+EXTERN_CVAR(Bool, gl_texture_thread_upload)
 
 void gl_LoadExtensions();
 void gl_PrintStartupLog();
 
 extern bool vid_hdr_active;
 
+
+#ifdef WIN32
+#include "hardware.h"
+#include "win32glvideo.h"
+#define gl_createAUXContext() static_cast<Win32GLVideo*>(Video)->createAuxContext()
+#define gl_setAUXContext(a) static_cast<Win32GLVideo*>(Video)->setAuxContext(a)
+#define gl_setMainContext() static_cast<Win32GLVideo*>(Video)->setMainContext()
+#define gl_numAUXContexts() static_cast<Win32GLVideo*>(Video)->numAuxContexts()
+#define gl_setNULLContext() static_cast<Win32GLVideo*>(Video)->setNULLContext()
+#define gl_auxContextsSupported() (true)
+#endif
+
+#ifdef __POSIX_SDL_GL_SYSFB_H__
+#include "hardware.h"
+#define gl_createAUXContext() static_cast<OpenGLFrameBuffer*>(screen)->createAuxContext()
+#define gl_setAUXContext(a) static_cast<OpenGLFrameBuffer*>(screen)->setAuxContext(a)
+#define gl_setMainContext() static_cast<OpenGLFrameBuffer*>(screen)->setMainContext()
+#define gl_numAUXContexts() static_cast<OpenGLFrameBuffer*>(screen)->numAuxContexts()
+#define gl_setNULLContext() static_cast<OpenGLFrameBuffer*>(screen)->setNULLContext()
+// (GLX only: with EGL - Android, Wayland, the offscreen driver - the window surface cannot be current in two threads)
+#define gl_auxContextsSupported() (SDL_GetCurrentVideoDriver() != nullptr && strcmp(SDL_GetCurrentVideoDriver(), "x11") == 0)
+#endif
+
+#ifndef gl_setNULLContext
+// Platforms without auxiliary contexts (e.g. the Cocoa backend): the texture threads only read from disk
+#define gl_createAUXContext() (-1)
+#define gl_setAUXContext(a) (false)
+#define gl_setMainContext() (true)
+#define gl_numAUXContexts() (0)
+#define gl_setNULLContext() ((void)0)
+#define gl_auxContextsSupported() (false)
+#endif
+
+
+ADD_STAT(glloader)
+{
+	static int maxQueue = 0, maxSecondaryQueue = 0, queue, secQueue, total, collisions, outSize, models, errors;
+	static double minLoad = 0, maxLoad = 0, avgLoad = 0;
+	static double minFG = 0, maxFG = 0, avgFG = 0;
+
+	auto sc = dynamic_cast<OpenGLRenderer::OpenGLFrameBuffer*>(screen);
+
+	if (sc) {
+		if (!sc->SupportsBackgroundCache()) {
+			return FString("OpenGL Texture Thread Disabled");
+		}
+		sc->GetBGQueueSize(queue, secQueue, collisions, maxQueue, maxSecondaryQueue, total, outSize, models, errors);
+		sc->GetBGStats(minLoad, maxLoad, avgLoad);
+		sc->GetBGStats2(minFG, maxFG, avgFG);
+
+		FString out;
+		out.AppendFormat(
+			"[%d Threads] Queued: %3.3d - %3.3d Out: %3.3d  Col: %d  Err: %d\nMax: %3.3d Max Sec: %3.3d Tot: %d\n"
+			"Models: %d\n"
+			"Min: %.3fms  FG: %.3fms\n"
+			"Max: %.3fms  FG: %.3fms\n"
+			"Avg: %.3fms  FG: %.3fms\n",
+			sc->GetNumThreads(), queue, secQueue, outSize, collisions, errors, maxQueue, maxSecondaryQueue, total, models, minLoad, minFG, maxLoad, maxFG, avgLoad, avgFG
+		);
+		return out;
+	}
+
+	return "No OpenGL Device";
+}
+
+CCMD(gl_rstbgstats) {
+	auto sc = dynamic_cast<OpenGLRenderer::OpenGLFrameBuffer*>(screen);
+	if (sc) sc->ResetBGStats();
+}
+
+
 namespace OpenGLRenderer
 {
 	FGLRenderer *GLRenderer;
+
+// @Cockatrice - Background Loader Stuff ===========================================
+// =================================================================================
+void GlTexLoadThread::bgproc() {
+	if (auxContext >= 0) {
+		auxContext = gl_createAUXContext();
+		if (auxContext == -1 || !gl_setAUXContext(auxContext)) {
+			startup.store(-1);
+		}
+		else {
+			startup.store(1);
+		}
+	}
+	else {
+		startup.store(1);
+	}
+	ResourceLoader2::bgproc();
+	if (auxContext >= 0) gl_setNULLContext();
+}
+
+void GlTexLoadThread::prepareLoad() {
+	//gl_setAUXContext(auxContext);
+}
+
+bool GlTexLoadThread::loadResource(GlTexLoadIn & input, GlTexLoadOut & output) {
+	FImageLoadParams* params = input.params;
+
+	output.conversion = params->conversion;
+	output.imgSource = input.imgSource;
+	output.translation = params->translation;
+	output.tex = input.tex;
+	output.spi.generateSpi = input.spi.generateSpi;
+	output.spi.notrimming = input.spi.notrimming;
+	output.spi.shouldExpand = input.spi.shouldExpand;
+	output.gtex = input.gtex;
+	output.mipLevels = -1;
+	output.texUnit = input.texUnit;
+	output.flags = input.flags;
+	output.error = GL_TEXLOAD_ERR_NONE;
+	output.lump = params->lump;
+	output.uploadFence = NULL;
+
+	auto* src = input.imgSource;
+	FBitmap pixels;
+
+	const bool uploadPossible = auxContext >= 0;
+	const bool allowMips = input.flags.AllowMips;
+	const bool indexed = false;	// TODO: Determine this properly
+	bool mipmap = !indexed && allowMips;
+	const bool gpu = src->IsGPUOnly();
+	const int exx = input.spi.shouldExpand && !gpu;
+	const int srcWidth = src->GetWidth();
+	const int srcHeight = src->GetHeight();
+	const int buffWidth = src->GetWidth() + 2 * exx;
+	const int buffHeight = src->GetHeight() + 2 * exx;
+	unsigned char* pixelData = nullptr;
+	size_t pixelDataSize = 0;
+	
+	// TODO: Add memory checks
+
+	// For testing, introduce an artificial delay
+	// TODO: Comment out for production
+	//std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+	if (exx && !gpu) {
+		pixelDataSize = 4u * (size_t)buffWidth * (size_t)buffHeight;
+		pixelData = (unsigned char*)malloc(pixelDataSize);
+		memset(pixelData, 0, pixelDataSize);
+		
+		FBitmap pixels(pixelData, buffWidth * 4, buffWidth, buffHeight);
+
+		// This is incredibly wasteful, but necessary for now since we can't read the bitmap with an offset into a larger buffer
+		// Read into a buffer and blit 
+		FBitmap srcBitmap;
+		srcBitmap.Create(srcWidth, srcHeight);
+		output.flags.OutputIsTranslucent = src->ReadPixels(params, &srcBitmap);
+		pixels.Blit(exx, exx, srcBitmap);
+
+		// If we need sprite positioning info, generate it here and assign it in the main thread later
+		if (input.spi.generateSpi) {
+			FGameTexture::GenerateInitialSpriteData(output.spi.info, &srcBitmap, input.spi.shouldExpand, input.spi.notrimming);
+		}
+
+		output.totalDataSize = pixelDataSize;
+	}
+	else {
+		if (gpu) {
+			int numMipLevels;
+			FileReader reader;
+			
+			try { reader = fileSystem.OpenFileReader(params->lump, FileSys::EReaderType::READER_NEW, FileSys::EReaderType::READERFLAG_SEEKABLE); }
+			catch (std::exception &e) {
+				output.error = GL_TEXLOAD_ERR_FILE;
+				return true;
+			}
+
+			// Verify file reader
+			if (!reader.isOpen() || reader.GetLength() <= 0) {
+				output.error = GL_TEXLOAD_ERR_FILE;
+				return true;
+			}
+
+			output.flags.OutputIsTranslucent = src->ReadCompressedPixels(&reader, &pixelData, output.totalDataSize, pixelDataSize, numMipLevels);
+			output.mipLevels = numMipLevels;
+			reader.Close();
+
+			// Verify pixel data
+			if (pixelData == nullptr) {
+				output.error = GL_TEXLOAD_ERR_FORMAT;
+				return true;
+			}
+
+			if (uploadPossible) {
+				if (output.tex->BackgroundCreateCompressedTexture(&output.uploadFence, pixelData, (uint32_t)pixelDataSize, (uint32_t)output.totalDataSize, buffWidth, buffHeight, src->getGLFormat(), input.texUnit, numMipLevels, "GlTexLoadThread::loadResource(Compressed)", !allowMips, input.flags.AllowQualityReduction) <= 0) {
+					output.error = GL_TEXLOAD_ERR_UPLOAD;
+					return true;
+				}
+			}
+
+			if (input.spi.generateSpi) {
+				FGameTexture::GenerateEmptySpriteData(output.spi.info, buffWidth, buffHeight);
+			}
+		}
+		else {
+			pixelDataSize = 4u * (size_t)buffWidth * (size_t)buffHeight;
+			pixelData = (unsigned char*)malloc(pixelDataSize);
+			memset(pixelData, 0, pixelDataSize);
+
+			FBitmap pixels(pixelData, buffWidth * 4, buffWidth, buffHeight);
+
+			output.flags.OutputIsTranslucent = src->ReadPixels(params, &pixels);
+			output.totalDataSize = pixelDataSize;
+
+			if (input.spi.generateSpi) {
+				FGameTexture::GenerateInitialSpriteData(output.spi.info, &pixels, input.spi.shouldExpand, input.spi.notrimming);
+			}
+		}
+	}
+
+	delete input.params;
+
+	output.pixelsSize = pixelDataSize;
+	output.pixelW = buffWidth;
+	output.pixelH = buffHeight;
+	output.flags.CreateMips = mipmap && allowMips;
+
+	if (!uploadPossible) {
+		output.flags.CreateMips = mipmap;
+		output.pixels = pixelData;
+	}
+	else {
+		output.flags.CreateMips = mipmap;
+		output.pixels = nullptr;
+
+		if (!gpu) {
+			if (output.tex->BackgroundCreateTexture(&output.uploadFence, pixelData, buffWidth, buffHeight, input.texUnit, mipmap, indexed, "GlTexLoadThread::loadResource()", !allowMips) <= 0) {
+				output.error = GL_TEXLOAD_ERR_UPLOAD;
+			}
+		}
+
+		free(pixelData);
+	}
+
+	
+	// TODO: Mark failed images as unloadable so they don't keep coming back to the queue
+	return true;
+}
+
+
+bool GLModelLoadThread::loadResource(GLModelLoadIn& input, GLModelLoadOut& output) {
+	FileReader reader = fileSystem.OpenFileReader(input.lump, FileSys::EReaderType::READER_NEW, 0);
+	output.data = reader.Read();
+	reader.Close();
+
+	output.lump = input.lump;
+	output.model = input.model;
+
+	return true;
+}
+
+
+
+// @Cockatrice - Background loader management =======================================
+// ==================================================================================
+void OpenGLFrameBuffer::GetBGQueueSize(int& current, int &secCurrent, int& collisions, int& max, int& maxSec, int& total, int &outSize, int &models, int &errs) {
+	max = maxSec = total = 0;
+	current = primaryTexQueue.size();
+	secCurrent = secondaryTexQueue.size();
+	max = statMaxQueued;
+	maxSec = statMaxQueuedSecondary;
+	collisions = statCollisions;
+	outSize = outputTexQueue.size();
+	models = statModelsLoaded;
+	errs = statErrors;
+
+	for (auto& tfr : bgTransferThreads) {
+		total += tfr->statTotalLoaded();
+	}
+}
+
+void OpenGLFrameBuffer::GetBGStats(double& min, double& max, double& avg) {
+	min = 99999998;
+	max = avg = 0;
+
+	for (auto& tfr : bgTransferThreads) {
+		min = std::min(tfr->statMinLoadTime(), min);
+		max = std::max(tfr->statMaxLoadTime(), max);
+		avg += tfr->statAvgLoadTime();
+	}
+
+	avg /= (double)bgTransferThreads.size();
+}
+
+void OpenGLFrameBuffer::GetBGStats2(double& min, double& max, double& avg) {
+	min = 99999998;
+	max = avg = 0;
+
+	min = fgMin;
+	max = fgMax;
+	avg = fgTotalTime / fgTotalCount;
+}
+
+void OpenGLFrameBuffer::ResetBGStats() {
+	statMaxQueued = statMaxQueuedSecondary = 0;
+	for (auto& tfr : bgTransferThreads) tfr->resetStats();
+	statCollisions = 0;
+	fgTotalTime = fgTotalCount = fgMin = fgMax = 0;
+	statModelsLoaded = 0;
+	statErrors = 0;
+}
+
+void OpenGLFrameBuffer::PrequeueMaterial(FMaterial * mat, int translation)
+{
+	BackgroundCacheMaterial(mat, FTranslationID::fromInt(translation), true, true);
+}
+
+
+bool OpenGLFrameBuffer::BackgroundLoadModel(FModel* model) {
+	if (!model || model->GetLoadState() == FModel::READY || model->GetLumpNum() <= 0)
+		return false;
+	if (model->GetLoadState() == FModel::LOADING)
+		return true;
+
+	model->SetLoadState(FModel::LOADING);
+
+	GLModelLoadIn modelLoad;
+	modelLoad.model = model;
+	modelLoad.lump = model->GetLumpNum();
+	modelInQueue.queue(modelLoad);
+
+	return true;
+}
+
+
+
+// @Cockatrice - This will cancel any current queued instance of the specified texture
+// This will cancel ALL instances of the texture being loaded if there are more than one
+// This will cancel all layers of a material if it exists, but will not unload anything
+// Will potentially block until the current threads have completed loading, so use this with care!
+void OpenGLFrameBuffer::CancelBackgroundCache(FGameTexture* tex) {
+	if (!tex || !tex->isValid()) return;
+
+	bool iPaused = !BackgroundCachePaused();
+	if (iPaused) PauseBackgroundCache(true);
+
+	// Wait on the tex threads
+	for (auto& t : bgTransferThreads) {
+		t->waitForRun();
+	}
+
+	// Remove the texture from primary and secondary queues
+	// This probably needs a faster method than repeatedly dequeing
+	GlTexLoadIn in;
+	while (secondaryTexQueue.dequeueSearch(in, tex,
+		[](void* a, GlTexLoadIn& b)
+		{ return (FGameTexture*)a == b.gtex; })) {
+
+		if (in.tex != nullptr) {
+			in.tex->SetHardwareState(IHardwareTexture::HardwareState::NONE, 0);
+		}
+	}
+
+	while (primaryTexQueue.dequeueSearch(in, tex,
+		[](void* a, GlTexLoadIn& b)
+		{ return (FGameTexture*)a == b.gtex; })) {
+
+		if (in.tex != nullptr) {
+			in.tex->SetHardwareState(IHardwareTexture::HardwareState::NONE, 0);
+		}
+	}
+
+	// Search queued patches
+	QueuedPatch qp;
+	while (patchQueue.dequeueSearch(qp, tex,
+		[](void* a, QueuedPatch& b)
+		{ return (FGameTexture*)a == b.tex; })) {
+
+		// Check for a hardware texture and set state correctly
+		// There probably ISN'T a material or hardware textures yet, which is why this tex was in the queued patches to begin with!
+		FMaterial* mat = FMaterial::ValidateTexture(tex, qp.scaleFlags, false);
+		if (mat != nullptr) {
+			const int numLayers = mat->NumLayers();
+			for (int i = 0; i < numLayers; i++) {
+				MaterialLayerInfo* layer;
+				auto hwtex = static_cast<FHardwareTexture*>(mat->GetLayer(i, qp.translation.index(), &layer));
+				if (hwtex->GetState(i) != IHardwareTexture::HardwareState::READY) {
+					hwtex->SetHardwareState(IHardwareTexture::HardwareState::NONE, i);
+				}
+			}
+		}
+	}
+
+	// Finalize any matching textures in the loaded queue
+	UpdateBackgroundCache(true);
+
+	if (iPaused) ResumeBackgroundCache();
+}
+
+
+// @Cockatrice - Cache a texture material, intended for use outside of the main thread
+bool OpenGLFrameBuffer::BackgroundCacheTextureMaterial(FGameTexture* tex, FTranslationID translation, int scaleFlags, bool makeSPI) {
+	if (!tex || !tex->isValid() || tex->GetID().GetIndex() == 0) return false;
+
+	QueuedPatch qp = {
+		tex, translation, scaleFlags, makeSPI
+	};
+
+	patchQueue.queue(qp);
+
+	return true;
+}
+
+
+// @Cockatrice - Submit each texture in the material to the background loader
+// Call from main thread only!
+bool OpenGLFrameBuffer::BackgroundCacheMaterial(FMaterial* mat, FTranslationID translation, bool makeSPI, bool secondary) {
+	if (mat->Source()->GetUseType() == ETextureType::SWCanvas) return false;
+
+	MaterialLayerInfo* layer;
+
+	auto systex = static_cast<FHardwareTexture*>(mat->GetLayer(0, translation.index(), &layer));
+	auto remap = !translation.isvalid() || IsLuminosityTranslation(translation) ? nullptr : GPalette.TranslationToTable(translation);
+	if (remap && remap->Inactive) remap = nullptr;
+
+	// Submit each layer to the background loader
+	int lump = layer->layerTexture->GetSourceLump();
+	bool lumpExists = fileSystem.FileLength(lump) >= 0;
+	FImageLoadParams* params = nullptr;
+	GlTexLoadSpi spi = {};
+	bool shouldExpand = mat->sourcetex->ShouldExpandSprite() && (layer->scaleFlags & CTF_Expand);
+	//bool allowMipmaps = !mat->sourcetex->GetNoMipmaps();
+	GLTexLoadField flags = {0};
+
+	flags.AllowMips = !mat->sourcetex->GetNoMipmaps();;
+	flags.AllowQualityReduction = (layer->scaleFlags & CTF_ReduceQuality);
+
+	// If the texture is already submitted to the cache, find it and move it to the normal queue to reprioritize it
+	if (lumpExists && !secondary && systex->GetState(0) == IHardwareTexture::HardwareState::CACHING) {
+		GlTexLoadIn in;
+		if (secondaryTexQueue.dequeueSearch(in, systex,
+			[](void* a, GlTexLoadIn& b)
+		{ return (FHardwareTexture*)a == b.tex; })) {
+			systex->SetHardwareState(IHardwareTexture::HardwareState::LOADING, 0);
+			primaryTexQueue.queue(in);
+			return true;
+		}
+	}
+	else if (lumpExists && systex->GetState(0) == IHardwareTexture::HardwareState::NONE) {
+		if(systex->GetTextureHandle() != 0) {
+			// We already have a texture handle, keep it
+			systex->SetHardwareState(IHardwareTexture::HardwareState::READY, 0);
+		} else {
+			systex->SetHardwareState(secondary ? IHardwareTexture::HardwareState::CACHING : IHardwareTexture::HardwareState::LOADING, 0);
+			
+			FImageTexture* fLayerTexture = dynamic_cast<FImageTexture*>(layer->layerTexture);
+			params = layer->layerTexture->GetImage()->NewLoaderParams(
+				fLayerTexture ? (fLayerTexture->GetNoRemap0() ? FImageSource::noremap0 : FImageSource::normal) : FImageSource::normal,
+				translation.index(),
+				remap
+			);
+
+			if (params != nullptr) {
+				// Only generate SPI if it's not already there
+				spi.generateSpi = makeSPI && !mat->sourcetex->HasSpritePositioning();
+				spi.notrimming = mat->sourcetex->GetNoTrimming();
+				spi.shouldExpand = shouldExpand;
+
+				GlTexLoadIn in = {
+					layer->layerTexture->GetImage(),
+					params,
+					spi,
+					systex,
+					mat->sourcetex,
+					0,
+					flags
+				};
+
+				if (secondary) secondaryTexQueue.queue(in);
+				else primaryTexQueue.queue(in);
+			}
+			else {
+				systex->SetHardwareState(IHardwareTexture::HardwareState::READY, 0); // TODO: Set state to a special "unloadable" state
+				return false;
+			}
+		}
+	}
+
+
+	const int numLayers = mat->NumLayers();
+	for (int i = 1; i < numLayers; i++)
+	{
+		assert(layer->layerTexture);
+
+		FImageLoadParams* params = nullptr;
+		auto syslayer = static_cast<FHardwareTexture*>(mat->GetLayer(i, 0, &layer));
+		lump = layer->layerTexture->GetSourceLump();
+		bool lumpExists = fileSystem.FileLength(lump) >= 0;
+
+		if (lump == 0) {
+			// Unloadable
+			syslayer->SetHardwareState(IHardwareTexture::HardwareState::READY, i);
+			continue;
+		}
+
+		if (lumpExists && !secondary && syslayer->GetState(i) == IHardwareTexture::HardwareState::CACHING) {
+			GlTexLoadIn in;
+			if (secondaryTexQueue.dequeueSearch(in, syslayer,
+				[](void* a, GlTexLoadIn& b)
+			{ return (FHardwareTexture*)a == b.tex; })) {
+				syslayer->SetHardwareState(IHardwareTexture::HardwareState::LOADING, i);
+				primaryTexQueue.queue(in);
+				return true;
+			}
+		}
+		else if (lumpExists && syslayer->GetState(i) == IHardwareTexture::HardwareState::NONE) {
+			if(syslayer->GetTextureHandle() != 0) {
+				// We already have a texture handle, keep it
+				syslayer->SetHardwareState(IHardwareTexture::HardwareState::READY, i);
+				continue;
+			}
+
+			syslayer->SetHardwareState(secondary ? IHardwareTexture::HardwareState::CACHING : IHardwareTexture::HardwareState::LOADING, i);
+
+			FImageTexture* fLayerTexture = dynamic_cast<FImageTexture*>(layer->layerTexture);
+			params = layer->layerTexture->GetImage()->NewLoaderParams(
+				fLayerTexture ? (fLayerTexture->GetNoRemap0() ? FImageSource::noremap0 : FImageSource::normal) : FImageSource::normal,
+				0, // translation
+				nullptr// remap
+			);
+
+			if (params != nullptr) {
+				GlTexLoadIn in = {
+					layer->layerTexture->GetImage(),
+					params,
+					{
+						false, shouldExpand, true
+					},
+					syslayer,
+					nullptr,
+					i,
+					flags
+				};
+
+				if (secondary) secondaryTexQueue.queue(in);
+				else primaryTexQueue.queue(in);
+			}
+			else {
+				syslayer->SetHardwareState(IHardwareTexture::HardwareState::READY, i); // TODO: Set state to a special "unloadable" state
+			}
+		}
+	}
+
+	statMaxQueued = max(statMaxQueued, primaryTexQueue.size());
+	statMaxQueuedSecondary = max(statMaxQueuedSecondary, secondaryTexQueue.size());
+
+	return true;
+}
+
+
+void OpenGLFrameBuffer::StopBackgroundCache() {
+	primaryTexQueue.clear();
+	secondaryTexQueue.clear();
+	patchQueue.clear();
+	modelInQueue.clear();
+
+	for (auto& tfr : bgTransferThreads) {
+		tfr->stop();
+	}
+
+	modelThread->stop();
+	modelOutQueue.clear();
+	outputTexQueue.clear();
+}
+
+
+void OpenGLFrameBuffer::FlushBackground() {
+	if (!SupportsBackgroundCache()) return;	// no transfer threads (not Selaco, or gl_texture_thread off): nothing was queued
+
+	ResumeBackgroundCache();	// Force resume background cache, since it has to finish up!
+
+	int nq = primaryTexQueue.size() + secondaryTexQueue.size();
+	bool active = nq;
+
+	if (!active)
+		for (auto& tfr : bgTransferThreads) active = active || tfr->isActive();
+
+	Printf(TEXTCOLOR_GREEN"OpenGLFrameBuffer[%s]: Flushing [%d + %d] = %d texture load ops\n", active ? "active" : "inactive", nq, patchQueue.size(), nq + patchQueue.size());
+	Printf(TEXTCOLOR_GREEN"\tFlushing %d - %d Model Reads\n", modelInQueue.size(), modelOutQueue.size());
+
+	// Make sure active is marked if we have patches waiting
+	active = active || patchQueue.size() > 0;
+
+	// Finish anything queued, and send anything that needs to be loaded from the patch queue
+	UpdateBackgroundCache(true);
+
+	// Wait for everything to load, kinda cheating here but this shouldn't be called in the game loop only at teardown
+	cycle_t check = cycle_t();
+	check.Clock();
+
+	while (active) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+		UpdateBackgroundCache(true);
+
+		active = false;
+		for (auto& tfr : bgTransferThreads)
+			active = active || tfr->isActive();
+		active = active || modelThread->isActive();
+	}
+
+	// Finish anything that was loaded
+	UpdateBackgroundCache(true);
+
+	check.Unclock();
+	Printf(TEXTCOLOR_GOLD"\tOpenGLFrameBuffer::FlushBackground() took %f ms\n", check.TimeMS());
+}
+
+
+void OpenGLFrameBuffer::UpdateBackgroundCache(bool flush) {
+	// Check for completed cache items and link textures to the data
+	static TArray<GlTexLoadOut> recycle;
+	GlTexLoadOut loaded;
+	int dequeueCount = 0;
+	size_t dataLoaded = 0;
+	bool processed = 0;
+	cycle_t timer = cycle_t();
+	timer.Clock();
+
+
+	while (outputTexQueue.size() > 0 && (flush || (dequeueCount < gl_background_flush_count && dataLoaded < 20971520))) {
+		if (!outputTexQueue.dequeue(loaded)) break;
+
+		processed = true;
+
+		// Abort and log errors
+		if (loaded.error != GL_TEXLOAD_ERR_NONE) {
+			const char* name = loaded.gtex ? loaded.gtex->GetName().GetChars() : "[unknown]";
+			const char* err;
+			switch (loaded.error) {
+			case GL_TEXLOAD_ERR_FILE:
+				err = "File access Error";
+				break;
+			case GL_TEXLOAD_ERR_FORMAT:
+				err = "Texture format or load error";
+				break;
+			case GL_TEXLOAD_ERR_UPLOAD:
+				err = "Error uploading texture";
+				break;
+			case GL_TEXLOAD_ERR_MEM:
+				err = "Out of memory";
+				break;
+			default:
+				err = "Unknown Error";
+				break;
+			}
+
+			Printf(TEXTCOLOR_RED "OpenGLFrameBuffer: Error loading texture %s (%s)\n", name, err);
+			if (loaded.lump) {
+				Printf(TEXTCOLOR_RED "\t%s\n", fileSystem.GetFileFullPath(loaded.lump).c_str());
+			}
+			statErrors++;
+		}
+
+		// Set the sprite positioning if we loaded it and it hasn't already been applied
+		if (loaded.spi.generateSpi && loaded.gtex && !loaded.gtex->HasSpritePositioning()) {
+			SpritePositioningInfo* spi = (SpritePositioningInfo*)ImageArena.Alloc(2 * sizeof(SpritePositioningInfo));
+			memcpy(spi, loaded.spi.info, 2 * sizeof(SpritePositioningInfo));
+			loaded.gtex->SetSpriteRect(spi);
+		}
+		
+		if (loaded.tex->GetState(loaded.texUnit) == IHardwareTexture::HardwareState::READY || loaded.tex->GetTextureHandle() > 0) {
+			// If we already have a texture in place here, destroy the loaded texture
+			// This can happen because the engine has already loaded the texture on the main thread
+			// Or somehow multiple requests to load this texture were made
+			statCollisions++;
+			loaded.tex->DestroyLoadedImage();
+
+			if (loaded.pixels) {
+				free(loaded.pixels);
+			}
+		}
+		else {
+			// Clean up if this is a failure
+			if (loaded.error != GL_TEXLOAD_ERR_NONE) {
+				if (loaded.pixels) free(loaded.pixels);
+
+				// Assign a generic texture so we know this was an error visually
+				loaded.tex->CreateInvalid(loaded.texUnit);
+				
+				// TODO: Set error state once that is handled correctly
+				loaded.tex->SetHardwareState(IHardwareTexture::HardwareState::READY, loaded.texUnit);
+			}
+			else {
+				// If we have pixels to upload, upload them here
+				if (loaded.pixels) {
+					if (loaded.imgSource->IsGPUOnly()) {
+						loaded.tex->BackgroundCreateCompressedTexture(&loaded.uploadFence, loaded.pixels, loaded.pixelsSize, loaded.totalDataSize, loaded.pixelW, loaded.pixelH, loaded.imgSource->getGLFormat(), loaded.texUnit, loaded.mipLevels, "OpenGLFrameBuffer::UpdateBackgroundCache()", !loaded.flags.CreateMips, loaded.flags.AllowQualityReduction);
+					}
+					else {
+						loaded.tex->BackgroundCreateTexture(&loaded.uploadFence, loaded.pixels, loaded.pixelW, loaded.pixelH, loaded.texUnit, loaded.flags.CreateMips, false, "OpenGLFrameBuffer::UpdateBackgroundCache()", !loaded.flags.CreateMips);
+					}
+
+					dataLoaded += loaded.totalDataSize;
+					free(loaded.pixels);
+					loaded.pixels = nullptr;
+				}
+
+				// If the texture isn't available yet, we need to recycle this object into the queue and check again next frame
+				if (loaded.uploadFence != GL_NONE) {
+					if(!glIsSync(loaded.uploadFence)) {
+						Printf(TEXTCOLOR_YELLOW"glFrameBuffer: A sync object has degraded.\n");
+					}
+					
+					GLenum res = flush ? glClientWaitSync(loaded.uploadFence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED) : glClientWaitSync(loaded.uploadFence, 0, 0);
+					if (res == GL_ALREADY_SIGNALED || res == GL_CONDITION_SATISFIED) {
+						glDeleteSync(loaded.uploadFence);
+
+						// Resource should be available, swap to loaded image
+						bool swapped = loaded.tex->SwapToLoadedImage();
+						assert(swapped);
+
+						loaded.tex->SetHardwareState(IHardwareTexture::HardwareState::READY, loaded.texUnit);
+						if (loaded.gtex && loaded.texUnit == 0) loaded.gtex->SetTranslucent(loaded.flags.OutputIsTranslucent);
+					}
+					else if(res == GL_TIMEOUT_EXPIRED) {
+						// Recycle this texture into the queue at the end of this function
+						assert(!flush);
+						loaded.spi.generateSpi = false;		// We don't need to create SPI again
+						recycle.push_back(loaded);
+					} else {
+						// Something went wrong, mark the texture as failed
+						loaded.tex->CreateInvalid(loaded.texUnit);
+
+						// TODO: Set error state once that is handled correctly
+						loaded.tex->SetHardwareState(IHardwareTexture::HardwareState::READY, loaded.texUnit);
+						if(res == GL_WAIT_FAILED) {
+							GLenum err = glGetError();
+							Printf(TEXTCOLOR_YELLOW"glFrameBuffer: A texture fence failed to wait [glerr:%d]. (%s)\n", err, fileSystem.GetFileFullPath(loaded.lump).c_str() );
+						} else {
+							Printf(TEXTCOLOR_YELLOW"glFrameBuffer: A texture failed to synchronize. (%s)\n", fileSystem.GetFileFullPath(loaded.lump).c_str() );
+						}
+					}
+				}
+				else {
+					assert(0);
+					Printf(TEXTCOLOR_YELLOW"glFrameBuffer: A texture failed to create a fence. (%s)\n", fileSystem.GetFileFullPath(loaded.lump).c_str());
+				}
+			}
+		}
+	}
+
+	// Submit all of the patches that need to be loaded
+	QueuedPatch qp;
+	while (patchQueue.dequeue(qp)) {
+		FMaterial* gltex = FMaterial::ValidateTexture(qp.tex, qp.scaleFlags, true);
+		if (gltex && !gltex->IsHardwareCached(qp.translation.index())) {
+			BackgroundCacheMaterial(gltex, qp.translation, qp.generateSPI);
+		}
+	}
+
+	// Process any loaded models
+	GLModelLoadOut modelOut;
+	while (modelOutQueue.dequeue(modelOut)) {
+		assert(modelOut.model);
+
+		if (modelOut.model->GetLoadState() != FModel::LOADING) {
+			statCollisions++;
+			modelOut.data.clear();
+			continue;
+		}
+
+		modelOut.model->LoadGeometry(&modelOut.data);
+		modelOut.model->SetLoadState(FModel::READY);
+		modelOut.data.clear();
+		statModelsLoaded++;
+	}
+
+	// Move recycled objects back to the top of the queue
+	for (auto& i : recycle) {
+		outputTexQueue.push_back(i);
+	}
+	recycle.clear();
+
+	if (!flush && processed) {
+		timer.Unclock();
+		auto fgCurTime = timer.TimeMS();
+
+		fgTotalTime += fgCurTime;
+		fgTotalCount += 1;
+		fgMin = std::min(fgMin, fgCurTime);
+		fgMax = std::max(fgMax, fgCurTime);
+	}
+}
 
 //==========================================================================
 //
@@ -100,6 +901,8 @@ OpenGLFrameBuffer::~OpenGLFrameBuffer()
 	gl_RenderState.ReleaseBatchResources();
 	GLRenderTargetPool::Trim(true);
 
+	bgTransferThreads.clear();
+
 	if (mVertexData != nullptr) delete mVertexData;
 	if (mSkyData != nullptr) delete mSkyData;
 	if (mViewpoints != nullptr) delete mViewpoints;
@@ -119,6 +922,25 @@ OpenGLFrameBuffer::~OpenGLFrameBuffer()
 // Initializes the GL renderer
 //
 //==========================================================================
+static const bool glIsArc() {
+	const char* vendor = (const char*)glGetString(GL_VENDOR);
+	const char* renderer = (const char*)glGetString(GL_RENDERER);
+	if (!vendor || !renderer) return false;
+
+	FString v(vendor);
+	FString r(renderer);
+	v.ToLower();
+	r.ToLower();
+
+	if (v.IndexOf("intel") < 0)
+		return false;
+
+	if (r.IndexOf("arc") >= 0)
+		return true;
+
+	return false;
+}
+
 
 void OpenGLFrameBuffer::InitializeState()
 {
@@ -150,11 +972,15 @@ void OpenGLFrameBuffer::InitializeState()
 	uniformblockalignment = gl.uniformblockalignment;
 	maxuniformblock = gl.maxuniformblock;
 	vendorstring = gl.vendorstring;
+	isArc = glIsArc();
 
 	if (first)
 	{
 		first=false;
 		gl_PrintStartupLog();
+		if (isArc) {
+			Printf(TEXTCOLOR_YELLOW"ARC GPU DETECTED\n");
+		}
 	}
 
 	// The MSAA menu only offers the sample counts this device renders the scene with.
@@ -199,6 +1025,60 @@ void OpenGLFrameBuffer::InitializeState()
 
 	mDebug = std::make_unique<FGLDebug>();
 	mDebug->Update();
+
+	bgTransferThreads.clear();
+
+	// (Selaco: background texture loading.) Only for Selaco: the other games keep loading their textures
+	// on the main thread, and no auxiliary contexts are created for them (Android among others).
+	// Without transfer threads SupportsBackgroundCache() is false and all users fall back to that.
+	if (gl_texture_thread && g_SelacoMode) {
+		// Uploading threads need auxiliary contexts sharing the window (WGL, GLX). Without them the threads only read
+		// and decode, the main thread uploads - and the main context is never released.
+		const bool auxContexts = gl_auxContextsSupported();
+		if (auxContexts) gl_setNULLContext();	// Clear context before creating additional threads
+
+		int numThreads = 1;
+		bool canUpload = gl_texture_thread_upload && auxContexts;
+
+		if (canUpload)
+			numThreads = gl_max_transfer_threads;
+
+		Printf(TEXTCOLOR_GREEN "OpenGLFrameBuffer: Creating %d transfer threads...\n", numThreads);
+		
+		for (int x = 0; x < numThreads; x++) {
+			std::unique_ptr<GlTexLoadThread> ptr(new GlTexLoadThread(this, canUpload ? 1 : -1, &primaryTexQueue, &secondaryTexQueue, &outputTexQueue));
+			ptr->start();
+			
+			int status = 0;
+			while (status == 0) {
+				status = ptr->startupStatus();
+			}
+
+			if (status < 0 && canUpload) {
+				ptr->stop();
+				Printf(TEXTCOLOR_RED "OpenGL Error:: Failed to create background thread %d!\n", x);
+			}
+			else {
+				bgTransferThreads.push_back(std::move(ptr));
+			}			
+		}
+
+		// If we failed to assign any contexts, make sure there is at least one non-uploading thread created
+		if (numThreads > 0 && bgTransferThreads.size() == 0) {
+			Printf(TEXTCOLOR_YELLOW "OpenGL Warning:: No aux contexts could be assigned. Creating a single background thread with upload disabled.\n");
+			std::unique_ptr<GlTexLoadThread> ptr(new GlTexLoadThread(this, -1, &primaryTexQueue, &secondaryTexQueue, &outputTexQueue));
+			ptr->start();
+			bgTransferThreads.push_back(std::move(ptr));
+		}
+
+		// Assign context again to do work on the main thread
+		if(auxContexts && !gl_setMainContext()) {
+			I_FatalError("OpenGLFrameBuffer::Couldn't configure main context!");
+		}
+	}
+
+	modelThread.reset(new GLModelLoadThread(&modelInQueue, &modelOutQueue));
+	if (g_SelacoMode) modelThread->start();	// (only Selaco loads models in the background, see above)
 }
 
 //==========================================================================
@@ -275,6 +1155,31 @@ void OpenGLFrameBuffer::RenderTextureView(FCanvasTexture* tex, std::function<voi
 
 	tex->SetUpdated(true);
 	static_cast<OpenGLFrameBuffer*>(screen)->camtexcount++;
+}
+
+//===========================================================================
+//
+// Lightmap slice rendering
+//
+//===========================================================================
+
+void OpenGLFrameBuffer::RenderLightmapSlice(int slice, std::function<void(IntRect&)> renderFunc)
+{
+	GLRenderer->StartOffscreen();
+
+	gl_RenderState.ClearLastMaterial();
+	glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GLRenderer->mLightMapID, 0, slice);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+
+	IntRect bounds;
+	bounds.left = bounds.top = 0;
+	bounds.width = GLRenderer->mLightMapWidth;
+	bounds.height = GLRenderer->mLightMapHeight;
+
+	renderFunc(bounds);
+
+	GLRenderer->EndOffscreen();
 }
 
 //===========================================================================
@@ -659,12 +1564,12 @@ void OpenGLFrameBuffer::PrecacheMaterial(FMaterial *mat, int translation)
 	MaterialLayerInfo* layer;
 	auto base = static_cast<FHardwareTexture*>(mat->GetLayer(0, translation, &layer));
 
-	if (base->BindOrCreate(layer->layerTexture, 0, CLAMP_NONE, translation, layer->scaleFlags))
+	if (base->BindOrCreate(layer->layerTexture, 0, CLAMP_NONE, translation, layer->scaleFlags, mat->sourcetex->GetNoMipmaps()))
 	{
 		for (int i = 1; i < numLayers; i++)
 		{
 			auto systex = static_cast<FHardwareTexture*>(mat->GetLayer(i, 0, &layer));
-			systex->BindOrCreate(layer->layerTexture, i, CLAMP_NONE, 0, layer->scaleFlags);
+			systex->BindOrCreate(layer->layerTexture, i, CLAMP_NONE, 0, layer->scaleFlags, mat->sourcetex->GetNoMipmaps());
 		}
 	}
 	// unbind everything.
@@ -687,11 +1592,38 @@ IDataBuffer *OpenGLFrameBuffer::CreateDataBuffer(int bindingpoint, bool ssbo, bo
 	return new GLDataBuffer(bindingpoint, ssbo);
 }
 
-void OpenGLFrameBuffer::BlurScene(float amount)
+void OpenGLFrameBuffer::BlurScene(float amount, bool force)
 {
-	GLRenderer->BlurScene(amount);
+	GLRenderer->BlurScene(amount, force);
 }
 
+void OpenGLFrameBuffer::InitLightmap(IVector2 LMTextureSize, int LMTextureCount, TArray<uint8_t>& LMTextureData, bool LMCompressed)
+{
+	if (LMTextureData.Size() > 0)
+	{
+		GLint activeTex = 0;
+		glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTex);
+		glActiveTexture(GL_TEXTURE0 + 17);
+
+		if (GLRenderer->mLightMapID == 0)
+			glGenTextures(1, (GLuint*)&GLRenderer->mLightMapID);
+
+		glBindTexture(GL_TEXTURE_2D_ARRAY, GLRenderer->mLightMapID);
+		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, LMTextureSize.X, LMTextureSize.Y, LMTextureCount, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+		glActiveTexture(activeTex);
+
+		GLRenderer->mLightMapWidth = LMTextureSize.X;
+		GLRenderer->mLightMapHeight = LMTextureSize.Y;
+
+		LMTextureData.Reset(); // We no longer need this, release the memory
+	}
+}
+
+// UZDoom's (GZDoom's) lightmap lumps: the texels are uploaded directly as RGB16F.
+// (Selaco's lightmaps above only allocate the array; their light groups are composited into it.)
 void OpenGLFrameBuffer::InitLightmap(int LMTextureSize, int LMTextureCount, TArray<uint16_t>& LMTextureData)
 {
 	if (LMTextureData.Size() > 0)
@@ -710,6 +1642,9 @@ void OpenGLFrameBuffer::InitLightmap(int LMTextureSize, int LMTextureCount, TArr
 		glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
 		glActiveTexture(activeTex);
+
+		GLRenderer->mLightMapWidth = LMTextureSize;
+		GLRenderer->mLightMapHeight = LMTextureSize;
 
 		LMTextureData.Reset(); // We no longer need this, release the memory
 	}
@@ -835,6 +1770,9 @@ void OpenGLFrameBuffer::BeginFrame()
 {
 	SetViewportRects(nullptr);
 	mViewpoints->Clear();
+	
+	UpdateBackgroundCache();
+
 	if (GLRenderer != nullptr)
 		GLRenderer->BeginFrame();
 }

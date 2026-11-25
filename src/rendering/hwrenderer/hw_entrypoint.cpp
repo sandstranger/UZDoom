@@ -55,9 +55,10 @@ void CleanSWDrawer()
 
 #include "g_levellocals.h"
 #include "a_dynlight.h"
+#include "a_lightgroup.h"
 
 
-void CollectLights(FLevelLocals* Level)
+void CollectLights(FLevelLocals* Level, double ticFrac = 1.0)
 {
 	IShadowMap* sm = &screen->mShadowMap;
 	int lightindex = 0;
@@ -71,7 +72,7 @@ void CollectLights(FLevelLocals* Level)
 			IShadowMap::LightsShadowmapped++;
 
 			light->mShadowmapIndex = lightindex;
-			sm->SetLight(lightindex, (float)light->X(), (float)light->Y(), (float)light->Z(), light->GetRadius());
+			sm->SetLight(lightindex, (float)light->iX(ticFrac), (float)light->iY(ticFrac), (float)light->iZ(ticFrac), light->GetRadius());
 			lightindex++;
 		}
 		else
@@ -94,17 +95,17 @@ void CollectLights(FLevelLocals* Level)
 //
 //-----------------------------------------------------------------------------
 
-sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bounds, float fov, float ratio, float fovratio, bool mainview, bool toscreen)
+sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bounds, float fov, float ratio, float fovratio, bool mainview, bool toscreen, bool isSavePic)
 {
 	auto& RenderState = *screen->RenderState();
 
 	R_SetupFrame(mainvp, r_viewwindow, camera);
 
-	if (mainview && toscreen && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && gl_light_shadowmap && screen->allowSSBO() && (screen->hwcaps & RFL_SHADER_STORAGE_BUFFER))
+	if (mainview && (toscreen || isSavePic) && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && gl_light_shadowmap && screen->allowSSBO() && (screen->hwcaps & RFL_SHADER_STORAGE_BUFFER))
 	{
 		screen->SetAABBTree(camera->Level->aabbTree);
 		screen->mShadowMap.SetCollectLights([=] {
-			CollectLights(camera->Level);
+			CollectLights(camera->Level, mainvp.TicFrac);
 		});
 		screen->UpdateShadowMap();
 	}
@@ -163,12 +164,12 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 		vp.Pos += eye.GetViewShift(vp.HWAngles.Yaw.Degrees());
 		di->SetupView(RenderState, vp.Pos.X, vp.Pos.Y, vp.Pos.Z, false, false);
 
-		di->ProcessScene(toscreen);
+		di->ProcessScene(toscreen, toscreen || isSavePic);
 
 		if (mainview)
 		{
 			PostProcess.Clock();
-			if (toscreen) di->EndDrawScene(mainvp.sector, RenderState); // do not call this for camera textures.
+			if (toscreen || isSavePic) di->EndDrawScene(mainvp.sector, RenderState); // do not call this for camera textures.
 
 			if (RenderState.GetPassType() == GBUFFER_PASS) // Turn off ssao draw buffers
 			{
@@ -278,10 +279,10 @@ void WriteSavePic(player_t* player, FileWriter* file, int width, int height)
 
 		// This shouldn't overwrite the global viewpoint even for a short time.
 		FRenderViewpoint savevp;
-		sector_t* viewsector = RenderViewpoint(savevp, players[consoleplayer].camera, &bounds, r_viewpoint.FieldOfView.Degrees(), 1.6f, 1.6f, true, false);
+		sector_t* viewsector = RenderViewpoint(savevp, players[consoleplayer].camera, &bounds, r_viewpoint.FieldOfView.Degrees(), 1.6f, 1.6f, true, false, true);
 		RenderState.EnableStencil(false);
 		RenderState.SetNoSoftLightLevel();
-
+		
 		TArray<uint8_t> scr(width * height * 3, true);
 		screen->CopyScreenToBuffer(width, height, scr.Data());
 
@@ -354,6 +355,15 @@ sector_t* RenderView(player_t* player)
 		// Shader start time does not need to be handled per level. Just use the one from the camera to render from.
 		if (player->camera)
 			CheckTimer(*RenderState, player->camera->Level->ShaderStartTime);
+
+		// Draw all lightmaps
+		for (auto Level : AllLevels())
+		{
+			if (Level->MasterLightmaps.size() > 0)
+			{
+				P_RenderLightGroups(Level);
+			}
+		}
 
 		// Draw all canvases that changed
 		for (FCanvas* canvas : AllCanvases)

@@ -35,6 +35,20 @@ CUSTOM_CVAR(Int, gl_fogmode, 2, CVAR_ARCHIVE | CVAR_NOINITCALL)
 	if (self < 0) self = 0;
 }
 
+// @Cockatrice - Toggle background texture fetching when supported
+CVAR(Bool, gl_texture_thread, true, CVAR_GLOBALCONFIG | CVAR_ARCHIVE)
+
+// @Cockatrice - Enable upload inside the texture thread (when available), or force upload to happen in main thread (debugging, old hardware etc)
+CVAR(Bool, gl_texture_thread_upload, true, CVAR_GLOBALCONFIG | CVAR_ARCHIVE)
+
+// @Cockatrice - Controls how many background loaded textures are re-integrated every tick
+// Especially on cards that have to create mipmaps in the main thread, this number can't be too high
+// or we get choppy when too many things are loading at once
+// Keeping this number too low will result in visible sprite popping
+CUSTOM_CVAR(Int, gl_background_flush_count, 100, CVAR_GLOBALCONFIG | CVAR_ARCHIVE) {
+	if (self < 25) self = 25;
+}
+
 // OpenGL stuff moved here
 // GL related CVARs
 CVAR(Bool, gl_portals, true, 0)
@@ -146,6 +160,15 @@ CVAR(Bool, gl_precache_level, true, CVAR_ARCHIVE)
 CVAR(Bool, gl_precache_level, false, CVAR_ARCHIVE)
 #endif
 
+extern void hw_unloadQualitySprites();
+CUSTOM_CVARD(Int, gl_texture_quality, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL, "changes texture quality. 0 = full, 2 = low")
+{
+	if (self < 0 || self > 4) self = 0;
+	hw_unloadQualitySprites();
+	screen->SetTextureFilterMode();	// For Vulkan, rebuild descriptors
+}
+
+CVAR(Bool, gl_precache_actors, true, CVAR_ARCHIVE)
 
 CUSTOM_CVAR(Int, gl_shadowmap_filter, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {

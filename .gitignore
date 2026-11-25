@@ -40,6 +40,7 @@ wadsrc/static/meta.xml
 /release_gcc
 /DOOMSTATS.TXT
 /disasm.txt
+/libraries/SDL/build
 /llvm
 /src/gl/unused
 /mapfiles_release/*.map

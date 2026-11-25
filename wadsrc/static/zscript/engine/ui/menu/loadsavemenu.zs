@@ -24,6 +24,8 @@
 
 struct SaveGameNode native
 {
+	native readonly int saveDate, elapsedTime, levelNum;
+	native int saveFlags;
 	native String SaveTitle;
 	native readonly String Filename;
 	native readonly String UUID;
@@ -44,10 +46,10 @@ struct SavegameManager native ui
 
 	native int RemoveSaveSlot(int index);
 	native void LoadSavegame(int Selected);
-	native void DoSave(int Selected, String savegamestring);
+	native void DoSave(int Selected, String savegamestring, int flags = 0);
 	native int ExtractSaveData(int index);
 	native void ClearSaveStuff();
-	native bool DrawSavePic(int x, int y, int w, int h);
+	native bool DrawSavePic(int x, int y, int w, int h, bool filter = true);
 	deprecated("4.0") void DrawSaveComment(Font font, int cr, int x, int y, int scalefactor)
 	{
 		// Unfortunately, this was broken beyond repair so it now prints nothing.

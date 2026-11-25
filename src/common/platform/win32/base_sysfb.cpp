@@ -65,6 +65,13 @@ CUSTOM_CVAR(Int, vid_fsdwmhackalpha, 255, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 		self = 255;
 }
 
+// @Cockatrice - GZSelaco's opt-in to use WS_POPUP for fullscreen windows. UZDoom's fullscreen
+// handling in PositionWindow (WS_POPUP unless vid_fsdwmhack is set) is used for all games, so this has no effect;
+// it is kept so Selaco's settings and menus find the CVAR.
+CUSTOM_CVAR(Bool, vid_wspopup, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINITCALL) {
+	setmodeneeded = true;
+}
+
 
 //==========================================================================
 //

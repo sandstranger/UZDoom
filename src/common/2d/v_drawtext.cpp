@@ -33,6 +33,7 @@
 #include "gstrings.h"
 #include "vm.h"
 #include "printf.h"
+#include "selaco.h"
 
 #include "Trex/TextShaper.hpp"
 #include "Trex/BitmapHelpers.hpp"
@@ -567,7 +568,6 @@ void DrawStaticFontText(F2DDrawer *drawer, FFont *font, int normalcolor, double 
 	int             boldcolor;
 	FTranslationID  trans = INVALID_TRANSLATION;
 	int             kerning;
-	FGameTexture   *pic;
 
 	double scalex = parms.scalex * parms.patchscalex;
 	double scaley = parms.scaley * parms.patchscaley;
@@ -593,6 +593,9 @@ void DrawStaticFontText(F2DDrawer *drawer, FFont *font, int normalcolor, double 
 	ch = string;
 	cx = x;
 	cy = y;
+	// [Selaco] text is shifted down by the font's displacement; gated because it would move all text in other games.
+	if (g_SelacoMode)
+		cy += font->GetDisplacement();
 
 	if (parms.monospace == EMonospacing::CellCenter)
 		cx += parms.spacing / 2;
@@ -626,12 +629,34 @@ void DrawStaticFontText(F2DDrawer *drawer, FFont *font, int normalcolor, double 
 			continue;
 		}
 
-		if (NULL != (pic = font->GetChar(c, currentcolor, &w)))
+		FFont::CharData chr = font->GetChar(c, currentcolor);
+		w = chr.XMove;
+		if (w == INT_MIN) w = font->GetSpaceWidth();
+
+		auto pic = chr.OriginalPic;
+		if (NULL != pic)
 		{
 			// if palette translation is used, font colors will be ignored.
 			if (!palettetrans)
 				parms.TranslationId = trans;
-			SetTextureParms(drawer, &parms, pic, cx, cy);
+
+			// [Selaco] characters packed into a shared atlas texture only draw their own sub-rectangle.
+			double chWidth = 0, chHeight = 0;
+			if (chr.tCharW > -1)
+			{
+				double tw = pic->GetTexelWidth();
+				double th = pic->GetTexelHeight();
+				// TODO: The sizing calculations here are same for every texture, which means the same for almost every
+				// character. Cache this in the font somewhere.
+				parms.srcx      = (chr.tCharX / tw);
+				parms.srcy      = (chr.tCharY / th);
+				parms.srcwidth  = (chr.tCharW / tw);
+				parms.srcheight = (chr.tCharH / th);
+				chWidth         = chr.tCharW / pic->GetScaleX();
+				chHeight        = chr.tCharH / pic->GetScaleY();
+			}
+
+			SetTextureParms(drawer, &parms, pic, cx, cy, chWidth, chHeight);
 			if (parms.cellx)
 			{
 				w                = parms.cellx;
@@ -645,7 +670,7 @@ void DrawStaticFontText(F2DDrawer *drawer, FFont *font, int normalcolor, double 
 			else if (parms.monospace == EMonospacing::CellRight)
 				parms.left = w;
 
-			drawer->AddTexture(pic, parms);
+			drawer->AddTexture(chr.OriginalPic, parms);
 		}
 		if (parms.monospace == EMonospacing::Off)
 		{

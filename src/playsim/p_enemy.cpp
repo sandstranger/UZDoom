@@ -32,6 +32,7 @@
 #include "g_levellocals.h"
 #include "gi.h"
 #include "i_soundinternal.h"
+#include "i_time.h"
 #include "m_random.h"
 #include "p_blockmap.h"
 #include "p_checkposition.h"
@@ -40,7 +41,9 @@
 #include "p_local.h"
 #include "p_maputl.h"
 #include "p_spec.h"
+#include "selaco.h"
 #include "shadowinlines.h"
+#include "stats.h"
 #include "teaminfo.h"
 #include "vm.h"
 
@@ -100,6 +103,18 @@ double yspeed[8] = {0,SQRTHALF,1,SQRTHALF,0,-SQRTHALF,-1,-SQRTHALF};
 // Most monsters are spawned unaware of all players,
 // but some can be made preaware
 //
+
+cycle_t AlertCycles;
+
+ADD_STAT(ALERT)
+{
+	double tm = AlertCycles.TimeMS();
+	if (primaryLevel->totaltime % 35 == 0) {
+		AlertCycles.Reset();
+	}
+
+	return FStringf("ALERT time in last second: %f ms  %f", tm, I_GetTimeFrac());
+}
 
 //----------------------------------------------------------------------------
 //
@@ -233,6 +248,8 @@ void P_NoiseAlert (AActor *emitter, AActor *target, bool splash, double maxdist)
 	if (target != NULL && target->player && (target->player->cheats & CF_NOTARGET))
 		return;
 
+	AlertCycles.Clock();
+
 	validcount++;
 	NoiseList.Clear();
 	NoiseMarkSector(emitter->Sector, target, splash, emitter, 0, maxdist);
@@ -240,6 +257,8 @@ void P_NoiseAlert (AActor *emitter, AActor *target, bool splash, double maxdist)
 	{
 		P_RecursiveSound(NoiseList[i].sec, target, splash, emitter, NoiseList[i].soundblocks, maxdist);
 	}
+
+	AlertCycles.Unclock();
 }
 
 //----------------------------------------------------------------------------
@@ -1401,7 +1420,9 @@ bool ValidEnemyInBlock(AActor* lookee, AActor* other, void* lookparams)
 
 	// [KS] Hey, shouldn't there be a check for MF3_NOSIGHTCHECK here?
 
-	if (!keepChecking || !P_IsVisible(lookee, other, (lookee->flags4 & MF4_LOOKALLAROUND), params))
+	// [Selaco] Selaco only looks all around when no FOV was given.
+	const bool allaround = g_SelacoMode ? (params == nullptr || params->Fov == nullAngle) : !!(lookee->flags4 & MF4_LOOKALLAROUND);
+	if (!keepChecking || !P_IsVisible(lookee, other, allaround, params))
 		return false;			// out of sight
 
 	return true;

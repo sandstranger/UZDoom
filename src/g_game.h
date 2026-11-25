@@ -59,7 +59,8 @@ void G_LoadGame (const char* name, bool hidecon=false);
 void G_DoLoadGame (void);
 
 // Called by M_Responder.
-void G_SaveGame (const char *filename, const char *description, bool quick = false);
+// flags: Selaco's savegame flags (stored in the savegame's info.json)
+void G_SaveGame (const char *filename, const char *description, bool quick = false, int flags = 0);
 // Called by messagebox
 void G_DoQuickSave ();
 
@@ -86,8 +87,9 @@ enum
 void G_ScreenShot (const char* filename);
 void G_StartSlideshow(FLevelLocals *Level, FName whichone, int state);
 
+int		G_BuildSaveNames(const char* prefix, TArray<FString>& outputAr);	// @Cockatice - Get all possible locations for save path (Not a specific slot)
 class FSerializer;
-bool G_CheckSaveGameWads (FSerializer &arc, bool printwarn);
+bool G_CheckSaveGameWads (FSerializer &arc, bool printwarn, TArray<FString> *wadList = nullptr);
 
 enum EFinishLevelType
 {

@@ -31,6 +31,10 @@
 #include "r_videoscale.h"
 #include "c_cvars.h"
 
+// @Cockatrice - For Screen.SetCursor
+#include "i_system.h"
+#include "gi.h"
+
 EXTERN_CVAR(Int, vid_aspect)
 EXTERN_CVAR(Int, uiscale)
 CVAR(Bool, ui_screenborder_classic_scaling, true, CVAR_ARCHIVE)
@@ -464,6 +468,29 @@ DEFINE_ACTION_FUNCTION(FCanvas, SetScreenFade)
 }
 
 
+// Wasn't sure where to put this, setting cursor manually here
+DEFINE_ACTION_FUNCTION(_Screen, SetCursor)
+{
+	bool res = false;
+	PARAM_PROLOGUE;
+	PARAM_STRING(texName);
+
+	if (!stricmp(texName.GetChars(), "None") && gameinfo.CursorPic.IsNotEmpty())
+	{
+		res = I_SetCursor(TexMan.GetGameTextureByName(gameinfo.CursorPic.GetChars()));
+	}
+	else
+	{
+		res = I_SetCursor(TexMan.GetGameTextureByName(texName.GetChars()));
+	}
+	if (!res)
+	{
+		I_SetCursor(TexMan.GetGameTextureByName("cursor"));
+	}
+	return 0;
+}
+
+
 void F2DDrawer::GetClipRect(int *x, int *y, int *w, int *h)
 {
 	if (x) *x = clipleft;
@@ -625,7 +652,7 @@ DEFINE_ACTION_FUNCTION(FCanvas, GetFullscreenRect)
 //
 //==========================================================================
 
-bool SetTextureParms(F2DDrawer * drawer, DrawParms *parms, FGameTexture *img, double xx, double yy)
+bool SetTextureParms(F2DDrawer * drawer, DrawParms *parms, FGameTexture *img, double xx, double yy, double texWidth, double texHeight)
 {
 	auto GetWidth = [=]() { return parms->viewport.width; };
 	auto GetHeight = [=]() {return parms->viewport.height; };
@@ -633,8 +660,8 @@ bool SetTextureParms(F2DDrawer * drawer, DrawParms *parms, FGameTexture *img, do
 	{
 		parms->x = xx;
 		parms->y = yy;
-		parms->texwidth = img->GetDisplayWidth();
-		parms->texheight = img->GetDisplayHeight();
+		parms->texwidth = texWidth == 0 ? img->GetDisplayWidth() : texWidth;
+		parms->texheight = texHeight == 0 ? img->GetDisplayHeight() : texHeight;
 		if (parms->top == INT_MAX || parms->fortext)
 		{
 			parms->top = img->GetDisplayTopOffset();

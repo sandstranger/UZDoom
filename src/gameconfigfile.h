@@ -48,6 +48,8 @@ public:
 	void AddAutoexec (FArgs *list, const char *gamename);
 	FString GetConfigPath (bool tryProg);
 
+	void FinishStartup();
+
 protected:
 	void WriteCommentHeader (FileWriter *file) const;
 	void CreateStandardAutoExec (const char *section, bool start);
@@ -61,6 +63,7 @@ private:
 	bool bKeySetup;
 	bool bModSetup;
 	int bResetBindFlags;
+	bool bRequiresReset = false;	// Selaco: set to reset all CVars to defaults in FinishStartup()
 
 	double EngineLastRunVer;
 	double GameLastRunVer;

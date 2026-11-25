@@ -46,6 +46,7 @@ PFloat *TypeFloat32, *TypeFloat64;
 PString *TypeString;
 PName *TypeName;
 PSound *TypeSound;
+PSoundHandle* TypeSoundHandle;
 PColor *TypeColor;
 PTextureID *TypeTextureID;
 PTranslationID* TypeTranslationID;
@@ -63,7 +64,8 @@ PStruct* TypeFVector4;
 PStruct* TypeFQuaternion;
 PStruct *TypeColorStruct;
 PStruct *TypeStringStruct;
-PStruct* TypeQuaternionStruct;
+
+PStruct *TypeSoundHandleStruct;PStruct* TypeQuaternionStruct;
 PPointer *TypeNullPtr;
 PPointer *TypeVoidPtr;
 PPointer *TypeRawFunction;
@@ -307,6 +309,7 @@ void PType::StaticInit()
 	TypeTable.AddType(TypeString = new PString, NAME_String);
 	TypeTable.AddType(TypeName = new PName, NAME_Name);
 	TypeTable.AddType(TypeSound = new PSound, NAME_Sound);
+	TypeTable.AddType(TypeSoundHandle = new PSoundHandle, NAME_SoundHandle);
 	TypeTable.AddType(TypeColor = new PColor, NAME_Color);
 	TypeTable.AddType(TypeState = new PStatePointer, NAME_Pointer);
 	TypeTable.AddType(TypeStateLabel = new PStateLabel, NAME_Label);
@@ -322,8 +325,11 @@ void PType::StaticInit()
 	TypeVMFunction = NewPointer(NewStruct("VMFunction", nullptr, true));
 	TypeColorStruct = NewStruct("@ColorStruct", nullptr);	//This name is intentionally obfuscated so that it cannot be used explicitly. The point of this type is to gain access to the single channels of a color value.
 	TypeStringStruct = NewStruct("Stringstruct", nullptr, true);
+
+	TypeSoundHandleStruct = NewStruct("SoundHandleStruct", nullptr, true);
 	TypeQuaternionStruct = NewStruct("QuatStruct", nullptr, true);
 	TypeFont = NewPointer(NewStruct("Font", nullptr, true));
+
 #ifdef __BIG_ENDIAN__
 	TypeColorStruct->AddField(NAME_a, TypeUInt8);
 	TypeColorStruct->AddField(NAME_r, TypeUInt8);
@@ -479,6 +485,7 @@ void PType::StaticInit()
 	Namespaces.GlobalNamespace->Symbols.AddSymbol(Create<PSymbolType>(NAME_String, TypeString));
 	Namespaces.GlobalNamespace->Symbols.AddSymbol(Create<PSymbolType>(NAME_Name, TypeName));
 	Namespaces.GlobalNamespace->Symbols.AddSymbol(Create<PSymbolType>(NAME_Sound, TypeSound));
+	Namespaces.GlobalNamespace->Symbols.AddSymbol(Create<PSymbolType>(NAME_SoundHandle, TypeSoundHandle));
 	Namespaces.GlobalNamespace->Symbols.AddSymbol(Create<PSymbolType>(NAME_Color, TypeColor));
 	Namespaces.GlobalNamespace->Symbols.AddSymbol(Create<PSymbolType>(NAME_State, TypeState));
 	Namespaces.GlobalNamespace->Symbols.AddSymbol(Create<PSymbolType>(NAME_Vector2, TypeVector2));
@@ -1424,6 +1431,24 @@ bool PSound::ReadValue(FSerializer &ar, const char *key, void *addr) const
 		return true;
 	}
 }
+
+
+/* PSoundHandle ***********************************************************/
+
+//==========================================================================
+//
+// PSoundHandle Default Constructor
+//
+//==========================================================================
+
+PSoundHandle::PSoundHandle()
+	: PInt(sizeof(FSoundHandle), true)
+{
+	mDescriptiveName = "SoundHandle";
+	Flags |= TYPE_IntNotInt;
+	static_assert(sizeof(FSoundHandle) == alignof(FSoundHandle), "SoundHandle not properly aligned");
+}
+
 
 /* PColor *****************************************************************/
 

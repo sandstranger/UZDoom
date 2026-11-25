@@ -95,9 +95,11 @@ public:
 	unsigned			 MetaSize = 0;
 	FName				 TypeName = NAME_None;
 	FName				 SourceLumpName = NAME_None;
+	int					 SourceLump = -1;
 	bool				 bRuntimeClass = false;	// class was defined at run-time, not compile-time
 	bool				 bDecorateClass = false;	// may be subject to some idiosyncracies due to DECORATE backwards compatibility
 	bool				 bAbstract = false;
+	bool				 bUnitOnly = false;
 	bool				 bSealed = false;
 	bool				 bFinal = false;
 	bool				 bOptional = false;
@@ -107,6 +109,7 @@ public:
 	TArray<PField *> Fields;
 	TArray<FName> SealedRestriction;
 	PClassType			*VMType = nullptr;
+	DObject				*LevelInstance = nullptr; // Pretty much only used by ParticleDefinitions; specifically to point to the instance of the ParticleDefinition used in the level
 
 	void (*ConstructNative)(void *);
 

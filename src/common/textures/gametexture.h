@@ -34,6 +34,7 @@
 #include "refcounted.h"
 #include "tarray.h"
 #include "textureid.h"
+#include "printf.h"
 #include "textures.h" // IWYU pragma: keep for FTexture
 #include "vectors.h"
 #include "zstring.h"
@@ -92,6 +93,7 @@ enum EGameTexFlags
 	GTexf_NoTrim = 1024,					// Don't perform trimming on this texture.
 	GTexf_Seen = 2048,						// Set to true when the texture is being used for rendering. Must be cleared manually if the check is needed.
 	GTexf_NoMipmap = 4096,					// Disable mipmapping for this texture
+	GTexf_NoMips = 8192,					// [Selaco] Mipmaps are not required for this texture. Should be in FTexture, but for practicality purposes it is here now.
 };
 
 struct FMaterialLayers
@@ -121,7 +123,7 @@ class FGameTexture
 	FTextureID id;
 
 	uint16_t TexelWidth, TexelHeight;
-	int16_t LeftOffset[2], TopOffset[2];
+	float LeftOffset[2], TopOffset[2];
 	float DisplayWidth, DisplayHeight;
 	float ScaleX, ScaleY;
 
@@ -170,7 +172,10 @@ public:
 	void AddAutoMaterials();
 	bool ShouldExpandSprite();
 	void SetupSpriteData();
+	static void GenerateInitialSpriteData(SpritePositioningInfo *info, FBitmap *bmp, bool expandSprite = false, bool noTrimming = false);	// @Cockatrice - Generate the data with an already-loaded image in a thread
+	static void GenerateEmptySpriteData(SpritePositioningInfo* info, int width, int height);												// @Cockatrice - Generate basic data for images we can't work with
 	void SetSpriteRect();
+	void SetSpriteRect(SpritePositioningInfo *spi, bool raw = false);																		// @Cockatrice - Use this after loading spi in a thread
 
 	ETextureType GetUseType() const { return UseType; }
 	void SetUpscaleFlag(int what, bool manual = false)
@@ -184,8 +189,8 @@ public:
 	int GetSourceLump() const { return Base->GetSourceLump(); }
 	void SetBrightmap(FGameTexture* tex) { Brightmap = tex->GetTexture(); }
 
-	int GetTexelLeftOffset(int adjusted = 0) const { return LeftOffset[adjusted]; }
-	int GetTexelTopOffset(int adjusted = 0) const { return TopOffset[adjusted]; }
+	float GetTexelLeftOffset(int adjusted = 0) const { return LeftOffset[adjusted]; }
+	float GetTexelTopOffset(int adjusted = 0) const { return TopOffset[adjusted]; }
 	float GetDisplayLeftOffset(int adjusted = 0) const { return LeftOffset[adjusted] / ScaleX; }
 	float GetDisplayTopOffset(int adjusted = 0) const { return TopOffset[adjusted] / ScaleY; }
 
@@ -198,7 +203,10 @@ public:
 	bool useWorldPanning() const { return !!(flags & GTexf_WorldPanning);  }
 	void SetWorldPanning(bool on) { if (on) flags |= GTexf_WorldPanning; else flags &= ~GTexf_WorldPanning; }
 	void SetNoTrimming(bool on) { if (on) flags |= GTexf_NoTrim; else flags &= ~GTexf_NoTrim; }
+	void SetNoMipmaps(bool on) { if (on) flags |= GTexf_NoMips; else flags &= ~GTexf_NoMips; }
+	void SetNeverExpand(bool never) { expandSprite = never ? 0 : -1; }
 	bool GetNoTrimming() { return !!(flags & GTexf_NoTrim); }
+	bool GetNoMipmaps() const { return !!(flags & GTexf_NoMips); }
 	bool allowNoDecals() const { return !!(flags & GTexf_NoDecals);	}
 	void SetNoDecals(bool on) { if (on) flags |= GTexf_NoDecals; else flags &= ~GTexf_NoDecals; }
 	void SetOffsetsNotForFont() { flags |= GTexf_OffsetsNotForFont; }
@@ -209,6 +217,13 @@ public:
 	bool isMasked() { return Base->Masked; }
 	bool isHardwareCanvas() const { return Base->isHardwareCanvas(); }	// There's two here so that this can deal with software canvases in the hardware renderer later.
 	bool isSoftwareCanvas() const { return Base->isCanvas(); }
+
+	// @Cockatrice - Supply some way for the rest of the engine to tell if all images are loaded for this texture
+	bool isHardwareCached() {
+		return false;
+	}
+
+	bool IsHardwareCacheQueued(int translation);
 
 	void SetTranslucent(bool on) { Base->bTranslucent = on; }
 	void SetUseType(ETextureType type) { UseType = type; }
@@ -307,6 +322,12 @@ public:
 		SetDisplaySize(float(x), float(y));
 		if (GetTexture()) GetTexture()->SetSize(x, y);
 	}
+	void SetApparentSize(int x, int y)
+	{
+		TexelWidth = x;
+		TexelHeight = y;
+		SetDisplaySize(float(x), float(y));
+	}
 	void SetDisplaySize(float w, float h)
 	{
 		DisplayWidth = w;
@@ -323,12 +344,12 @@ public:
 	{
 		Base = Tex;
 	}
-	void SetOffsets(int which, int x, int y)
+	void SetOffsets(int which, float x, float y)
 	{
 		LeftOffset[which] = x;
 		TopOffset[which] = y;
 	}
-	void SetOffsets(int x, int y)
+	void SetOffsets(float x, float y)
 	{
 		LeftOffset[0] = x;
 		TopOffset[0] = y;
@@ -343,6 +364,7 @@ public:
 		DisplayHeight = TexelHeight / y;
 	}
 
+	bool HasSpritePositioning() { return spi != nullptr; }
 	const SpritePositioningInfo& GetSpritePositioning(int which) { if (spi == nullptr) SetupSpriteData(); return spi[which]; }
 	int GetAreas(FloatRect** pAreas) const;
 
@@ -461,6 +483,7 @@ inline FGameTexture* MakeGameTexture(FTexture* tex, const char *name, ETextureTy
 	if (!tex) return nullptr;
 	auto t = new FGameTexture(tex, name);
 	t->SetUseType(useType);
+
 	return t;
 }
 
@@ -482,6 +505,11 @@ inline int shouldUpscale(FGameTexture* tex, EUpscaleFlags UseType)
 	// This only checks the global scale mask and the texture's validation for upscaling. Everything else has been done up front elsewhere.
 	if (!(upscalemask & UseType)) return 0;
 	return tex->GetUpscaleFlag();
+}
+
+inline bool shouldScaleQuality(FGameTexture* tex) {
+	auto useType = tex->GetUseType();
+	return useType == ETextureType::Sprite || useType == ETextureType::SkinSprite || useType == ETextureType::Decal;
 }
 
 struct FTexCoordInfo

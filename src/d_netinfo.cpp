@@ -62,6 +62,7 @@ CVAR (String, playerclass,        "Fighter", CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (Bool,   classicflight,          false, CVAR_USERINFO | CVAR_ARCHIVE);
 
 DEPR_CVAR(Bool, vertspread, false, "Engine feature removed in favour of modding");
+CVAR (Bool,   g_viewbob,               true, CVAR_SERVERINFO | CVAR_ARCHIVE);	// Selaco: false disables the view bob
 
 enum
 {

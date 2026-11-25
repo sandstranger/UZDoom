@@ -85,6 +85,9 @@ public:
 	FShadowMapShader *mShadowMapShader = nullptr;
 
 	int mLightMapID = 0;
+	int mLightMapWidth = 0;
+	int mLightMapHeight = 0;
+	int mLightMapSliceCount = 0;
 
 	//FRotator mAngles;
 
@@ -100,7 +103,7 @@ public:
 	void PostProcessScene(int fixedcm, float flash, const std::function<void()> &afterBloomDrawEndScene2D);
 	void AmbientOccludeScene(float m5);
 	void ClearTonemapPalette();
-	void BlurScene(float gameinfobluramount);
+	void BlurScene(float gameinfobluramount, bool force = false);
 	void CopyToBackbuffer(const IntRect *bounds, bool applyGamma);
 	void DrawPresentTexture(const IntRect &box, bool applyGamma);
 	void Flush();

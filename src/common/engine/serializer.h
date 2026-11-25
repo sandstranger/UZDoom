@@ -282,6 +282,7 @@ public:
 	int mErrors = 0;
 	int mObjectErrors = 0;
 	FString mLumpName;
+	FString fullErrorMessage = "";	// GZSelaco: accumulated object restore errors, for StaticEventManager.HandleError()
 };
 
 #if !defined(__sun) || !defined(__sun__)

@@ -35,6 +35,7 @@
 #include "actor.h"
 
 CVAR(Bool, gl_light_models, true, CVAR_ARCHIVE)
+CVAR(Bool, gl_cull_backfaces, true, CVAR_ARCHIVE)
 
 VSMatrix FHWModelRenderer::GetViewToWorldMatrix()
 {
@@ -51,7 +52,9 @@ void FHWModelRenderer::BeginDrawModel(FRenderStyle style, int smf_flags, const V
 	// This solves a few of the problems caused by the lack of depth sorting.
 	// [Nash] Don't do back face culling if explicitly specified in MODELDEF
 	// TO-DO: Implement proper depth sorting.
-	if ((smf_flags & MDL_FORCECULLBACKFACES) || (!(style == DefaultRenderStyle()) && !(smf_flags & MDL_DONTCULLBACKFACES)))
+	// @Cockatrice DO cull backfaces if specified in the model
+	// @Cockatrice - This is a bit of a mess after the merge since we now have two ways to force backface culling
+	if (gl_cull_backfaces || (smf_flags & MDL_ALWAYSCULLBACKFACES) || (smf_flags & MDL_FORCECULLBACKFACES) || ( !(style == DefaultRenderStyle()) && !(smf_flags & MDL_DONTCULLBACKFACES) ))
 	{
 		state.SetCulling((mirrored ^ portalState.isMirrored()) ? Cull_CCW : Cull_CW);
 	}
@@ -65,7 +68,7 @@ void FHWModelRenderer::EndDrawModel(FRenderStyle style, int smf_flags)
 	state.SetBoneIndexBase(-1);
 	state.EnableModelMatrix(false);
 	state.SetDepthFunc(DF_Less);
-	if ((smf_flags & MDL_FORCECULLBACKFACES) || (!(style == DefaultRenderStyle()) && !(smf_flags & MDL_DONTCULLBACKFACES)))
+	if (gl_cull_backfaces || (smf_flags & MDL_ALWAYSCULLBACKFACES) || (smf_flags & MDL_FORCECULLBACKFACES) || ( !(style == DefaultRenderStyle()) && !(smf_flags & MDL_DONTCULLBACKFACES) ))
 		state.SetCulling(Cull_None);
 }
 

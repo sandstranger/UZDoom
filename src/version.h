@@ -108,8 +108,10 @@
 
 #define DEFAULT_DISCORD_APP_ID "1428620310302691349"
 
-const int SAVEPICWIDTH = 216;
-const int SAVEPICHEIGHT = 162;
+// Selaco (g_SelacoMode, see selaco.h) uses larger 16:9 save thumbnails.
+extern bool g_SelacoMode;
+#define SAVEPICWIDTH (g_SelacoMode ? 1000 : 216)
+#define SAVEPICHEIGHT (g_SelacoMode ? 563 : 162)
 const int VID_MIN_WIDTH = 320;
 const int VID_MIN_HEIGHT = 200;
 

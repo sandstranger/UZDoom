@@ -164,7 +164,7 @@ void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneH
 	renderstate->PopGroup();
 }
 
-void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHeight, float gameinfobluramount)
+void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHeight, float gameinfobluramount, bool force)
 {
 	// No scene, no blur!
 	if (sceneWidth <= 0 || sceneHeight <= 0)
@@ -176,7 +176,7 @@ void PPBloom::RenderBlur(PPRenderState *renderstate, int sceneWidth, int sceneHe
 	float blurAmount = gl_menu_blur;
 
 	// if CVar is negative, use the gameinfo entry
-	if (gl_menu_blur < 0)
+	if (force || gl_menu_blur < 0)
 		blurAmount = gameinfobluramount;
 
 	// if blurAmount == 0 or somehow still returns negative, exit to prevent a crash, clearly we don't want this
@@ -1072,38 +1072,47 @@ void PPCustomShaderInstance::SetTextures(PPRenderState *renderstate)
 	while (it.NextPair(pair))
 	{
 		FString name = pair->Value;
-		auto gtex = TexMan.GetGameTexture(TexMan.CheckForTexture(name.GetChars(), ETextureType::Any), true);
-		if (gtex && gtex->isValid())
+
+		if (!name.CompareNoCase("SceneDepth"))
 		{
-			// Why does this completely circumvent the normal way of handling textures?
-			// This absolutely needs fixing because it will also circumvent any potential caching system that may get implemented.
-			//
-			// To do: fix the above problem by adding PPRenderState::SetInput(FTexture *tex)
-
-			auto tex = gtex->GetTexture();
-			auto &pptex = Textures[tex];
-			if (!pptex)
+			renderstate->SetInputSceneDepth(textureIndex);
+			textureIndex++;
+		}
+		else
+		{
+			auto gtex = TexMan.GetGameTexture(TexMan.CheckForTexture(name.GetChars(), ETextureType::Any), true);
+			if (gtex && gtex->isValid())
 			{
-				auto buffer = tex->CreateTexBuffer(0);
+				// Why does this completely circumvent the normal way of handling textures?
+				// This absolutely needs fixing because it will also circumvent any potential caching system that may get implemented.
+				//
+				// To do: fix the above problem by adding PPRenderState::SetInput(FTexture *tex)
 
-				std::shared_ptr<void> data(new uint32_t[buffer.mWidth * buffer.mHeight], [](void *p) { delete[](uint32_t*)p; });
-
-				int count = buffer.mWidth * buffer.mHeight;
-				uint8_t *pixels = (uint8_t *)data.get();
-				for (int i = 0; i < count; i++)
+				auto tex = gtex->GetTexture();
+				auto &pptex = Textures[tex];
+				if (!pptex)
 				{
-					int pos = i << 2;
-					pixels[pos] = buffer.mBuffer[pos + 2];
-					pixels[pos + 1] = buffer.mBuffer[pos + 1];
-					pixels[pos + 2] = buffer.mBuffer[pos];
-					pixels[pos + 3] = buffer.mBuffer[pos + 3];
+					auto buffer = tex->CreateTexBuffer(0);
+
+					std::shared_ptr<void> data(new uint32_t[buffer.mWidth * buffer.mHeight], [](void *p) { delete[](uint32_t*)p; });
+
+					int count = buffer.mWidth * buffer.mHeight;
+					uint8_t *pixels = (uint8_t *)data.get();
+					for (int i = 0; i < count; i++)
+					{
+						int pos = i << 2;
+						pixels[pos] = buffer.mBuffer[pos + 2];
+						pixels[pos + 1] = buffer.mBuffer[pos + 1];
+						pixels[pos + 2] = buffer.mBuffer[pos];
+						pixels[pos + 3] = buffer.mBuffer[pos + 3];
+					}
+
+					pptex = std::make_unique<PPTexture>(buffer.mWidth, buffer.mHeight, PixelFormat::Rgba8, data);
 				}
 
-				pptex = std::make_unique<PPTexture>(buffer.mWidth, buffer.mHeight, PixelFormat::Rgba8, data);
+				renderstate->SetInputTexture(textureIndex, pptex.get(), PPFilterMode::Linear, PPWrapMode::Repeat);
+				textureIndex++;
 			}
-
-			renderstate->SetInputTexture(textureIndex, pptex.get(), PPFilterMode::Linear, PPWrapMode::Repeat);
-			textureIndex++;
 		}
 	}
 

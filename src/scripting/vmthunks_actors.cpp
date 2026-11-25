@@ -179,6 +179,36 @@ DEFINE_ACTION_FUNCTION_NATIVE(AActor, A_PlaySound, A_PlaySound)
 	return 0;
 }
 
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, A_PlaySoundEffect, A_PlaySoundEffect)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_INT(soundid);
+	PARAM_STRING(effect);
+	PARAM_INT(channel);
+	PARAM_FLOAT(volume);
+	PARAM_BOOL(looping);
+	PARAM_FLOAT(attenuation);
+	PARAM_BOOL(local);
+	PARAM_FLOAT(pitch);
+	ACTION_RETURN_INT(A_PlaySoundEffect(self, soundid, effect, channel, volume, looping, attenuation, local, pitch));
+	return 0;
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, StartSound, StartSound)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_INT(soundid);
+	PARAM_INT(channel);
+	PARAM_INT(flags);
+	PARAM_FLOAT(volume);
+	PARAM_FLOAT(attenuation);
+	PARAM_FLOAT(pitch);
+	PARAM_FLOAT(startTime);
+	ACTION_RETURN_INT(StartSound(self, soundid, channel, flags, volume, attenuation, pitch, startTime));
+	return 0;
+}
+
+
 DEFINE_ACTION_FUNCTION_NATIVE(AActor, A_StartSound, A_StartSound)
 {
 	PARAM_SELF_PROLOGUE(AActor);
@@ -193,6 +223,20 @@ DEFINE_ACTION_FUNCTION_NATIVE(AActor, A_StartSound, A_StartSound)
 	return 0;
 }
 
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, A_StartSoundEffect, A_StartSoundEffect)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_INT(soundid);
+	PARAM_STRING(effect);
+	PARAM_INT(channel);
+	PARAM_INT(flags);
+	PARAM_FLOAT(volume);
+	PARAM_FLOAT(attenuation);
+	PARAM_FLOAT(pitch);
+	PARAM_FLOAT(startTime);
+	ACTION_RETURN_INT(A_StartSoundEffect(self, soundid, effect, channel, flags, volume, attenuation, pitch, startTime));
+	return 0;
+}
 
 void A_StartSoundIfNotSame(AActor *self, int soundid, int checksoundid, int channel, int flags, double volume, double attenuation, double pitch, double startTime)
 {
@@ -1728,6 +1772,19 @@ DEFINE_ACTION_FUNCTION_NATIVE(AActor, CopyBloodColor, CopyBloodColor)
 	return 0;
 }
 
+static void A_CopyHeavyProbeTo(AActor* self, AActor* other)
+{
+	other->HeavyProbeIndex = self->HeavyProbeIndex;
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, A_CopyHeavyProbeTo, A_CopyHeavyProbeTo)
+{
+	PARAM_SELF_PROLOGUE(AActor);
+	PARAM_OBJECT(other, AActor);
+	A_CopyHeavyProbeTo(self, other);
+	return 0;
+}
+
 //=====================================================================================
 //
 // Inventory exports
@@ -1975,6 +2032,7 @@ DEFINE_FIELD_NAMED(AActor, Scale.Y, scaley)
 DEFINE_FIELD(AActor, RenderStyle)
 DEFINE_FIELD(AActor, picnum)
 DEFINE_FIELD(AActor, Alpha)
+DEFINE_FIELD(AActor, selfLighting)
 DEFINE_FIELD(AActor, fillcolor)
 DEFINE_FIELD_NAMED(AActor, Sector, CurSector)	// clashes with type 'sector'.
 DEFINE_FIELD(AActor, subsector)
@@ -2125,6 +2183,7 @@ DEFINE_FIELD(AActor, friendlyseeblocks)
 DEFINE_FIELD(AActor, SpawnTime)
 DEFINE_FIELD(AActor, InventoryID)
 DEFINE_FIELD(AActor, ThruBits)
+DEFINE_FIELD(AActor, lineBlockBits)
 DEFINE_FIELD(AActor, ViewPos)
 DEFINE_FIELD_NAMED(AActor, ViewAngles.Yaw, viewangle)
 DEFINE_FIELD_NAMED(AActor, ViewAngles.Pitch, viewpitch)

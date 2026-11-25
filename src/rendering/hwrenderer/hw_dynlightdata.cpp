@@ -21,6 +21,8 @@
 #include"hw_cvars.h"
 #include "v_video.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
+#include "r_utility.h"	// For R_GetLookYaw/Pitch()
+#include "selaco.h"
 
 // If we want to share the array to avoid constant allocations it needs to be thread local unless it'd be littered with expensive synchronization.
 thread_local FDynLightData lightdata;
@@ -41,7 +43,7 @@ CVAR (Bool, gl_light_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 // Sets up the parameters to render one dynamic light onto one plane
 //
 //==========================================================================
-bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, bool checkside)
+bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, bool checkside, double ticFrac = 1.0)
 {
 	DVector3 pos = light->PosRelative(group);
 	float radius = (light->GetRadius());
@@ -55,7 +57,7 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 		return false;
 	}
 
-	AddLightToList(dld, group, light, false);
+	AddLightToList(dld, group, light, false, ticFrac);
 	return true;
 }
 
@@ -64,11 +66,12 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 // Add one dynamic light to the light data list
 //
 //==========================================================================
-void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool forceAttenuate)
+void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool forceAttenuate, double ticFrac = 1.0)
 {
 	int i = 0;
 
-	DVector3 pos = light->PosRelative(group);
+	// (Selaco: light positions are interpolated)
+	DVector3 pos = g_SelacoMode ? light->PosRelative(group, ticFrac) : light->PosRelative(group);
 	float radius = light->GetRadius();
 
 	float cs;
@@ -126,6 +129,31 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 
 		DAngle negPitch = -light->Pitch;
 		DAngle Angle = light->Yaw;
+
+		if (g_SelacoMode && light->target)
+		{
+			// (Selaco)
+			// @Cockatrice - If this light is attached to the current player, instead of interpolating the light we will use the direct view values of the player
+			if (light->target->player && light->target->player == &players[consoleplayer]) {
+				Angle = r_viewpoint.Angles.Yaw;
+				negPitch = -r_viewpoint.Angles.Pitch;
+			}
+			// @Cockatrice - Hack alert, this is a special case for spotlights attached to actors parented to the player
+			// This is to prevent "laggy" flashlights that don't follow the camera perfectly
+			else if (light->target->master && light->target->master->player == &players[consoleplayer]) {
+				Angle = r_viewpoint.Angles.Yaw;
+				negPitch = -r_viewpoint.Angles.Pitch;
+			}
+			else {
+				Angle = light->target->PrevAngles.Yaw + deltaangle(light->target->PrevAngles.Yaw, light->target->Angles.Yaw) * ticFrac;
+				// @Cockatrice - Interpolate pitch if the pitch is the same as the actors
+				// This could sometimes result in a jitter if the sprite is rotating and passes through the exact explicit value that is set
+				// but frequency should be rare
+				negPitch = light->Pitch == light->target->Angles.Pitch ? -(light->target->PrevAngles.Pitch + deltaangle(light->target->PrevAngles.Pitch, light->target->Angles.Pitch) * ticFrac)
+					: (-light->Pitch);
+			}
+		}
+
 		double xzLen = negPitch.FastCos();
 		spotDirX = float(-Angle.FastCos() * xzLen);
 		spotDirY = float(-negPitch.FastSin());

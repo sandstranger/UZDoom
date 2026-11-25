@@ -193,6 +193,7 @@ class Actor : Thinker native
 	native readonly vector3 Pos;
 	native vector3 Prev;
 	native uint ThruBits;
+	native uint lineBlockBits;		// Selaco
 	native vector2 SpriteOffset;
 	native vector3 WorldOffset;
 	native double spriteAngle;
@@ -213,6 +214,7 @@ class Actor : Thinker native
 	native vector2 Scale;
 	native TextureID picnum;
 	native double Alpha;
+	native color selfLighting;		// Selaco
 	native readonly color fillcolor;	// must be set with SetShade to initialize correctly.
 	native Sector CurSector;
 	native double CeilingZ;
@@ -468,6 +470,7 @@ class Actor : Thinker native
 	property RenderRequired: RenderRequired;
 	property FriendlySeeBlocks: FriendlySeeBlocks;
 	property ThruBits: ThruBits;
+	property LineBlockBits : lineBlockBits;
 	property LightLevel: LightLevel;
 	property ShadowAimFactor: ShadowAimFactor;
 	property ShadowPenaltyFactor: ShadowPenaltyFactor;
@@ -508,6 +511,7 @@ class Actor : Thinker native
 		Mass 100;
 		RenderStyle 'Normal';
 		Alpha 1;
+		SelfLighting "00 00 00";
 		MinMissileChance 200;
 		MissileChanceMult 1.0;
 		MeleeRange 64 - MELEEDELTA;
@@ -612,6 +616,7 @@ class Actor : Thinker native
 	native version("4.15.1") void ClearBehaviors(class<Behavior> type = null);
 	native version("4.15.1") void MoveBehaviors(Actor from);
 
+	native void DeleteAttachedLights();
 	native clearscope bool isFrozen() const;
 	virtual native void BeginPlay();
 	virtual native void Activate(Actor activator);
@@ -620,6 +625,7 @@ class Actor : Thinker native
 	virtual native int TakeSpecialDamage (Actor inflictor, Actor source, int damage, Name damagetype, int flags = 0, double angle = 0);
 	virtual native void Die(Actor source, Actor inflictor, int dmgflags = 0, Name MeansOfDeath = 'none');
 	virtual native bool Slam(Actor victim);
+	virtual native void Grunt(Line ln, int reason);	// Selaco: called when the engine would play the *grunt sound
 	virtual void Touch(Actor toucher) {}
 	virtual native void FallAndSink(double grav, double oldfloorz);
 	native bool MorphInto(Actor morph);
@@ -631,6 +637,19 @@ class Actor : Thinker native
 	// state so that any custom actions based on things like player input can be done before moving to the next
 	// state of something like a weapon.
 	virtual void PSpriteTick(PSprite psp) {}
+
+	// Selaco: called on puffs that pass through or hit water so they can react accordingly.
+	// Return TRUE to indicate we took care of the splash (the engine will not create splashes based on terrain as usual).
+	// The puff this is called on may be temporary and could be deleted immediately after this call.
+	// Calling the native function does nothing.
+	virtual native bool PuffSplash(Vector3 position, Vector3 direction, Sector sect, F3DFloor floor3D);
+
+	// Selaco: called on puffs when they hit a solid surface, not an actor. Calling the native function does nothing.
+	virtual native void PuffHit(FLineTraceData trace);
+
+	// Selaco: called on puffs when they hit an actor that is tagged as a passthru. Often these puffs are temporary.
+	// Calling the native function does nothing.
+	virtual native void PuffThrough(Actor victim, Vector3 pos, Vector3 dir);
 
 	// Called by inventory items to see if this actor is capable of touching them.
 	// If true, the item will attempt to be picked up. Useful for things like
@@ -1305,7 +1324,10 @@ class Actor : Thinker native
 	native void A_WolfAttack(int flags = 0, sound whattoplay = "weapons/pistol", double snipe = 1.0, int maxdamage = 64, int blocksize = 128, int pointblank = 2, int longrange = 4, double runspeed = 160.0, class<Actor> pufftype = "BulletPuff");
 	deprecated("4.3", "Use A_StartSound() instead") native clearscope void A_PlaySound(sound whattoplay = "weapons/pistol", int slot = CHAN_BODY, double volume = 1.0, bool looping = false, double attenuation = ATTN_NORM, bool local = false, double pitch = 0.0);
 	native clearscope void A_StartSound(sound whattoplay, int slot = CHAN_BODY, int flags = 0, double volume = 1.0, double attenuation = ATTN_NORM, double pitch = 0.0, double startTime = 0.0);
+	native clearscope SoundHandle A_PlaySoundEffect(sound whattoplay = "weapons/pistol", string effect = "", int slot = CHAN_BODY, double volume = 1.0, bool looping = false, double attenuation = ATTN_NORM, bool local = false, double pitch = 0.0);
+	native clearscope SoundHandle A_StartSoundEffect(sound whattoplay, string effect = "", int slot = CHAN_BODY, int flags = 0, double volume = 1.0, double attenuation = ATTN_NORM, double pitch = 0.0, double startTime = 0.0);
 	native clearscope void A_StartSoundIfNotSame(sound whattoplay, sound checkagainst, int slot = CHAN_BODY, int flags = 0, double volume = 1.0, double attenuation = ATTN_NORM, double pitch = 0.0, double startTime = 0.0);
+	native clearscope SoundHandle StartSound(sound whattoplay, int slot = CHAN_BODY, int flags = 0, double volume = 1.0, double attenuation = ATTN_NORM, double pitch = 0.0, double startTime = 0.0);
 	native void A_SoundVolume(int slot, double volume);
 	native void A_SoundPitch(int slot, double pitch);
 	deprecated("2.3", "Use A_StartSound(<sound>, CHAN_WEAPON) instead") void A_PlayWeaponSound(sound whattoplay, bool fullvol = false) { A_StartSound(whattoplay, CHAN_WEAPON, 0, 1, fullvol? ATTN_NONE : ATTN_NORM); }
@@ -1332,6 +1354,9 @@ class Actor : Thinker native
 	native void A_SpawnDebris(class<Actor> spawntype, bool transfer_translation = false, double mult_h = 1, double mult_v = 1);
 	native void A_SpawnParticle(color color1, int flags = 0, int lifetime = TICRATE, double size = 1, double angle = 0, double xoff = 0, double yoff = 0, double zoff = 0, double velx = 0, double vely = 0, double velz = 0, double accelx = 0, double accely = 0, double accelz = 0, double startalphaf = 1, double fadestepf = -1, double sizestep = 0);
 	native void A_SpawnParticleEx(color color1, TextureID texture, int style = STYLE_None, int flags = 0, int lifetime = TICRATE, double size = 1, double angle = 0, double xoff = 0, double yoff = 0, double zoff = 0, double velx = 0, double vely = 0, double velz = 0, double accelx = 0, double accely = 0, double accelz = 0, double startalphaf = 1, double fadestepf = -1, double sizestep = 0, double startroll = 0, double rollvel = 0, double rollacc = 0, double fadeoutstepf = 0);
+	native bool A_SpawnDefinedParticle(class<ParticleDefinition> definition, double xoff = 0, double yoff = 0, double zoff = 0, double xvel = 0, double yvel = 0, double zvel = 0, double angle = 0, double scale = 1, int flags = 0, actor refActor = null);
+	native bool A_SpawnDefinedParticleProjectile(class<ParticleDefinition> definition, double spawnheight = 32, double spawnofs_xy = 0, double angle = 0, int flags = 0, double pitch = 0, int ptr = AAPTR_TARGET);
+	native bool A_SpawnDefinedParticleProjectileSpeed(class<ParticleDefinition> definition, double speedMulti = 1, double spawnHeight = 32, double spawnofs_xy = 0, double angle = 0, int flags = 0, double pitch = 0, int ptr = AAPTR_TARGET);
 	native void A_ExtChase(bool usemelee, bool usemissile, bool playactive = true, bool nightmarefast = false);
 	native void A_DropInventory(class<Inventory> itemtype, int amount = -1);
 	native void A_SetBlend(color color1, double alpha, int tics, color color2 = 0, double alpha2 = 0.);
@@ -1423,6 +1448,7 @@ class Actor : Thinker native
 	native void A_SprayDecal(String name, double dist = 172, vector3 offset = (0, 0, 0), vector3 direction = (0, 0, 0), bool useBloodColor = false, color decalColor = 0, TranslationID translation = 0);
 	native void A_SetMugshotState(String name);
 	native void CopyBloodColor(readonly<Actor> other);
+	native void A_CopyHeavyProbeTo(Actor other);
 
 	native void A_RearrangePointers(int newtarget, int newmaster = AAPTR_DEFAULT, int newtracer = AAPTR_DEFAULT, int flags=0);
 	native void A_TransferPointer(int ptr_source, int ptr_recipient, int sourcefield, int recipientfield=AAPTR_DEFAULT, int flags=0);
@@ -1443,6 +1469,10 @@ class Actor : Thinker native
 
 	native bool A_AttachLightDef(Name lightid, Name lightdef);
 	native bool A_AttachLight(Name lightid, int type, Color lightcolor, int radius1, int radius2, int flags = 0, Vector3 ofs = (0,0,0), double param = 0, double spoti = 10, double spoto = 25, double spotp = 0, double intensity = 1.0);
+
+	// Selaco: due to the 14 arg limit of VM funcs, the light color's ALPHA value is the light type
+	native bool A_AttachLightEx(Name lightid, Color lightcolor, double colIntensity, int radius1, int radius2, int flags = 0, Vector3 ofs = (0,0,0), double param = 0, double spoti = 10, double spoto = 25, double spotp = 0);
+
 	native bool A_RemoveLight(Name lightid);
 
 	//================================================

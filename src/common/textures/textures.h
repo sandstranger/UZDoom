@@ -51,6 +51,8 @@ enum
 	CLAMP_NOFILTER_X,
 	CLAMP_NOFILTER_Y,
 	CLAMP_NOFILTER_XY,
+	CLAMP_NONE_FORCE_FILTER,		// Forced filtering for 2D drawing
+	CLAMP_XY_NOMIP_FORCE_FILTER,	// Forced riltering for 2D drawing
 	CLAMP_CAMTEX,
 	NUMSAMPLERS
 };
@@ -72,6 +74,7 @@ enum MaterialShaderIndex
 	SHADER_NoiseFuzz,
 	SHADER_SmoothNoiseFuzz,
 	SHADER_SoftwareFuzz,
+	SHADER_LightmapComposite,
 	FIRST_USER_SHADER
 };
 
@@ -275,6 +278,7 @@ public:
 		Height = h;
 	}
 
+	static bool TrimBorders(uint16_t* rect, uint8_t *Buffer, int w, int h);
 	bool TrimBorders(uint16_t* rect);
 	int GetAreas(FloatRect** pAreas) const;
 
@@ -397,6 +401,7 @@ public:
 		SetFromImage();
 	}
 	void SetNoRemap0() { bNoRemap0 = true; }
+	bool GetNoRemap0() { return bNoRemap0; }
 
 	FImageSource* GetImage() const override { return mImage; }
 	FBitmap GetBgraBitmap(const PalEntry* p, int* trans) override;

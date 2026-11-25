@@ -22,6 +22,7 @@
 **
 */
 
+#include "events.h"
 #include "filesystem.h"
 #include "gstrings.h"
 #include "i_interface.h"
@@ -32,6 +33,7 @@
 #include "menu.h"
 #include "printf.h"
 #include "savegamemanager.h"
+#include "selaco.h"
 #include "serializer.h"
 #include "v_draw.h"
 #include "v_video.h"
@@ -45,6 +47,9 @@ CVAR(Int, save_sort_order, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 EXTERN_FARG(savedir);
 
 extern bool netgame;
+
+EXTERN_CVAR(Int, developer);
+
 
 //=============================================================================
 //
@@ -136,7 +141,12 @@ int FSavegameManagerBase::InsertSaveNode(FSaveGameNode *node)
 		for (; i < SaveGames.Size(); i++)
 		{
 			bool sortcmp = false;
-			switch(save_sort_order)
+			if (g_SelacoMode)
+			{
+				// GZSelaco: newest save first (by save date), then by title
+				sortcmp = SaveGames[i]->saveDate < node->saveDate || (SaveGames[i]->saveDate == node->saveDate && node->SaveTitle.CompareNoCase(SaveGames[i]->SaveTitle) <= 0);
+			}
+			else switch(save_sort_order)
 			{
 			case 1:
 				sortcmp = node->CreationTime.CompareNoCase(SaveGames[i]->CreationTime) > 0;
@@ -147,7 +157,7 @@ int FSavegameManagerBase::InsertSaveNode(FSaveGameNode *node)
 				break;
 			}
 
-			if (SaveGames[i]->bOldVersion || sortcmp)
+			if ((SaveGames[i]->bOldVersion && !g_SelacoMode) || sortcmp)
 			{
 				break;
 			}
@@ -163,7 +173,7 @@ int FSavegameManagerBase::InsertSaveNode(FSaveGameNode *node)
 //
 //=============================================================================
 
-void FSavegameManagerBase::NotifyNewSave(const FString &file, const FString &title, bool okForQuicksave, bool forceQuicksave)
+void FSavegameManagerBase::NotifyNewSave(const FString &file, const FString &title, int saveDate, bool okForQuicksave, bool forceQuicksave, int elapsedTime, int levelnum, int32_t flags)
 {
 	if (file.IsEmpty())
 		return;
@@ -183,8 +193,12 @@ void FSavegameManagerBase::NotifyNewSave(const FString &file, const FString &tit
 			node->SaveTitle = title;
 			node->CreationTime = myasctime();
 			node->UUID = GameUUID;
+			node->saveDate = saveDate;
 			node->bOldVersion = false;
 			node->bMissingWads = false;
+			node->saveFlags = flags;
+			node->elapsedTime = elapsedTime;
+			node->levelNum = levelnum;
 
 			// refresh my game's position on the list (needed if time/name changed)
 			SaveGames.Delete(i);
@@ -206,6 +220,10 @@ void FSavegameManagerBase::NotifyNewSave(const FString &file, const FString &tit
 	node->Filename = file;
 	node->bOldVersion = false;
 	node->bMissingWads = false;
+	node->saveDate = saveDate;
+	node->elapsedTime = elapsedTime;
+	node->saveFlags = flags;
+	node->levelNum = levelnum;
 	int index = InsertSaveNode(node);
 
 	if (okForQuicksave)
@@ -251,12 +269,19 @@ DEFINE_ACTION_FUNCTION(FSavegameManager, LoadSavegame)
 //
 //=============================================================================
 
-void FSavegameManagerBase::DoSave(int Selected, const char *savegamestring)
+void FSavegameManagerBase::DoSave(int Selected, const char *savegamestring, int flags)
 {
+	// @Cockatrice - Consult the event managers to determine if we are actually allowed to save at this moment
+	if (!staticEventManager.IsSaveAllowed(false)) {
+		if (developer > 0)
+			Printf("Save \"%s\" rejected by event manager.", savegamestring);
+		return;
+	}
+
 	if (Selected != 0)
 	{
 		auto node = SaveGames[Selected];
-		PerformSaveGame(node->Filename.GetChars(), savegamestring);
+		PerformSaveGame(node->Filename.GetChars(), savegamestring, flags);
 	}
 	else
 	{
@@ -300,14 +325,15 @@ void FSavegameManagerBase::DoSave(int Selected, const char *savegamestring)
 		{
 			for (i = 0;; ++i)
 			{
-				filename = BuildSaveName("save", i);
+				// GZSelaco names manual saves save_manualXX
+				filename = BuildSaveName(g_SelacoMode ? "save_manual" : "save", i);
 				if (!FileExists(filename))
 				{
 					break;
 				}
 			}
 		}
-		PerformSaveGame(filename.GetChars(), savegamestring);
+		PerformSaveGame(filename.GetChars(), savegamestring, flags);
 	}
 	M_ClearMenus();
 }
@@ -317,7 +343,8 @@ DEFINE_ACTION_FUNCTION(FSavegameManager, DoSave)
 	PARAM_SELF_STRUCT_PROLOGUE(FSavegameManagerBase);
 	PARAM_INT(sel);
 	PARAM_STRING(name);
-	self->DoSave(sel, name.GetChars());
+	PARAM_INT(flags);
+	self->DoSave(sel, name.GetChars(), flags);
 	return 0;
 }
 
@@ -441,10 +468,11 @@ DEFINE_ACTION_FUNCTION(FSavegameManager, ClearSaveStuff)
 //
 //=============================================================================
 
-bool FSavegameManagerBase::DrawSavePic(int x, int y, int w, int h)
+bool FSavegameManagerBase::DrawSavePic(int x, int y, int w, int h, bool filter)
 {
 	if (SavePic == nullptr) return false;
-	DrawTexture(twod, SavePic, x, y, 	DTA_DestWidth, w, DTA_DestHeight, h, DTA_Masked, false,	TAG_DONE);
+	// The filter parameter (default true in ZScript) is GZSelaco's; other games keep UZDoom's unfiltered save picture.
+	DrawTexture(twod, SavePic, x, y, 	DTA_DestWidth, w, DTA_DestHeight, h, DTA_Masked, false, DTA_BilinearFilter, filter && g_SelacoMode,	TAG_DONE);
 	return true;
 }
 
@@ -455,7 +483,8 @@ DEFINE_ACTION_FUNCTION(FSavegameManager, DrawSavePic)
 	PARAM_INT(y);
 	PARAM_INT(w);
 	PARAM_INT(h);
-	ACTION_RETURN_BOOL(self->DrawSavePic(x, y, w, h));
+	PARAM_BOOL(filter);
+	ACTION_RETURN_BOOL(self->DrawSavePic(x, y, w, h, filter));
 }
 
 //=============================================================================
@@ -601,6 +630,10 @@ DEFINE_ACTION_FUNCTION(FSavegameManager, RemoveUUIDSaveSlots)
 	ACTION_RETURN_INT(self->RemoveUUIDSaveSlots());
 }
 
+DEFINE_FIELD(FSaveGameNode, saveDate);
+DEFINE_FIELD(FSaveGameNode, saveFlags);
+DEFINE_FIELD(FSaveGameNode, elapsedTime);
+DEFINE_FIELD(FSaveGameNode, levelNum);
 DEFINE_FIELD(FSaveGameNode, SaveTitle);
 DEFINE_FIELD(FSaveGameNode, Filename);
 DEFINE_FIELD(FSaveGameNode, UUID);
@@ -650,7 +683,8 @@ FString G_GetSavegamesFolder()
 			name << '/';
 	}
 
-	if (usefilter && SavegameFolder.IsNotEmpty())
+	// GZSelaco keeps its saves directly in the save directory, without the per-IWAD subfolder.
+	if (usefilter && SavegameFolder.IsNotEmpty() && !g_SelacoMode)
 		name << SavegameFolder << '/';
 
 	name = NicePath(name.GetChars());
@@ -672,3 +706,11 @@ FString G_BuildSaveName(const char* prefix)
 	name.Substitute("\\", "/");
 	return name;
 }
+
+
+FString G_BuildSaveName(const char* prefix, int number) {
+	FString nam(prefix);
+	nam.AppendFormat("%d", number);
+	return G_BuildSaveName(nam.GetChars());
+}
+

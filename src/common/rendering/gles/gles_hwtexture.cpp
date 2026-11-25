@@ -31,6 +31,7 @@
 #include "gles_samplers.h"
 #include "gles_renderstate.h"
 #include "gles_hwtexture.h"
+#include "printf.h"
 
 namespace OpenGLESRenderer
 {
@@ -63,7 +64,7 @@ unsigned int FHardwareTexture::lastbound[FHardwareTexture::MAX_TEXTURES];
 //
 //===========================================================================
 
-unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int h, int texunit, bool mipmap, const char *name)
+unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int h, int texunit, bool mipmap, const char *name, bool noGLSwizzle /*= false*/)
 {
 	int rh,rw;
 	int texformat = GL_RGBA;// TexFormat[gl_texture_format];
@@ -130,6 +131,11 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		{
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 			sourcetype = texformat = GL_ALPHA;
+		}
+		else if (noGLSwizzle)
+		{
+			// the data is already in RGBA order (Selaco's lightmaps)
+			sourcetype = texformat = GL_RGBA;
 		}
 		else if (gles.bgraTextures)
 		{
@@ -237,6 +243,19 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 	return glTexID;
 }
 
+
+unsigned int FHardwareTexture::CreateCompressedTexture(unsigned char* buffer, int w, int h, int texunit, bool mipmap, CompressionFormat format, const char* name)
+{
+	// (Selaco: compressed lightmaps) Not supported by this backend, which renders no lightmaps:
+	// not fatal, so that a level with such data still loads.
+	static bool warned = false;
+	if (!warned)
+	{
+		Printf(TEXTCOLOR_ORANGE "FHardwareTexture::CreateCompressedTexture is not currently supported in OpenGLES!\n");
+		warned = true;
+	}
+	return 0;
+}
 
 void FHardwareTexture::AllocateBuffer(int w, int h, int texelsize)
 {

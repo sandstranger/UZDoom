@@ -21,6 +21,7 @@
 **
 */
 
+#include "selaco.h"
 #include "cmdlib.h"
 #include "dobject.h"
 #include "filesystem.h"
@@ -172,6 +173,7 @@ static void InitTokenMap()
 	TOKENDEF (',',				ZCC_COMMA);
 	TOKENDEF (TK_Class,			ZCC_CLASS);
 	TOKENDEF (TK_Abstract,		ZCC_ABSTRACT);
+	TOKENDEF (TK_Unit,			ZCC_UNIT);
 	TOKENDEF (TK_Native,		ZCC_NATIVE);
 	TOKENDEF (TK_Action,		ZCC_ACTION);
 	TOKENDEF (TK_Replaces,		ZCC_REPLACES);
@@ -407,6 +409,31 @@ parse_end:
 
 //**---------------------------------------------------------------------------
 
+//**---------------------------------------------------------------------------
+//
+// Selaco (an IWAD of its own, see selaco.h) defines classes with the same names as some of the other games' classes
+// in the engine pk3 - Stimpack, PlasmaRifle, Dart, MetalPot, WaterBottle (GZSelaco had removed all game content).
+// While Selaco is the game, the engine scripts declaring those are not compiled; everything else stays available.
+//
+//**---------------------------------------------------------------------------
+
+static bool IsSelacoSkippedEngineScript(const FString& include)
+{
+	static const char* const files[] = {
+		"zscript/actors/doom/doomhealth.zs",			// Stimpack
+		"zscript/actors/doom/weaponplasma.zs",			// PlasmaRifle
+		"zscript/actors/hexen/scriptprojectiles.zs",	// Dart
+		"zscript/actors/strife/strifestuff.zs",			// MetalPot, WaterBottle
+		"zscript/actors/chex/chexitems.zs",				// (derive from doomhealth's classes)
+		"zscript/actors/chex/chexweapons.zs",			// (derives from PlasmaRifle)
+	};
+	for (auto file : files)
+	{
+		if (include.CompareNoCase(file) == 0) return true;
+	}
+	return false;
+}
+
 PNamespace *ParseOneScript(const int baselump, ZCCParseState &state)
 {
 	FScanner sc;
@@ -482,6 +509,10 @@ PNamespace *ParseOneScript(const int baselump, ZCCParseState &state)
 	ParseSingleFile(&sc, nullptr, lumpnum, parser, state);
 	for (unsigned i = 0; i < Includes.Size(); i++)
 	{
+		if (fileno == 0 && g_SelacoMode && IsSelacoSkippedEngineScript(Includes[i]))
+		{
+			continue;
+		}
 		lumpnum = fileSystem.CheckNumForFullName(Includes[i].GetChars(), true);
 		if (lumpnum == -1)
 		{

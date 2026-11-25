@@ -42,6 +42,8 @@
 #include "hw_material.h"
 #include "menu.h"
 #include "printf.h"
+#include "menustate.h"
+#include "selaco.h"
 
 #include <chrono>
 #include <thread>
@@ -332,17 +334,23 @@ void DFrameBuffer::FPSLimit()
 	using namespace std::this_thread;
 
 #ifndef ANDROID
-	if (vid_maxfps <= 0 || cl_capfps)
+	int maxfps = vid_maxfps;
+
+	// (Selaco: the menus are limited to 200 fps regardless of the setting, animated menus go nuts otherwise)
+	if (g_SelacoMode && menuactive == MENU_On)
+	{
+		maxfps = maxfps <= 0 ? 200 : std::min(maxfps, 200);
+	}
+	else if (vid_maxfps <= 0 || cl_capfps)
+		return;
 #else
 	if (cl_capfps)
-#endif
 		return;
 
-#ifndef ANDROID
-	uint64_t targetWakeTime = fpsLimitTime + 1'000'000 / vid_maxfps;
-#else
-	uint64_t targetWakeTime = fpsLimitTime + 1'000'000 / gTargetFps;
+	int maxfps = gTargetFps;
 #endif
+
+	uint64_t targetWakeTime = fpsLimitTime + 1'000'000 / maxfps;
 
 	while (true)
 	{
@@ -382,6 +390,8 @@ FMaterial* DFrameBuffer::CreateMaterial(FGameTexture* tex, int scaleflags)
 
 static int ScreenGetWidth() { return twod->GetWidth(); }
 static int ScreenGetHeight() { return twod->GetHeight(); }
+static int ScreenGetWindowWidth() { return screen->GetClientWidth(); }
+static int ScreenGetWindowHeight() { return screen->GetClientHeight(); }
 
 DEFINE_ACTION_FUNCTION_NATIVE(_Screen, GetWidth, ScreenGetWidth)
 {
@@ -393,6 +403,18 @@ DEFINE_ACTION_FUNCTION_NATIVE(_Screen, GetHeight, ScreenGetHeight)
 {
 	PARAM_PROLOGUE;
 	ACTION_RETURN_INT(twod->GetHeight());
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(_Screen, GetWindowWidth, ScreenGetWindowWidth)
+{
+	PARAM_PROLOGUE;
+	ACTION_RETURN_INT(screen->GetClientWidth());
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(_Screen, GetWindowHeight, ScreenGetWindowHeight)
+{
+	PARAM_PROLOGUE;
+	ACTION_RETURN_INT(screen->GetClientHeight());
 }
 
 DEFINE_ACTION_FUNCTION(_Screen, PaletteColor)

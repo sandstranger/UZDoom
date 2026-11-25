@@ -29,6 +29,7 @@
 #include "basics.h"
 #include "bitmap.h"
 #include "memarena.h"
+#include "files.h"
 #include "tarray.h"
 #include "zstring.h"
 
@@ -39,6 +40,18 @@ struct PalEntry;
 
 using PrecacheInfo = TMap<int, std::pair<int, int>>;
 extern FMemArena ImageArena;
+
+
+// For bg loader
+// TODO: Move to a different file
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <chrono>
+#include <map>
+#include "stats.h"
+#include "TSQueue.h"
+#include "palettecontainer.h"
 
 // Pixel store wrapper that can either own the pixels itself or refer to an external store.
 struct PalettedPixels
@@ -74,11 +87,31 @@ public:
 
 };
 
+class ImageLoadThread;
+class FGameTexture;
+
+// @Cockatrice - Image sources must prepare the information they will need to load in the background thread
+// in the main thread. These params or a subclass will be passed to the loader and then back to the image source
+class FImageLoadParams {
+public:
+	int lump;
+	int translation, conversion;
+	FRemapTable *remap;
+
+	virtual ~FImageLoadParams() {
+		remap = 0;
+	}
+};
+
+
 // This represents a naked image. It has no high level logic attached to it.
 // All it can do is provide raw image data to its users.
 class FImageSource
 {
 	friend class FBrightmapTexture;
+	friend class ImageLoadThread;
+	friend class VkTexLoadThread;	// TODO: Remove this, lazy
+
 protected:
 
 	static TArray<FImageSource *>ImageForLump;
@@ -101,6 +134,9 @@ protected:
 public:
 	virtual bool SupportRemap0() { return false; }		// Unfortunate hackery that's needed for Hexen's skies. Only the image can know about the needed parameters
 	virtual bool IsRawCompatible() { return true; }		// Same thing for mid texture compatibility handling. Can only be determined by looking at the composition data which is private to the image.
+	virtual bool IsGPUOnly() { return false; }			// @Cockatrice - Image can only exist on the GPU, and CPU manipulation of this image will not be possible. Used for DDS Compressed Textures
+	virtual int getGLFormat() const { return 0; }
+	virtual int getVKFormat() const { return 0; }
 
 	void CopySize(FImageSource &other) noexcept
 	{
@@ -115,6 +151,13 @@ public:
 	void *operator new(size_t block) { return ImageArena.Alloc(block); }
 	void* operator new(size_t block, void* mem) { return mem; }
 	void operator delete(void *block) {}
+
+	// @Cockatrice - Create params for a background load op
+	virtual FImageLoadParams *NewLoaderParams(int conversion, int translation, FRemapTable *remap);
+	virtual int ReadPixels(FImageLoadParams *params, FBitmap *bmp);									// Thread safe(ish) version
+	virtual int ReadPixels(FileReader *reader, FBitmap *bmp, int conversion);						// Direct read pixels, must be implemented for things like multipatch to work properly
+	virtual int ReadTranslatedPixels(FileReader *reader, FBitmap *bmp, const PalEntry *remap, int conversion);							// Thread safe(ish) version
+	virtual int ReadCompressedPixels(FileReader* reader, unsigned char** data, size_t &size, size_t &unitSize, int &mipLevels);			// Thread safe, read data for the GPU and don't interpret it at all
 
 	bool bMasked = true;						// Image (might) have holes (Assume true unless proven otherwise!)
 	int8_t bTranslucent = -1;					// Image has pixels with a non-0/1 value. (-1 means the user needs to do a real check)
@@ -134,7 +177,8 @@ public:
 	FBitmap GetCachedBitmap(const PalEntry *remap, int conversion, int *trans = nullptr, int frame = 0);
 
 	static void ClearImages() { ImageArena.FreeAll(); ImageForLump.Clear(); NextID = 0; }
-	static FImageSource * GetImage(int lumpnum, bool checkflat);
+	static FImageSource* GetImage(int lumpnum, bool checkflat);
+	static FImageSource* CreateImageFromDef(FileReader& fr, int filetype, int lumpnum, bool* hasExtraInfo = nullptr);
 
 	// Frame functions
 
@@ -154,6 +198,10 @@ public:
 
 	FImageSource(int sourcelump = -1) noexcept : SourceLump(sourcelump) { ImageID = ++NextID; }
 	virtual ~FImageSource() = default;
+
+	virtual bool SerializeForTextureDef(FILE* fp, FString& name, int useType, FGameTexture* gameTex);
+	virtual int DeSerializeFromTextureDef(FileReader &fr);
+	virtual bool DeSerializeExtraDataFromTextureDef(FileReader& fr, FGameTexture* gameTex) { return true; }
 
 	int GetWidth() const
 	{

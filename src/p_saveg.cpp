@@ -52,6 +52,7 @@
 #include "s_music.h"
 #include "model.h"
 #include "d_net.h"
+#include "selaco.h"
 
 EXTERN_CVAR(Bool, save_formatted)
 
@@ -72,6 +73,7 @@ FSerializer &Serialize(FSerializer &arc, const char *key, line_t &line, line_t *
 			("alpha", line.alpha, def->alpha)
 			("portalindex", line.portalindex, def->portalindex)
 			("locknumber", line.locknumber, def->locknumber)
+			("blockbits", line.blockBits, def->blockBits)
 			("health", line.health, def->health);
 			// Unless the map loader is changed the sidedef references will not change between map loads so there's no need to save them.
 			//.Array("sides", line.sidedef, 2)
@@ -692,6 +694,12 @@ void FLevelLocals::ReadOnePlayer(FSerializer &arc, bool fromHub)
 			// via a net command, but that won't be processed in time for a screen
 			// wipe, so we need something here.
 			temp.MaxPitch = temp.MinPitch = temp.mo->Angles.Pitch;
+
+			// @Cockatrice - The temp player has completely undefined rotator values, so zero it out here
+			// I'm pretty sure this should be in the constructor but it's not
+			// Maybe it should be in the savegame? At least this saves us from invalidating the player angle.
+			temp.angleOffsetTargets.Zero();
+
 			CopyPlayer(Players[i], &temp, name.GetChars());
 		}
 		else
@@ -926,6 +934,8 @@ void FLevelLocals::Serialize(FSerializer &arc, bool hubload)
 			arc.GetSize("polyobjs") != Polyobjects.Size() ||
 			memcmp(chk, md5, 16))
 		{
+			// Selaco reports this through its error event handler (error type 5)
+			if (g_SelacoMode) I_Error2(5, "This Savegame is incompatible with your game version. ");
 			I_Error("Savegame is from a different level");
 		}
 	}
@@ -941,7 +951,16 @@ void FLevelLocals::Serialize(FSerializer &arc, bool hubload)
 		interpolator.ClearInterpolations();
 		arc.ReadObjects(hubload);
 		// If there have been object deserialization errors we must absolutely not continue here because scripted objects can do unpredictable things.
-		if (arc.mObjectErrors) I_Error("Failed to load savegame");
+		if (arc.mObjectErrors) {
+			// Selaco reports the details through its error event handler (error type 4)
+			if (g_SelacoMode && arc.fullErrorMessage.IsNotEmpty()) {
+				I_Error2(4, "%s", arc.fullErrorMessage.GetChars());
+			}
+			I_Error("Failed to load savegame");
+		}
+	}
+	else {
+		arc("mapversion", mapVersion);
 	}
 
 	arc("multiplayer", multiplayer);
@@ -987,6 +1006,14 @@ void FLevelLocals::Serialize(FSerializer &arc, bool hubload)
 		("frozenstate", frozenstate)
 		("actorbehaviors", ActorBehaviors);
 
+	if (arc.isWriting())
+	{
+		arc("definedparticles", DefinedParticlePool);
+	}
+	else if (arc.isReading())
+	{
+		P_LoadDefinedParticles(arc, this, "definedparticles");
+	}
 
 	// Hub transitions must keep the current total time
 	if (!hubload)

@@ -1127,6 +1127,75 @@ class Weapon : StateProvider
 
 }
 
+//===========================================================================
+//
+// WeaponBase
+//
+// Selaco's name for the weapon base class: GZSelaco renamed the engine's
+// Weapon class to WeaponBase, and Selaco's weapons derive from it.
+// It re-declares Weapon's script properties and flags so that the
+// WeaponBase prefix works in Default blocks (WeaponBase.SlotNumber,
+// +WeaponBase.NOAUTOAIM). Constants, members and functions are inherited
+// (WeaponBase.AltFire, class<WeaponBase>). Abstract so that cheats and
+// slot setup never hand out the bare class.
+//
+//===========================================================================
+
+class WeaponBase : Weapon abstract
+{
+	property AmmoGive: AmmoGive1;
+	property AmmoGive1: AmmoGive1;
+	property AmmoGive2: AmmoGive2;
+	property AmmoUse: AmmoUse1;
+	property AmmoUse1: AmmoUse1;
+	property AmmoUse2: AmmoUse2;
+	property AmmoType: AmmoType1;
+	property AmmoType1: AmmoType1;
+	property AmmoType2: AmmoType2;
+	property Kickback: Kickback;
+	property ReadySound: ReadySound;
+	property SelectionOrder: SelectionOrder;
+	property MinSelectionAmmo1: MinSelAmmo1;
+	property MinSelectionAmmo2: MinSelAmmo2;
+	property SisterWeapon: SisterWeaponType;
+	property UpSound: UpSound;
+	property YAdjust: YAdjust;
+	property BobSpeed: BobSpeed;
+	property BobRangeX: BobRangeX;
+	property BobRangeY: BobRangeY;
+	property WeaponScaleX: WeaponScaleX;
+	property WeaponScaleY: WeaponScaleY;
+	property SlotNumber: SlotNumber;
+	property SlotPriority: SlotPriority;
+	property LookScale: LookScale;
+	property BobPivot3D : BobPivot3D;
+
+	flagdef NoAutoFire: WeaponFlags, 0;			// weapon does not autofire
+	flagdef ReadySndHalf: WeaponFlags, 1;		// ready sound is played ~1/2 the time
+	flagdef DontBob: WeaponFlags, 2;			// don't bob the weapon
+	flagdef AxeBlood: WeaponFlags, 3;			// weapon makes axe blood on impact
+	flagdef NoAlert: WeaponFlags, 4;			// weapon does not alert monsters
+	flagdef Ammo_Optional: WeaponFlags, 5;		// weapon can use ammo but does not require it
+	flagdef Alt_Ammo_Optional: WeaponFlags, 6;	// alternate fire can use ammo but does not require it
+	flagdef Primary_Uses_Both: WeaponFlags, 7;	// primary fire uses both ammo
+	flagdef Alt_Uses_Both: WeaponFlags, 8;		// alternate fire uses both ammo
+	flagdef Wimpy_Weapon:WeaponFlags, 9;		// change away when ammo for another weapon is replenished
+	flagdef Powered_Up: WeaponFlags, 10;		// this is a tome-of-power'ed version of its sister
+	flagdef Ammo_CheckBoth: WeaponFlags, 11;	// check for both primary and secondary fire before switching it off
+	flagdef No_Auto_Switch: WeaponFlags, 12;	// never switch to this weapon when it's picked up
+	flagdef Staff2_Kickback: WeaponFlags, 13;	// the powered-up Heretic staff has special kickback
+	flagdef NoAutoaim: WeaponFlags, 14;			// this weapon never uses autoaim (useful for ballistic projectiles)
+	flagdef MeleeWeapon: WeaponFlags, 15;		// melee weapon. Used by monster AI with AVOIDMELEE.
+	flagdef NoDeathDeselect: WeaponFlags, 16;	// Don't jump to the Deselect state when the player dies
+	flagdef NoDeathInput: WeaponFlags, 17;		// The weapon cannot be fired/reloaded/whatever when the player is dead
+	flagdef CheatNotWeapon: WeaponFlags, 18;	// Give cheat considers this not a weapon (used by Sigil)
+	flagdef NoAutoSwitchTo : WeaponFlags, 19;	// do not auto switch to this weapon ever!
+	flagdef BFG: WeaponFlags, 20;				// This weapon is a BFG (i.e BFG9000 and the Wraithverge)
+	flagdef Explosive: WeaponFlags, 21;			// This weapon is explosive (i.e Doom and Strife's Rocket Launchers)
+	flagdef NoLMS: none, 0;
+	flagdef Allow_With_Respawn_Invul: none, 0;
+}
+
 class WeaponGiver : Weapon
 {
 	double AmmoFactor;

@@ -122,6 +122,11 @@
 #include "wi_stuff.h"
 #include "wipe.h"
 #include "zwidget/window/window.h"
+#include "s_loader.h"
+#include "fs_findfile.h"
+#include "a_lightgroup.h"
+#include "statdb.h"
+#include "selaco.h"
 
 #ifdef __unix__
 #include "i_system.h"  // for SHARE_DIR
@@ -129,6 +134,9 @@
 
 using namespace FileSys;
 
+EXTERN_CVAR(Bool, enablemods)
+EXTERN_CVAR(Bool, modsexist)
+EXTERN_CVAR(Int, gl_texture_quality)
 EXTERN_CVAR(Bool, hud_althud)
 EXTERN_CVAR(Int, vr_mode)
 EXTERN_CVAR(Bool, cl_customizeinvulmap)
@@ -281,6 +289,10 @@ FARG(nointro, "Loading", "Skips intro video", "",
 	" skips that behavior and always goes to the title screen immediately.");
 FARG(episode, "Loading", "Starts the game on the first map of an episode", "1",
 	"Like -warp, bu starts the game on the first map of the specified episode");
+FARG(nomods, "Loading", "Selaco: skips loading mods", "",
+	"Selaco only: skips loading the mods found in the Mods folder and the Steam Workshop.");
+FARG_ADVANCED(writetexturecache, "Debug", "",
+	"Writes the texture cache while starting up.");
 
 FARG(showlauncher, "Launcher", "Forces the startup launcher to show, even if disabled through other means.", "",
 	"Forces the startup launcher to show, even if disabled through other means.");
@@ -340,6 +352,21 @@ EXTERN_FARG(host);
 
 extern const char * const BACKEND;
 
+// Provide engine version to ZScript in a portable way
+CUSTOM_CVAR(Int, engine_major, ENG_MAJOR, CVAR_NOSAVE | CVAR_NOSET | CVAR_IGNORE | CVAR_CONFIG_ONLY | CVAR_VIRTUAL)
+{
+	self = (int)(ENG_MAJOR);
+}
+
+CUSTOM_CVAR(Int, engine_minor, ENG_MINOR, CVAR_NOSAVE | CVAR_NOSET | CVAR_IGNORE | CVAR_CONFIG_ONLY | CVAR_VIRTUAL)
+{
+	self = (int)(ENG_MINOR);
+}
+
+// True while the loaded IWAD is Selaco (see selaco.h), set in D_DoomMain_Internal once the IWAD is identified.
+bool g_SelacoMode = false;
+DEFINE_GLOBAL_NAMED(g_SelacoMode, SelacoMode)
+
 void DrawHUD();
 void D_DoAnonStats();
 FString I_DetectOS();
@@ -353,6 +380,7 @@ void Local_Job_Init();
 // EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
 
 extern void I_SetWindowTitle(const char* caption);
+extern void I_FocusWindow();
 extern void ReadStatistics();
 extern void M_SetDefaultMode ();
 extern void G_NewInit ();
@@ -629,6 +657,7 @@ void D_Render(std::function<void()> action, bool interpolate)
 		else Level->HasDynamicLights = false;	// lights are off so effectively we have none.
 		if (interpolate) Level->interpolator.DoInterpolations(I_GetTimeFrac());
 		P_FindParticleSubsectors(Level);
+		P_FindDefinedParticleSubsectors(Level);
 		PO_LinkToSubsectors(Level);
 	}
 	action();
@@ -1116,6 +1145,7 @@ static void DrawOverlays()
 		M_Drawer ();
 	}
 	DrawRateStuff();
+	DrawLightmapStatus();
 	if (!hud_toggled)
 		FStat::PrintStat (twod);
 }
@@ -1277,11 +1307,18 @@ void D_Display ()
 
 	SetDeltaTime();
 
+	// TODO: Find a new place for this!
+	AudioLoaderQueue::Instance->update();
+
 	if (nodrawers || screen == NULL)
 		return; 				// for comparative timing / profiling
 
 	if (!AppActive && !setmodeneeded && !vid_activeinbackground)
 	{
+		return;
+	}
+
+	if (!screen->CanDisplay(AppActive)) {
 		return;
 	}
 
@@ -1303,8 +1340,13 @@ void D_Display ()
 	{
 		DAngle fov = DAngle::fromDeg(90.);
 		AActor *cam = players[consoleplayer].camera;
-		if (cam)
-			fov = DAngle::fromDeg(cam->GetFOV(I_GetTimeFrac()));
+		if (cam) {
+			double ticFrac = I_GetTimeFrac();
+			// @Cockatrice - Don't interpolate if paused or pref. Not sure why this was left out of stock FOV code
+			if (g_SelacoMode && (r_NoInterpolate || paused)) ticFrac = 1.0;
+
+			fov = DAngle::fromDeg(cam->GetFOV(ticFrac));
+		}
 
 		R_SetFOV(vp, fov);
 	}
@@ -1631,6 +1673,7 @@ void D_DoomLoop ()
 			TryRunTics (); // will run at least one tic
 			// Update display, next frame, with current state.
 			I_StartTic ();
+			statDatabase.update();
 			D_ProcessEvents();
 			D_Display ();
 			S_UpdateMusic();
@@ -1648,11 +1691,26 @@ void D_DoomLoop ()
 		}
 		catch (const CRecoverableError &error)
 		{
+			bool wasConsole = gamestate == GS_FULLCONSOLE || ConsoleState != c_up;
+
 			if (error.GetMessage ())
 			{
 				Printf (static_cast<PrintFlag>(PRINT_NONOTIFY | PRINT_BOLD), "\n%s\n", error.GetMessage());
 			}
 			D_ErrorCleanup ();
+
+			// @Cockatrice - Clearing the net-game was not updating the lasttic variable, which means joystick input stops working
+			lasttic = gametic;
+
+			const CRecoverableError2* err2 = dynamic_cast<const CRecoverableError2*>(&error);
+			int errType = err2 ? err2->type : ERR_UNKNOWN;
+
+			// Attempt to notify script
+			if (!wasConsole && staticEventManager.HandleError(errType, FString(error.GetMessage()))) {
+				C_HideConsole();
+				gameaction = ga_nothing;
+				gamestate = GS_FULLCONSOLE;
+			}
 		}
 		catch (const FileSystemException& error) // in case this propagates up to here it should be treated as a recoverable error.
 		{
@@ -1661,12 +1719,30 @@ void D_DoomLoop ()
 				Printf(static_cast<PrintFlag>(PRINT_NONOTIFY | PRINT_BOLD), "\n%s\n", error.what());
 			}
 			D_ErrorCleanup();
+
+			// @Cockatrice - Inserted to restore joystick usage after error
+			lasttic = gametic;
 		}
 		catch (CVMAbortException &error)
 		{
+			bool wasConsole = gamestate == GS_FULLCONSOLE || ConsoleState != c_up;
+
 			error.MaybePrintMessage();
 			Printf(static_cast<PrintFlag>(PRINT_NONOTIFY | PRINT_BOLD), "%s", error.stacktrace.GetChars());
 			D_ErrorCleanup();
+
+			// @Cockatrice - Inserted to restore joystick usage after error
+			lasttic = gametic;
+
+			FString fullError;
+			fullError.Format(TEXTCOLOR_RED "%s" TEXTCOLOR_NORMAL "\n%s", error.GetMessage(), error.stacktrace.GetChars());
+
+			// Attempt to notify script
+			if (!wasConsole && staticEventManager.HandleError(ERR_UNKNOWN_ABORT, fullError)) {
+				C_HideConsole();
+				gameaction = ga_nothing;
+				gamestate = GS_FULLCONSOLE;
+			}
 		}
 	}
 }
@@ -2013,6 +2089,7 @@ void ParseCVarInfo()
 			FBaseCVar *cvar;
 			bool customCVar = false;
 			FName customCVarClassName;
+			bool set_default = false;
 
 			// Check for flag tokens.
 			while (sc.TokenType == TK_Identifier)
@@ -2049,11 +2126,24 @@ void ParseCVarInfo()
 					customCVarClassName = sc.String;
 					sc.MustGetStringName(")");
 				}
+				else if (stricmp(sc.String, "setdefault") == 0) {
+					set_default = true;
+				}
 				else
 				{
 					sc.ScriptError("Unknown cvar attribute '%s'", sc.String);
 				}
-				sc.MustGetAnyToken();
+
+				if (set_default) {
+					// The next token must be the cvar name.
+					sc.MustGetToken(TK_Identifier);
+					break;
+				} else sc.MustGetAnyToken();
+			}
+
+			// Error out if we are combining any flags with CVAR_REDEFINE_DEFAULT
+			if (set_default && cvarflags != (CVAR_MOD | CVAR_ARCHIVE)) {
+				sc.ScriptError("setdefault cannot be combined with any other flags");
 			}
 
 			// Possibility of defining a cvar as 'server nosave' or 'user nosave' is kept for
@@ -2067,39 +2157,44 @@ void ParseCVarInfo()
 			// Do some sanity checks.
 			// No need to check server-nosave and user-nosave combinations because they
 			// are made impossible right above.
-			if ((cvarflags & (CVAR_SERVERINFO|CVAR_USERINFO|CVAR_CONFIG_ONLY)) == 0 ||
+			if (!set_default && 
+				(cvarflags & (CVAR_SERVERINFO|CVAR_USERINFO|CVAR_CONFIG_ONLY)) == 0 ||
 				(cvarflags & (CVAR_SERVERINFO|CVAR_USERINFO)) == (CVAR_SERVERINFO|CVAR_USERINFO))
 			{
 				sc.ScriptError("One of 'server', 'user', or 'nosave' must be specified");
 			}
+
 			// The next token must be the cvar type.
-			if (sc.TokenType == TK_Bool)
-			{
-				cvartype = CVAR_Bool;
+			if (!set_default) {
+				if (sc.TokenType == TK_Bool)
+				{
+					cvartype = CVAR_Bool;
+				}
+				else if (sc.TokenType == TK_Int)
+				{
+					cvartype = CVAR_Int;
+				}
+				else if (sc.TokenType == TK_Float)
+				{
+					cvartype = CVAR_Float;
+				}
+				else if (sc.TokenType == TK_Color)
+				{
+					cvartype = CVAR_Color;
+				}
+				else if (sc.TokenType == TK_String)
+				{
+					cvartype = CVAR_String;
+				}
+				else
+				{
+					sc.ScriptError("Bad cvar type '%s'", sc.String);
+				}
+				// The next token must be the cvar name.
+				sc.MustGetToken(TK_Identifier);
 			}
-			else if (sc.TokenType == TK_Int)
-			{
-				cvartype = CVAR_Int;
-			}
-			else if (sc.TokenType == TK_Float)
-			{
-				cvartype = CVAR_Float;
-			}
-			else if (sc.TokenType == TK_Color)
-			{
-				cvartype = CVAR_Color;
-			}
-			else if (sc.TokenType == TK_String)
-			{
-				cvartype = CVAR_String;
-			}
-			else
-			{
-				sc.ScriptError("Bad cvar type '%s'", sc.String);
-			}
-			// The next token must be the cvar name.
-			sc.MustGetToken(TK_Identifier);
-			if (FindCVar(sc.String, NULL) != NULL)
+			
+			if (FindCVar(sc.String, NULL) != NULL && !set_default)
 			{
 				sc.ScriptError("cvar '%s' already exists", sc.String);
 			}
@@ -2130,12 +2225,27 @@ void ParseCVarInfo()
 					break;
 				}
 			}
-			// Now create the cvar.
-			cvar = customCVar ? C_CreateZSCustomCVar(cvarname.GetChars(), cvartype, cvarflags, customCVarClassName) : C_CreateCVar(cvarname.GetChars(), cvartype, cvarflags);
-			if (cvardefault != NULL)
+			else if (set_default) {
+				sc.ScriptError("setdefault requires a value");
+			}
+
+			// Now create or modify the cvar.
+			if (set_default) {
+				cvar = FindCVar(cvarname.GetChars(), NULL);
+
+				if (cvar == nullptr) {
+					Printf("Warning: CVAR %s could not be found for setdefault\n", cvarname.GetChars());
+				}
+			} 
+			else {
+				cvar = customCVar ? C_CreateZSCustomCVar(cvarname.GetChars(), cvartype, cvarflags, customCVarClassName) : C_CreateCVar(cvarname.GetChars(), cvartype, cvarflags);
+			}
+
+			if (cvar != nullptr && cvardefault != NULL)
 			{
 				UCVarValue val;
 				val.String = cvardefault;
+
 				cvar->SetGenericRepDefault(val, CVAR_String);
 			}
 			// To be like C and ACS, require a semicolon after everything.
@@ -2149,6 +2259,8 @@ void ParseCVarInfo()
 	{
 		GameConfig->DoModSetup (gameinfo.ConfigName.GetChars());
 	}
+
+	GameConfig->FinishStartup();
 }
 
 //==========================================================================
@@ -2414,6 +2526,148 @@ static void D_DoomInit()
 	if (!batchrun) Printf ("M_LoadDefaults: Load system defaults.\n");
 	M_LoadDefaults ();			// load before initing other systems
 }
+
+
+//==========================================================================
+//
+// AddModFiles
+//
+// Adds all files found in the subdirectory /Mods (Selaco only)
+//==========================================================================
+
+static void AddModFilesFrom(FString path, std::vector<FileSys::ResourceName>& allwads) {
+	FileSys::FileList list;
+
+	if (FileSys::ScanDirectory(list, path.GetChars(), "*.*", true))
+	{
+		for (auto& entry : list)
+		{
+			auto p = strrchr(entry.FileName.c_str(), '.');
+			if (p != nullptr && !entry.isDirectory)
+			{
+				// Only valid extensions
+				if (!stricmp(p, ".wad") || !stricmp(p, ".pk3") || !stricmp(p, ".pk7"))
+				{
+					Printf("\tFound %s!\n", entry.FileName.c_str());
+					D_AddFile(allwads, entry.FilePath.c_str(), false, -1, GameConfig, true);
+				}
+			}
+		}
+	}
+}
+
+
+static bool CheckModFilesFrom(FString path) {
+	FileSys::FileList list;
+
+	if (FileSys::ScanDirectory(list, path.GetChars(), "*.*", true))
+	{
+		for (auto& entry : list)
+		{
+			auto p = strrchr(entry.FileName.c_str(), '.');
+			if (p != nullptr && !entry.isDirectory)
+			{
+				// Only valid extensions
+				if (!stricmp(p, ".wad") || !stricmp(p, ".pk3") || !stricmp(p, ".pk7"))
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+
+// Do not add mod files for launching, but verify that some exist at all
+static bool CheckForModFiles() {
+	const char* modFolder = "Mods";
+	FStringf slasheddir("%s/%s/", progdir.GetChars(), modFolder);
+
+	// Check Mods folder and Mods/Workshop folder...
+	if (CheckModFilesFrom(slasheddir)) 
+		return true;
+	if (CheckModFilesFrom(slasheddir + "Workshop" + "/")) 
+		return true;
+
+	// Check the workshop.txt file, verify files exist
+	FString workshopPath = slasheddir + "workshop.txt";
+	FILE* ws = fopen(workshopPath.GetChars(), "r");
+	if (ws != NULL) {
+		char buff[1024];
+
+		// Skip first line
+		fgets(buff, 1024, ws);
+
+		while (fgets(buff, 1024, ws)) {
+			size_t len = strnlen(buff, 1024);
+			if (len > 4) {
+				buff[len - 1] = '\0';	// Remove nasty \n
+
+				auto p = strrchr(buff, '.');
+				if (p != nullptr) {
+					if (!strnicmp(p, ".pk3", 1024)) {
+						// Found mod file from workshop, signal true
+						fclose(ws);
+						return true;
+					}
+				}
+			}
+		}
+
+		fclose(ws);
+	}
+
+	return false;
+}
+
+
+static void AddModFiles(std::vector<FileSys::ResourceName>& allwads) {
+	if (Args->CheckParm(FArg_nomods) || !enablemods) {
+		Printf("Skipping Mod Loading\n");
+
+		return;
+	}
+
+	if (!(gameinfo.flags & GI_SHAREWARE) && !Args->CheckParm(FArg_noautoload) && !disableautoload && !Args->CheckParm(FArg_nomods)) {
+		Printf("Finding Mods...\n");
+
+		const char* modFolder = "Mods";
+		FStringf slasheddir("%s/%s/", progdir.GetChars(), modFolder);
+		AddModFilesFrom(slasheddir, allwads);
+		AddModFilesFrom(slasheddir + "Workshop" + "/", allwads);
+
+		// Open workshop.txt if it exists, and add any PK3 files
+		FString workshopPath = slasheddir + "workshop.txt";
+		FILE* ws = fopen(workshopPath.GetChars(), "r");
+		if (ws != NULL) {
+			Printf("Checking Steam Workshop mods...\n");
+			char buff[1024];
+
+			// Skip first line
+			fgets(buff, 1024, ws);
+
+			while (fgets(buff, 1024, ws)) {
+				size_t len = strnlen(buff, 1024);
+				if (len > 4) {
+					buff[len - 1] = '\0';	// Remove nasty \n
+
+					auto p = strrchr(buff, '.');
+					if (p != nullptr) {
+						if (!strnicmp(p, ".pk3", 1024)) {
+							Printf("\tFound %s!\n", buff);
+							D_AddFile(allwads, buff, false, -1, GameConfig, true);
+						}
+					}
+				}
+			}
+
+			fclose(ws);
+		}
+	}
+}
+
 
 //==========================================================================
 //
@@ -3567,14 +3821,28 @@ static int FileSystemPrintf(FSMessageLevel level, const char* fmt, ...)
 	return (int)text.Len();
 }
 
+
+bool StrEndsWith(const std::string& str, const std::string& suffix) {
+	return str.size() >= suffix.size() &&
+		std::equal(suffix.rbegin(), suffix.rend(), str.rbegin(),
+			[](char a, char b) {
+				return std::tolower((unsigned char)a) == std::tolower((unsigned char)b);
+			});
+}
+
 //==========================================================================
 //
 // D_InitGame
 //
 //==========================================================================
 
+// Startup timing (printed for Selaco only, as GZSelaco did; other games keep UZDoom's startup log)
+#define CLOCK_START  timer.Reset(); timer.Clock();
+#define CLOCK_END(_D_)  timer.Unclock(); if (g_SelacoMode && !batchrun) Printf(TEXTCOLOR_GOLD "%s: %.2fms\n", _D_, timer.TimeMS());
+
 static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceName>& allwads, std::vector<FileSys::ResourceName>& pwads)
 {
+	cycle_t timer = cycle_t();
 	NetworkEntityManager::InitializeNetworkEntities();
 
 	bool dap_debugging = vm_debug;
@@ -3675,11 +3943,59 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 		FixMacHexen(fileSystem);
 		FindStrifeTeaserVoices(fileSystem);
 	};
-	allwads.insert(
-		allwads.end(),
-		std::make_move_iterator(pwads.begin()),
-		std::make_move_iterator(pwads.end())
-	);
+
+	if (!g_SelacoMode)
+	{
+		allwads.insert(
+			allwads.end(),
+			std::make_move_iterator(pwads.begin()),
+			std::make_move_iterator(pwads.end())
+		);
+	}
+	else
+	{
+		// Selaco: mods are gated by the enablemods CVAR and also loaded from the Mods folder / Steam Workshop.
+
+		// @Cockatrice - enablemods is designed as a Chapter2 gate so first launch disables mods, should they exist
+		// If we haven't found any mods, or there are no pwads to include let's just turn mods on since turning them off serves no purpose
+		const bool hasInstalledMods = CheckForModFiles();
+		modsexist = hasInstalledMods;
+
+		// For development purposes we need the files directory, so make that exempt from counting as a mod
+		if (!modsexist && pwads.size() > 0) {
+			for (auto& p : pwads) {
+				// Hack for development. If the string ends with any case of files, such as ./Files etc we will accept it
+				if (!StrEndsWith(p.Name, "files")) {
+					modsexist = true;
+					break;
+				}
+			}
+		}
+
+		// Do the toggle if safe
+		if (!enablemods && !modsexist) {
+			enablemods = true;
+		}
+
+		if (enablemods) {
+			allwads.insert(
+				allwads.end(),
+				std::make_move_iterator(pwads.begin()),
+				std::make_move_iterator(pwads.end())
+			);
+		}
+		else {
+			// Only add pwads that are sanctioned
+			// In this case, only add files
+			for (auto& p : pwads) {
+				if (StrEndsWith(p.Name, "files")) {
+					allwads.push_back(p);
+				}
+			}
+		}
+
+		AddModFiles(allwads);
+	}
 
 	bool allowduplicates = Args->CheckParm(FArg_allowduplicates);
 	if (!fileSystem.InitMultipleFiles(allwads, &lfi, FileSystemPrintf, allowduplicates))
@@ -3693,10 +4009,14 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 	D_GrabCVarDefaults(); //parse DEFCVARS
 	InitPalette();
 
+	CLOCK_START
 	if (!batchrun) Printf("S_Init: Setting up sound.\n");
 	S_Init();
-
+	CLOCK_END("Sound Startup")
+	
+	bool writeCache = Args->CheckParm(FArg_writetexturecache);
 	int max_progress = TexMan.GuesstimateNumTextures();
+	if (writeCache) max_progress *= 2;	// If we are writing textures, we need to double the estimated time so we get actual progress
 	int per_shader_progress = 0;//screen->GetShaderCount()? (max_progress / 10 / screen->GetShaderCount()) : 0;
 	int shader_progress = 0;	// the part of the start screen's bar for the shaders compiled at the end
 
@@ -3726,8 +4046,34 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 		exec = NULL;
 	}
 
+	// @Cockatrice - Hack for Steam Deck, check for existence of g_steamdeck and set graphics quality
+	// (g_steamdeck is defined by Selaco's CVARINFO)
+	if (g_SelacoMode)
+	{
+		auto cv = FindCVar("g_steamdeck", nullptr);
+		if (cv != nullptr && cv->ToInt() == 1)
+		{
+			Printf(TEXTCOLOR_BRICK "Steam Deck Detected\n");
+
+			// Set texture quality
+			gl_texture_quality = max((int)gl_texture_quality, 1);
+
+			// @Cockatrice - Force texture thread limit of 1, as an emergency hotfix for stutter issues on Steam Deck
+			// TODO: Remove this, it's a hack. Figure out why the stutters are happening!
+			// (looked up by name because the Vulkan backend is not part of every build)
+			if (auto vkthreads = FindCVar("vk_max_transfer_threads", nullptr))
+			{
+				UCVarValue val;
+				val.Int = min(1, vkthreads->ToInt());
+				vkthreads->SetGenericRep(val, CVAR_Int);
+			}
+		}
+	}
+
+	CLOCK_START
 	// [RH] Initialize localizable strings.
 	GStrings.LoadStrings(fileSystem, language);
+	CLOCK_END("Loaded Strings")
 
 	V_InitFontColors ();
 
@@ -3744,6 +4090,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 		auto ci = DumpCPUInfo(&CPU);
 		Printf("%s", ci.GetChars());
 	}
+
 
 	TexMan.Init();
 
@@ -3772,6 +4119,10 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 	// [RH] Load sound environments
 	S_ParseReverbDef ();
 
+	// [NL] Load and initialize the AUDIOFX lump
+	S_ParseAudioFXDef ();
+	GSnd->InitAudioFX();
+
 	// [RH] Parse any SNDINFO lumps
 	if (!batchrun) Printf ("S_InitData: Load sound definitions.\n");
 	S_InitData ();
@@ -3789,6 +4140,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 	// MUSINFO must be parsed after MAPINFO
 	S_ParseMusInfo();
 
+	CLOCK_START
 	if (!batchrun) Printf ("Texman.Init: Init texture manager.\n");
 	UpdateUpscaleMask();
 	SpriteFrames.Clear();
@@ -3803,13 +4155,21 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 	C_InitConback(TexMan.CheckForTexture(gameinfo.BorderFlat.GetChars(), ETextureType::Flat), true, 0.25);
 
 	FixWideStatusBar();
+	CLOCK_END("Textures Startup Total")
 
 	StartWindow->Progress();
 	if (StartScreen) StartScreen->Progress(1);
+	
+	CLOCK_START
 	V_InitFonts();
 	InitDoomFonts();
+	CLOCK_END("Font Startup")
 	V_LoadTranslations();
 	UpdateGenericUI(false);
+
+	// @Cockatrice - Startup stats database
+	statDatabase.init();
+	statDatabase.start();
 
 	// [CW] Parse any TEAMINFO lumps.
 	if (!batchrun) Printf ("ParseTeamInfo: Load team definitions.\n");
@@ -3909,6 +4269,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 	if (!batchrun) Printf ("P_Init: Init Playloop state.\n");
 	if (StartScreen) StartScreen->LoadingStatus ("Init game engine", 0x3f);
 	AM_StaticInit();
+	
 	P_Init ();
 
 	P_SetupWeapons_ntohton();
@@ -4147,6 +4508,8 @@ static int D_DoomMain_Internal (void)
 {
 	const char *wad;
 	FIWadManager *iwad_man;
+	cycle_t startupClock;
+	startupClock.Clock();
 
 	NetworkEntityManager::NetIDStart = MAXPLAYERS + 1;
 	GC::AddMarkerFunc(GC_MarkGameRoots);
@@ -4308,6 +4671,15 @@ static int D_DoomMain_Internal (void)
 		const FIWADInfo *iwad_info = iwad_man->FindIWAD(allwads, iwad.GetChars(), basewad.GetChars(), optionalwad.GetChars());
 		if (!iwad_info) return 0;	// user exited the selection popup via cancel button.
 
+		// Selaco's IWADINFO entries use Config = "Selaco"; this switches on Selaco-specific engine behaviour.
+		g_SelacoMode = iwad_info->Configname.CompareNoCase("Selaco") == 0;
+		if (g_SelacoMode)
+		{
+			if (!batchrun) Printf("Selaco mode enabled.\n");
+			void M_LoadSelacoGlobals();
+			M_LoadSelacoGlobals();	// Selaco's _Globals storage (selaco.globals in the savegame folder)
+		}
+
 		GetCmdLineFiles(pwads, false); // [RL0] Update with files passed on the launcher extra args
 		// For now these need to remain verifiable over the network.
 		GetCmdLineFiles(pwads, true);
@@ -4365,6 +4737,11 @@ static int D_DoomMain_Internal (void)
 		iwad_man = NULL;
 		if (ret != 0) return ret;
 
+		startupClock.Unclock();
+		if (g_SelacoMode && !batchrun) Printf(TEXTCOLOR_YELLOW "Full startup in %.2fms\n", startupClock.TimeMS());
+
+		statDatabase.update();	// @Cockatrice - Do at least one update before the game loop
+
 		D_DoAnonStats();
 		I_UpdateWindowTitle();
 
@@ -4383,6 +4760,7 @@ static int D_DoomMain_Internal (void)
 			debugServer->Listen(debug_port);
 		}
 
+		if (g_SelacoMode) I_FocusWindow();
 		D_DoomLoop ();		// this only returns if a 'restart' CCMD is given.
 		//
 		// Clean up after a restart
@@ -4503,6 +4881,9 @@ void D_Cleanup()
 	S_UnloadReverbDef();
 	G_ClearMapinfo();
 
+	// @Cockatrice - Stop any renderer threads
+	if(screen) screen->StopBackgroundCache();
+
 	M_ClearMenus();					// close menu if open
 	AM_ClearColorsets();
 	DeinitSWColorMaps();
@@ -4571,7 +4952,7 @@ void D_Cleanup()
 //
 //==========================================================================
 
-UNSAFE_CCMD(debug_restart)
+UNSAFE_CCMD(restart)
 {
 	// remove command line args that would get in the way during restart
 
@@ -4616,7 +4997,10 @@ void I_UpdateWindowTitle()
 	case 1:
 		if (level.LevelName.IsNotEmpty())
 		{
-			titlestr.Format("%s - %s", level.LevelName.GetChars(), GameStartupInfo.Name.GetChars());
+			if (g_SelacoMode) // Selaco puts the game name first
+				titlestr.Format("%s - %s", GameStartupInfo.Name.GetChars(), level.LevelName.GetChars());
+			else
+				titlestr.Format("%s - %s", level.LevelName.GetChars(), GameStartupInfo.Name.GetChars());
 			break;
 		}
 		[[fallthrough]];

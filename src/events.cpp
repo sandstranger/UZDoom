@@ -676,6 +676,86 @@ void EventManager::WorldUnloaded(const FString& nextmap)
 	}
 }
 
+bool EventManager::IsSaveAllowed(bool quicksave) {
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		if (!handler->IsSaveAllowed(quicksave)) return false;
+	return true;
+}
+
+
+void EventManager::PreSave(int saveType) {
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		handler->PreSave(saveType);
+}
+
+void EventManager::PostSave(int saveType) {
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		handler->PostSave(saveType);
+}
+
+bool EventManager::HandleError(int errorType, FString errMsg) {
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		if (handler->IsStatic() && handler->HandleError(errorType, errMsg)) return true;
+
+	return false;
+}
+
+
+int32_t EventManager::GetSavegameFlags(bool quicksave, bool autosave) {
+	int32_t flags = 0;
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		flags |= handler->GetSavegameFlags(quicksave, autosave);
+	return flags;
+}
+
+
+FString EventManager::GetSavegameTitle(int type) {
+	FString title = "";
+	int highestOrder = -1;
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next) {
+		if (!handler->IsStatic()) continue;
+		int order = 0;
+		FString candidate = handler->GetSavegameTitle(type, order);
+		if (!candidate.IsEmpty() && order > highestOrder) {
+			title = candidate;
+			highestOrder = order;
+		}
+	}
+	return title;
+}
+
+
+FString EventManager::GetSavegameComments()
+{
+	struct Comment {
+		FString txt;
+		int order;
+	};
+
+	FString comments = "";
+	TArray<Comment> allComments(20);
+
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+	{
+		if (!handler->IsStatic()) continue;
+		int order;
+		FString res = handler->GetSavegameComment(order);
+		if (!res.IsEmpty()) {
+			int index = 0;
+			for (unsigned int x = 0; x < allComments.Size(); x++) { if (order > allComments[x].order) index++; }
+			allComments.Insert(index, { res, order });
+		}
+	}
+
+	if (allComments.Size()) {
+		for (unsigned int x = 0; x < allComments.Size(); x++) {
+			comments.AppendFormat("%s%s", comments.IsEmpty() ? "\n" : "", allComments[x].txt.GetChars());
+		}
+	}
+
+	return comments;
+}
+
 bool EventManager::ShouldCallStatic(bool forplay)
 {
 	return this != &staticEventManager && Level == primaryLevel;
@@ -820,20 +900,20 @@ void EventManager::WorldThingDestroyed(AActor* actor)
 	if (ShouldCallStatic(true)) staticEventManager.WorldThingDestroyed(actor);
 }
 
-void EventManager::WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate)
+void EventManager::WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate, DVector3 *optpos)
 {
-	if (ShouldCallStatic(true)) staticEventManager.WorldLinePreActivated(line, actor, activationType, shouldactivate);
+	if (ShouldCallStatic(true)) staticEventManager.WorldLinePreActivated(line, actor, activationType, shouldactivate, optpos);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
-		handler->WorldLinePreActivated(line, actor, activationType, shouldactivate);
+		handler->WorldLinePreActivated(line, actor, activationType, shouldactivate, optpos != nullptr ? *optpos  : DVector3(0,0,0));
 }
 
-void EventManager::WorldLineActivated(line_t* line, AActor* actor, int activationType)
+void EventManager::WorldLineActivated(line_t* line, AActor* actor, int activationType, DVector3 *optpos)
 {
-	if (ShouldCallStatic(true)) staticEventManager.WorldLineActivated(line, actor, activationType);
+	if (ShouldCallStatic(true)) staticEventManager.WorldLineActivated(line, actor, activationType, optpos);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
-		handler->WorldLineActivated(line, actor, activationType);
+		handler->WorldLineActivated(line, actor, activationType, optpos != nullptr ? *optpos : DVector3(0, 0, 0));
 }
 
 int EventManager::WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius)
@@ -987,6 +1067,39 @@ void EventManager::Console(int player, FString name, int arg1, int arg2, int arg
 		handler->ConsoleProcess(player, name, arg1, arg2, arg3, manual, ui);
 }
 
+
+void EventManager::Stat(FString name, FString text, bool isAchievement, double value) {
+	if (ShouldCallStatic(false)) staticEventManager.Stat(name, text, isAchievement, value);
+
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		handler->StatsEvent(name, text, isAchievement, value);
+}
+
+bool EventManager::SkillShouldChange(int oldSkill, int newSkill) {
+	bool success = true;
+
+	if (ShouldCallStatic(false))
+		if (!staticEventManager.SkillShouldChange(oldSkill, newSkill))
+			success = false;
+
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		if (!handler->SkillShouldChange(oldSkill, newSkill))
+			success = false;
+
+	return success;
+}
+
+void EventManager::SkillChanged(int oldSkill, int newSkill) {
+	bool success = true;
+
+	if (ShouldCallStatic(false))
+		staticEventManager.SkillChanged(oldSkill, newSkill);
+
+	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
+		handler->SkillChanged(oldSkill, newSkill);
+}
+
+
 void EventManager::RenderOverlay(EHudState state)
 {
 	if (ShouldCallStatic(false)) staticEventManager.RenderOverlay(state);
@@ -1137,6 +1250,12 @@ DEFINE_FIELD_X(ReplaceEvent, FReplaceEvent, IsFinal)
 DEFINE_FIELD_X(ReplacedEvent, FReplacedEvent, Replacee)
 DEFINE_FIELD_X(ReplacedEvent, FReplacedEvent, Replacement)
 DEFINE_FIELD_X(ReplacedEvent, FReplacedEvent, IsFinal)
+
+DEFINE_FIELD_X(StatsEvent, FStatsEvent, Name)
+DEFINE_FIELD_X(StatsEvent, FStatsEvent, Text)
+DEFINE_FIELD_X(StatsEvent, FStatsEvent, IsAchievement)
+DEFINE_FIELD_X(StatsEvent, FStatsEvent, Value)
+
 
 DEFINE_FIELD(FNetworkCommand, Player)
 DEFINE_FIELD(FNetworkCommand, Command)
@@ -1975,7 +2094,7 @@ void DStaticEventHandler::WorldThingDestroyed(AActor* actor)
 	}
 }
 
-void DStaticEventHandler::WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate)
+void DStaticEventHandler::WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate, DVector3 pos)
 {
 	IFVIRTUAL(DStaticEventHandler, WorldLinePreActivated)
 	{
@@ -1986,13 +2105,14 @@ void DStaticEventHandler::WorldLinePreActivated(line_t* line, AActor* actor, int
 		e.ActivatedLine = line;
 		e.ActivationType = activationType;
 		e.ShouldActivate = *shouldactivate;
+		e.DamagePosition = pos;
 		VMValue params[2] = { (DStaticEventHandler*)this, &e };
 		VMCall(func, params, 2, nullptr, 0);
 		*shouldactivate = e.ShouldActivate;
 	}
 }
 
-void DStaticEventHandler::WorldLineActivated(line_t* line, AActor* actor, int activationType)
+void DStaticEventHandler::WorldLineActivated(line_t* line, AActor* actor, int activationType, DVector3 pos)
 {
 	IFVIRTUAL(DStaticEventHandler, WorldLineActivated)
 	{
@@ -2002,6 +2122,7 @@ void DStaticEventHandler::WorldLineActivated(line_t* line, AActor* actor, int ac
 		e.Thing = actor;
 		e.ActivatedLine = line;
 		e.ActivationType = activationType;
+		e.DamagePosition = pos;
 		VMValue params[2] = { (DStaticEventHandler*)this, &e };
 		VMCall(func, params, 2, nullptr, 0);
 	}
@@ -2075,6 +2196,109 @@ void DStaticEventHandler::WorldTick()
 		VMCall(func, params, 1, nullptr, 0);
 	}
 }
+
+
+int32_t DStaticEventHandler::GetSavegameFlags(bool quicksave, bool autosave)
+{
+	IFVIRTUAL(DStaticEventHandler, GetSavegameFlags)
+	{
+		if (isEmpty(func)) return 0;
+
+		int32_t flags = 0;
+		VMReturn result[1] = { &flags };
+		VMValue params[3] = { (DStaticEventHandler*)this, quicksave, autosave };
+		VMCall(func, params, 3, result, 1);
+		return flags;
+	}
+
+	return 0;
+}
+
+
+FString DStaticEventHandler::GetSavegameTitle(int type, int &order)
+{
+	IFVIRTUAL(DStaticEventHandler, GetSavegameTitle)
+	{
+		FString retString;
+
+		// don't create excessive DObjects if not going to be processed anyway
+		if (isEmpty(func)) return "";
+		VMValue params[2] = { (DStaticEventHandler*)this, type };
+		VMReturn ret[2]; ret[0].StringAt(&retString); ret[1].IntAt(&order);
+		VMCall(func, params, 2, ret, 2);
+
+		return retString;
+	}
+
+	return "";
+}
+
+
+FString DStaticEventHandler::GetSavegameComment(int &order)
+{
+	IFVIRTUAL(DStaticEventHandler, GetSavegameComment)
+	{
+		FString retString;
+
+		// don't create excessive DObjects if not going to be processed anyway
+		if (isEmpty(func)) return "";
+		VMValue params[1] = { (DStaticEventHandler*)this };
+		VMReturn ret[2]; ret[0].StringAt(&retString); ret[1].IntAt(&order);
+		VMCall(func, params, 1, ret, 2);
+
+		return retString;
+	}
+
+	return "";
+}
+
+bool DStaticEventHandler::IsSaveAllowed(bool quicksave) {
+	IFVIRTUAL(DStaticEventHandler, IsSaveAllowed)
+	{
+		int valid = 1;
+		VMReturn results[1] = { &valid };
+		VMValue params[2] = { (DStaticEventHandler*)this, quicksave };
+		VMCall(func, params, 2, results, 1);
+		return !!valid;
+	}
+
+	return true;
+}
+
+
+void DStaticEventHandler::PreSave(int saveType) {
+	IFVIRTUAL(DStaticEventHandler, PreSave)
+	{
+		if (isEmpty(func)) return;
+		VMValue params[2] = { (DStaticEventHandler*)this, saveType };
+		VMCall(func, params, 2, nullptr, 0);
+	}
+}
+
+
+void DStaticEventHandler::PostSave(int saveType) {
+	IFVIRTUAL(DStaticEventHandler, PostSave)
+	{
+		if (isEmpty(func)) return;
+		VMValue params[2] = { (DStaticEventHandler*)this, saveType };
+		VMCall(func, params, 2, nullptr, 0);
+	}
+}
+
+
+bool DStaticEventHandler::HandleError(int errorType, FString engineErrMsg) {
+	IFVIRTUAL(DStaticEventHandler, HandleError)
+	{
+		int handled = 0;
+		VMReturn results[1] = { &handled };
+		VMValue params[3] = { (DStaticEventHandler*)this, errorType, (FString*)&engineErrMsg };
+		VMCall(func, params, 3, results, 1);
+		return !!handled;
+	}
+
+	return false;
+}
+
 
 FRenderEvent EventManager::SetupRenderEvent()
 {
@@ -2345,6 +2569,56 @@ void DStaticEventHandler::ConsoleProcess(int player, FString name, int arg1, int
 	}
 }
 
+
+void DStaticEventHandler::StatsEvent(FString name, FString text, bool isAchievement, double value) {
+	IFVIRTUAL(DStaticEventHandler, StatProcess)
+	{
+		// don't create excessive DObjects if not going to be processed anyway
+		if (isEmpty(func)) return;
+		FStatsEvent e;
+
+		//
+		e.Name = name;
+		e.Text = text;
+		e.IsAchievement = isAchievement;
+		e.Value = value;
+
+		VMValue params[2] = { (DStaticEventHandler*)this, &e };
+		VMCall(func, params, 2, nullptr, 0);
+	}
+}
+
+
+bool DStaticEventHandler::SkillShouldChange(int oldSkill, int newSkill) {
+	IFVIRTUAL(DStaticEventHandler, SkillShouldChange)
+	{
+		// don't create excessive DObjects if not going to be processed anyway
+		if (isEmpty(func)) return true;
+
+		int bbool = 1;
+		VMValue params[3] = { (DStaticEventHandler*)this, oldSkill, newSkill };
+		VMReturn ret(&bbool);
+		VMCall(func, params, countof(params), &ret, 1);
+		return bbool;
+	}
+
+	return true;
+}
+
+void DStaticEventHandler::SkillChanged(int oldSkill, int newSkill) {
+	IFVIRTUAL(DStaticEventHandler, SkillChanged)
+	{
+		// don't create excessive DObjects if not going to be processed anyway
+		if (isEmpty(func)) return;
+
+		int bbool = 1;
+		VMValue params[3] = { (DStaticEventHandler*)this, oldSkill, newSkill };
+		VMCall(func, params, countof(params), nullptr, 0);
+	}
+
+}
+
+
 void DStaticEventHandler::CheckReplacement(PClassActor *replacee, PClassActor **replacement, bool *final )
 {
 	IFVIRTUAL(DStaticEventHandler, CheckReplacement)
@@ -2436,7 +2710,8 @@ CCMD(event)
 
 CCMD(netevent)
 {
-	if (gamestate != GS_LEVEL/* && gamestate != GS_TITLELEVEL*/) // not sure if this should work in title level, but probably not, because this is for actual playing
+	// @cockatrice - Re-enabled GS_TITLELEVEL because netevent is the only way we can interact with some play scoped functionality while in titlemap
+	if (gamestate != GS_LEVEL && gamestate != GS_TITLELEVEL) // not sure if this should work in title level, but probably not, because this is for actual playing
 	{
 		DPrintf(DMSG_SPAMMY, "netevent cannot be used outside of a map.\n");
 		return;

@@ -819,6 +819,7 @@ else()
 endif()
 
 set (PCH_SOURCES
+	common/thirdparty/statdb.cpp
 	am_map.cpp
 	playsim/bots/b_bot.cpp
 	playsim/bots/b_func.cpp
@@ -860,6 +861,7 @@ set (PCH_SOURCES
 	playsim/p_map.cpp
 	playsim/p_maputl.cpp
 	playsim/p_mobj.cpp
+	playsim/p_pooledparticles.cpp
 	p_openmap.cpp
 	playsim/p_pspr.cpp
 	p_saveg.cpp
@@ -914,6 +916,7 @@ set (PCH_SOURCES
 	playsim/a_decals.cpp
 	playsim/a_dynlight.cpp
 	playsim/a_flashfader.cpp
+	playsim/a_lightgroup.cpp
 	playsim/a_morph.cpp
 	playsim/a_specialspot.cpp
 	playsim/p_secnodes.cpp
@@ -1023,7 +1026,9 @@ set (PCH_SOURCES
 	common/audio/sound/i_sound.cpp
 	common/audio/sound/oalsound.cpp
 	common/audio/sound/s_environment.cpp
+	common/audio/sound/s_audiofx.cpp
 	common/audio/sound/s_sound.cpp
+	common/audio/sound/s_loader.cpp
 	common/audio/sound/s_reverbedit.cpp
 	common/audio/music/music_midi_base.cpp
 	common/audio/music/music.cpp
@@ -1123,6 +1128,7 @@ set (PCH_SOURCES
 	common/utility/r_memory.cpp
 	common/utility/writezip.cpp
 	common/utility/vga2ansi.cpp
+	common/utility/TSQueue.cpp
 	common/thirdparty/base64.cpp
 	common/thirdparty/md5.cpp
 	common/thirdparty/superfasthash.cpp

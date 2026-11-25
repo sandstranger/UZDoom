@@ -35,6 +35,7 @@
 
 #include "g_levellocals.h"
 #include "actorinlines.h"
+#include "selaco.h"
 
 static FRandom pr_botchecksight ("BotCheckSight");
 static FRandom pr_checksight ("CheckSight");
@@ -337,9 +338,11 @@ bool SightCheck::PTR_SightTraverse (intercept_t *in)
 					// itself it can't be view blocking.
 					// However, if there's a 3D-floor on the other side that obstructs the same vertical range
 					// the 2 together will block sight.
+					// [Selaco] @Cockatrice - Selaco skips this: two identical 3D floors side-by-side will often block LOS
+					// when they absolutely shouldn't.
 					sector_t * sb = i == 2 ? li->frontsector : li->backsector;
 
-					for (auto rover2 : sb->e->XFloor.ffloors)
+					if (!g_SelacoMode) for (auto rover2 : sb->e->XFloor.ffloors)
 					{
 						if ((rover2->flags & FF_SEETHROUGH) == myseethrough || !(rover2->flags & FF_EXISTS)) continue;
 						if ((Flags & SF_IGNOREWATERBOUNDARY) && (rover->flags & FF_SOLID) == 0) continue;

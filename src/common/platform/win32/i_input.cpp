@@ -131,6 +131,10 @@ static void I_CheckGUICapture ()
 		{
 			Keyboard->AllKeysUp();
 		}
+
+		if (wantCapt) {
+			buttonMap.ResetButtonStates();
+		}
 	}
 }
 
@@ -142,6 +146,26 @@ void I_SetMouseCapture()
 void I_ReleaseMouseCapture()
 {
 	ReleaseCapture();
+}
+
+void I_LockMouseToWindow() {
+	RECT rect;
+	POINT cp;
+
+	// Copied from i_mouse.cpp
+	GetCursorPos(&cp);
+	ClipCursor(NULL);		// helps with Win95?
+	GetClientRect(mainwindow.GetHandle(), &rect);
+
+	// Reposition the rect so that it only covers the client area.
+	ClientToScreen(mainwindow.GetHandle(), (LPPOINT)&rect.left);
+	ClientToScreen(mainwindow.GetHandle(), (LPPOINT)&rect.right);
+
+	ClipCursor(&rect);
+}
+
+void I_UnlockMouseFromWindow() {
+	ClipCursor(NULL);
 }
 
 bool GUIWndProcHook(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, LRESULT *result)
@@ -204,6 +228,10 @@ bool GUIWndProcHook(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, LRESU
 			case VK_F11:			ev.data1 = GK_F11;		break;
 			case VK_F12:			ev.data1 = GK_F12;		break;
 			case VK_BROWSER_BACK:	ev.data1 = GK_BACK;		break;
+			case VK_CAPITAL:		ev.data1 = GK_CAPSLOCK;	break;	// @Cockatrice Added Capslock key for Selaco
+			case VK_SHIFT:			ev.data1 = GK_SHIFT;	break;	// Added SHIFT for Selaco
+			case VK_CONTROL:		ev.data1 = GK_CTRL;		break;	// Added CTRL for Selaco
+			case VK_MENU:			ev.data1 = GK_MENU;		break;	// Added MENU/ALT for Selaco
 			}
 			if (ev.data1 != 0)
 			{
@@ -473,6 +501,7 @@ LRESULT CALLBACK WndProc (HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_ACTIVATEAPP:
 		AppActive = (wParam == TRUE);
 		S_SetSoundPaused (wParam);
+		if(screen) screen->OnApplicationActivated(wParam == TRUE);
 		break;
 
 	case WM_ERASEBKGND:

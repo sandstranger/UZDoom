@@ -38,6 +38,7 @@
 #include "actor.h"
 #include "b_bot.h"
 #include "p_effect.h"
+#include "p_pooledparticles.h"
 #include "d_player.h"
 #include "p_destructible.h"
 #include "r_data/r_sections.h"
@@ -264,7 +265,7 @@ public:
 	const char *GetSecretExitMap();
 	void ExitLevel(int position, bool keepFacing);
 	void SecretExitLevel(int position);
-	void DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame);
+	void DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame, int mapVersion = -1);
 
 	void DeleteAllAttachedLights();
 	void RecreateAllAttachedLights();
@@ -502,19 +503,41 @@ public:
 	TArray<FSectorPortal> sectorPortals;
 	TArray<FLinePortal> linePortals;
 
-	// Lightmaps
+	int LMVersion = -1;					// version of the loaded Selaco-style lightmap lump, -1 if none
+	bool LMInvalidBake = false;
+	bool LMNeedsRebuild = true;
+	uint32_t LMRenderFrame = 0;
 	TArray<LightmapSurface> LMSurfaces;
 	TArray<float> LMTexCoords;
 	int LMTextureCount = 0;
-	int LMTextureSize = 0;
-	TArray<uint16_t> LMTextureData;
+	int LMTextureSize = 0;				// UZDoom's (version 0) lightmap lumps
+	TArray<uint16_t> LMTextureData;		// UZDoom's (version 0) lightmap lumps: RGB16F texels
+	bool LMCompressed = false;
+	IVector2 LMMasterTextureSize;
+	TArray<uint8_t> LMMasterTextureData;
+	TArray<IVector2> LMMasterTextureActualSizes;
 	TArray<LightProbe> LightProbes;
+	TArray<HeavyProbe> HeavyProbes;
+	TArray<FGameTexture*> Lightmaps;
+	TArray<MasterLightmapInfo> MasterLightmaps;
+	TArray<LMSectorInfo> LMSectorInfos;
+	TArray<LightGroupData> LightGroups;
+	TArray<LightGroupMesh> LightGroupMeshes;
+	TArray<LightgroupLightmapInfo> LightGroupLightmapInfos;
 	int LPMinX = 0;
 	int LPMinY = 0;
 	int LPWidth = 0;
 	int LPHeight = 0;
-	static const int LPCellSize = 32;
+	int LPCellSize = 32;
 	TArray<LightProbeCell> LPCells;
+	FVector3 SunDirection = { 0.5f, 0.5f, -0.7071f };
+
+	// Iterators for dynamic lightmaps
+	LMSectorInfo* LMSectorItFirst = nullptr;
+	LMSectorInfo* LMSectorItLast = nullptr;
+
+	// Reset all information about rendering lightmaps so that they're built fresh
+	void ResetLightmapRenderInfo();
 
 	// Portal information.
 	FDisplacementTable Displacements;
@@ -565,7 +588,7 @@ public:
 
 	uint8_t		md5[16];			// for savegame validation. If the MD5 does not match the savegame won't be loaded.
 	int			time;			// time in the hub
-	int			maptime;			// time in the map
+	int			maptime;		// time in the map
 	int			totaltime;		// time in the game
 	int			starttime;
 	int			partime;
@@ -573,10 +596,13 @@ public:
 	uint32_t	spawnindex;
 
 	level_info_t *info;
+	int			invasiontier, minTechModules;
+	double		tilt, tiltAngle;
 	int			cluster;
 	int			clusterflags;
-	int			levelnum;
+	int			levelnum, levelgroup, areaNum;
 	int			lumpnum;
+	int			mapVersion;			// @Cockatrice - Track which version was loaded so reloading the map works correctly in hubs (Do not expose this to script)
 	FString		LevelName;
 	FString		MapName;			// the lump name (E1M1, MAP01, etc)
 	FName		MapFName;			// cache name index for lump
@@ -741,6 +767,11 @@ public:
 	FThinkerCollection ClientSideThinkers;
 	TArray<DThinker*> TravellingThinkers;
 
+	particlelevelpool_t				DefinedParticlePool;
+	TArray<uint16_t>				DefinedParticlesInSubsec;
+	TArray<DParticleDefinition*>	ParticleDefinitions;
+	TMap<int, DParticleDefinition*>	ParticleDefinitionsByType;
+
 	TArray<DVector2>	Scrolls;		// NULL if no DScrollers in this level
 
 	int8_t		WallVertLight;			// Light diffs for vert/horiz walls
@@ -775,6 +806,7 @@ public:
 
 	FDynamicLight *lights;
 	DVisualThinker* VisualThinkerHead = nullptr;
+	TArray<FDynamicLight*> playerLights;
 
 	// links to global game objects
 	TArray<DBehavior*> ActorBehaviors, ClientSideActorBehaviors;

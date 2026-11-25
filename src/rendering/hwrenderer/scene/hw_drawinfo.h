@@ -53,6 +53,7 @@ class FFlatVertexBuffer;
 class IRenderQueue;
 class HWScenePortalBase;
 class FRenderState;
+struct particlelevelpool_t;
 
 //==========================================================================
 //
@@ -222,9 +223,12 @@ private:
 	void AddPolyobjs(subsector_t *sub);
 	void AddLines(subsector_t * sub, sector_t * sector);
 	void AddSpecialPortalLines(subsector_t * sub, sector_t * sector, linebase_t *line);
+	void AddLightmapSector(sector_t* sector);
+
 	public:
 	void RenderThings(subsector_t * sub, sector_t * sector);
 	void RenderParticles(subsector_t *sub, sector_t *front);
+	void RenderDefinedParticles(subsector_t* sub, sector_t* front);
 	void DoSubsector(subsector_t * sub);
 	int SetupLightsForOtherPlane(subsector_t * sub, FDynLightData &lightdata, const secplane_t *plane);
 	int CreateOtherPlaneVertices(subsector_t *sub, const secplane_t *plane);
@@ -266,7 +270,7 @@ public:
 	void SetViewArea();
 	int SetFullbrightFlags(player_t *player);
 
-	void DrawScene(int drawmode);
+	void DrawScene(int drawmode, bool drawpsprites = false);
 	void CreateScene(bool drawpsprites);
 	void RenderScene(FRenderState &state);
 	void RenderTranslucent(FRenderState &state);
@@ -274,7 +278,7 @@ public:
 	void EndDrawScene(sector_t * viewsector, FRenderState &state);
 	void DrawEndScene2D(sector_t * viewsector, FRenderState &state);
 	void Set3DViewport(FRenderState &state);
-	void ProcessScene(bool toscreen);
+	void ProcessScene(bool toscreen, bool drawpsprites);
 
 	bool DoOneSectorUpper(subsector_t * subsec, float planez, area_t in_area);
 	bool DoOneSectorLower(subsector_t * subsec, float planez, area_t in_area);
@@ -310,7 +314,7 @@ public:
 	void AddOtherCeilingPlane(int sector, gl_subsectorrendernode * node);
 
 	void GetDynSpriteLight(AActor *self, float x, float y, float z, FSection *sec, int portalgroup, float *out);
-	void GetDynSpriteLight(AActor *thing, particle_t *particle, float *out);
+	void GetDynSpriteLight(AActor *thing, HWSprite* particleSprite, float *out);	// (particle_t particles and Selaco's pooled particles)
 
 	void PreparePlayerSprites(sector_t * viewsector, area_t in_area);
 	void PrepareTargeterSprites(double ticfrac);
@@ -346,7 +350,7 @@ public:
 };
 
 void CleanSWDrawer();
-sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bounds, float fov, float ratio, float fovratio, bool mainview, bool toscreen);
+sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bounds, float fov, float ratio, float fovratio, bool mainview, bool toscreen, bool isSavePic = false);
 void WriteSavePic(player_t* player, FileWriter* file, int width, int height);
 sector_t* RenderView(player_t* player);
 

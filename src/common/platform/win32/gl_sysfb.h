@@ -40,5 +40,5 @@ public:
 	void SwapBuffers();
 
 protected:
-	int SwapInterval;
+	int SwapInterval = 1;
 };

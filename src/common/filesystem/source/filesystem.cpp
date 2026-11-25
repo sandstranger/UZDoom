@@ -767,6 +767,7 @@ int FileSystem::GetFileFlags (int lump)
 	return lump_p.resfile->GetEntryFlags(lump_p.resindex) ^ lump_p.flags;
 }
 
+
 //==========================================================================
 //
 // InitHashChains

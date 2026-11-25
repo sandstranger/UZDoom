@@ -87,6 +87,7 @@
 #include "p_maputl.h"
 #include "s_music.h"
 #include "fragglescript/t_script.h"
+#include "selaco.h"
 
 #include "texturemanager.h"
 
@@ -292,6 +293,71 @@ void G_DeferedInitNew (FNewGameStartup *gs)
 		}
 		gameaction = ga_intermission;
 	}
+}
+
+
+DEFINE_ACTION_FUNCTION(FLevelLocals, StartNewGame)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(FLevelLocals);
+	PARAM_INT(episode);
+	PARAM_INT(skill);
+	PARAM_STRING(playerClass);
+	PARAM_STRING(mapName);
+
+	// Make sure this call is coming from a menu, 
+	if (menuactive == MENU_Off) {
+		Printf("Sorry, you cannot start a new game outside of a menu.\n");
+		return 0;
+	}
+
+	if (mapName.Len() > 0) {
+		auto pc = playerClass.IsEmpty() ? NULL : playerClass.GetChars();
+		if (pc) playerclass = pc;
+		G_DeferedInitNew(mapName.GetChars(), skill);
+	}
+	else {
+		FNewGameStartup s;
+		s.PlayerClass = playerClass.IsEmpty() ? NULL : playerClass.GetChars();
+		s.Episode = episode;
+		s.Skill = skill;
+
+		G_DeferedInitNew(&s);
+	}
+	
+	if (gamestate == GS_FULLCONSOLE)
+	{
+		gamestate = GS_HIDECONSOLE;
+		gameaction = ga_newgame;
+	}
+	M_ClearMenus();
+
+	return 0;
+}
+
+
+DEFINE_ACTION_FUNCTION(FLevelLocals, ReturnToTitle) 
+{
+	PARAM_SELF_STRUCT_PROLOGUE(FLevelLocals);
+
+	M_ClearMenus();
+	if (!netgame)
+	{
+		if (demorecording)
+			G_CheckDemoStatus();
+		D_StartTitle();
+	}
+
+	return 0;
+}
+
+
+
+DEFINE_ACTION_FUNCTION(FLevelLocals, QuitGame)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(FLevelLocals);
+
+	throw CExitEvent(0);
+	return 0;
 }
 
 //==========================================================================
@@ -561,7 +627,7 @@ static void UpdatePlayerClass(int i)
 //
 //==========================================================================
 
-void G_InitNew (const char *mapname, bool bTitleLevel)
+void G_InitNew (const char *mapname, bool bTitleLevel, int mapVersion)
 {
 	bool wantFast;
 	unsigned int i;
@@ -607,9 +673,10 @@ void G_InitNew (const char *mapname, bool bTitleLevel)
 	setsizeneeded = true;
 
 	// [RH] If this map doesn't exist, bomb out
-	if (!P_CheckMapData(mapname))
+	if (!P_CheckMapData(mapname, mapVersion))
 	{
-		I_Error ("Could not find map %s\n", mapname);
+		if (g_SelacoMode) I_Error ("Could not find map %s (%d)\n", mapname, mapVersion);
+		else I_Error ("Could not find map %s\n", mapname);
 	}
 
 	wantFast = !!G_SkillProperty(SKILLP_FastMonsters);
@@ -666,7 +733,7 @@ void G_InitNew (const char *mapname, bool bTitleLevel)
 
 	if (!savegamerestore)
 		startpos = laststartpos = 0;
-	G_DoLoadLevel (mapname, startpos, false, !savegamerestore);
+	G_DoLoadLevel (mapname, startpos, false, !savegamerestore, mapVersion);
 
 	if (!savegamerestore && (gameinfo.gametype == GAME_Strife || (SBarInfoScript[SCRIPT_CUSTOM] != nullptr && SBarInfoScript[SCRIPT_CUSTOM]->GetGameType() == GAME_Strife)))
 	{
@@ -1058,6 +1125,13 @@ DIntermissionController* FLevelLocals::CreateIntermission()
 
 void RunIntermission(level_info_t* fromMap, level_info_t* toMap, DIntermissionController* intermissionScreen, DObject* statusScreen, bool ending, std::function<void(bool)> completionf)
 {
+	// Selaco: with neither an intermission nor a status screen there's nothing to run
+	if (g_SelacoMode && !intermissionScreen && !statusScreen)
+	{
+		completionf(false);
+		return;
+	}
+
 	// Make sure the finale can't be skipped, otherwise the intermission always needs to be skippable.
 	cutscene.runner = CreateRunner(false, ending ? ST_UNSKIPPABLE : ST_MUST_BE_SKIPPABLE);
 	GC::WriteBarrier(cutscene.runner);
@@ -1350,12 +1424,12 @@ void DAutosaver::Tick ()
 
 extern gamestate_t 	wipegamestate;
 
-void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame)
+void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame, int mapVersion)
 {
 	gamestate_t oldgs = gamestate;
 
 	// Here the new level needs to be allocated.
-	primaryLevel->DoLoadLevel(nextmapname, position, autosave, newGame);
+	primaryLevel->DoLoadLevel(nextmapname, position, autosave, newGame, mapVersion);
 
 	// Reset the global state for the new level.
 	if (wipegamestate == GS_LEVEL)
@@ -1390,7 +1464,7 @@ void G_DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool
 	I_UpdateWindowTitle();
 }
 
-void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame)
+void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool autosave, bool newGame, int mapVersion)
 {
 	MapName = nextmapname;
 	MapFName = MapName;
@@ -1467,9 +1541,14 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 		staticEventManager.NewGame();
 	}
 
-	P_SetupLevel (this, position, newGame);
+	if (g_SelacoMode && !newGame) {
+		// Selaco map versions: check hub for level number and choose version from there
+		if (info->levelnum >= 0) {
+			mapVersion = max(mapVersion, G_GetHubLevelVersion(info->levelnum));
+		}
+	}
 
-
+	P_SetupLevel (this, position, newGame, mapVersion);
 
 
 	//Added by MC: Initialize bots.
@@ -1501,6 +1580,10 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 			if (PlayerInGame(i) && Players[i]->mo != nullptr)
 				P_PlayerStartStomp(Players[i]->mo, !deathmatch);
 		}
+
+		// We only initialize the ParticlePools if we're not loading from a snapshot,
+		// since P_LoadParticlePools automatically reinitializes them.
+		P_InitParticleDefinitions(this);
 	}
 
 	// For each player, if they are viewing through a player, make sure it is themselves.
@@ -1990,6 +2073,10 @@ void FLevelLocals::Init()
 
 	cluster_info_t *clus = FindClusterInfo (info->cluster);
 
+	invasiontier = info->invasiontier;
+	minTechModules = info->minTechModules;
+	tilt = info->tilt;
+	tiltAngle = info->tiltAngle;
 	partime = info->partime;
 	sucktime = info->sucktime;
 	cluster = info->cluster;
@@ -1999,11 +2086,14 @@ void FLevelLocals::Init()
 	flags3 |= info->flags3;
 	levelnum = info->levelnum;
 	LightningSound = info->LightningSound;
+	levelgroup = info->levelgroup;
+	areaNum = info->areaNum;
 	Music = info->Music;
 	musicorder = info->musicorder;
 	MusicVolume = 1.f;
 	HasHeightSecs = false;
 
+	mapVersion = 0;
 	LevelName = info->LookupLevelName();
 	NextMap = info->NextMap;
 	NextSecretMap = info->NextSecretMap;
@@ -2607,6 +2697,18 @@ int IsPointInMap(FLevelLocals *Level, double x, double y, double z)
 void FLevelLocals::SetMusic()
 {
 	S_ChangeMusic(Music.GetChars(), musicorder);
+}
+
+
+void FLevelLocals::ResetLightmapRenderInfo()
+{
+	for (auto& it : LMSectorInfos)
+	{
+		it.QueuedForRender = false;
+		it.LastRenderFrame = 0;
+	}
+
+	LMNeedsRebuild = true;
 }
 
 
