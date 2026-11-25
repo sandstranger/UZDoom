@@ -49,12 +49,14 @@
 #include <thread>
 
 #ifdef ANDROID
-int gTargetFps = 60;
+#include <atomic>
+// (atomic: the launcher sets it through JNA from its own thread)
+static std::atomic<int> gTargetFps{60};
 
 extern "C"{
 __attribute__((used)) __attribute__((visibility("default")))
 void setTargetFPS (const int targetFPS){
-	gTargetFps = targetFPS;
+	gTargetFps.store(targetFPS, std::memory_order_relaxed);
 }
 }
 
@@ -347,7 +349,10 @@ void DFrameBuffer::FPSLimit()
 	if (cl_capfps)
 		return;
 
-	int maxfps = gTargetFps;
+	// (read once: 0 or less means no limit - it divided by zero)
+	int maxfps = gTargetFps.load(std::memory_order_relaxed);
+	if (maxfps <= 0)
+		return;
 #endif
 
 	uint64_t targetWakeTime = fpsLimitTime + 1'000'000 / maxfps;

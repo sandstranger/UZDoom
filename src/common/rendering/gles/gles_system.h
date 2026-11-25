@@ -172,7 +172,8 @@ namespace OpenGLESRenderer
 
 #ifdef ANDROID //karin: custom GLES version
 #include "c_cvars.h"
-extern int harm_gl_es;
+#include <atomic>
+extern std::atomic<int> harm_gl_es;
 #define HARM_GL_ES_DEFAULT 0
 #define HARM_GL_ES_GLES2 2
 #define HARM_GL_ES_GLES3 3

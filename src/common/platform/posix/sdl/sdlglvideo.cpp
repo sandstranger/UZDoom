@@ -70,8 +70,9 @@
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 #if ANDROID
-int harm_gl_es = HARM_GL_ES_GLES2;
-bool g_useOpenGLES = true;
+// (atomics: the launcher sets them through JNA from its own thread)
+std::atomic<int> harm_gl_es{HARM_GL_ES_GLES2};
+static std::atomic<bool> g_useOpenGLES{true};
 #endif
 
 extern IVideo *Video;
@@ -957,8 +958,9 @@ void UpdateHarmGLESVersion(int targetHarmGLESVersion) {
     harm_gl_es = targetHarmGLESVersion == 4 ? HARM_GL_ES_GLES3 : targetHarmGLESVersion;
 }
 
-void UpdateUseOpenGLESState(bool useOpenGLES) {
-    g_useOpenGLES = useOpenGLES;
+__attribute__((used)) __attribute__((visibility("default")))
+void UpdateUseOpenGLESState(int useOpenGLES) {
+    g_useOpenGLES = useOpenGLES != 0;
 }
 }
 

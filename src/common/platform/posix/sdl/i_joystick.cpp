@@ -810,9 +810,11 @@ void I_StartupJoysticks()
 
 	if(SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER) >= 0){
 #ifdef ANDROID
-        extern std::string g_pathToSDLControllerDB;
-        const auto *pathToSdl2ControllerDb = g_pathToSDLControllerDB.c_str();
-        if (SDL_GameControllerAddMappingsFromFile(pathToSdl2ControllerDb) < 0) {
+        extern const char* I_AndroidControllerDBPath();
+        const char *pathToSdl2ControllerDb = I_AndroidControllerDBPath();
+        if (pathToSdl2ControllerDb == nullptr) {
+            SDL_Log("No controller db from the launcher (setPathToSDLControllerDB)");
+        } else if (SDL_GameControllerAddMappingsFromFile(pathToSdl2ControllerDb) < 0) {
             SDL_Log("Couldn't load mappings: %s\n", SDL_GetError());
         } else{
             SDL_Log("Custom controller db was loaded from: %s", pathToSdl2ControllerDb);

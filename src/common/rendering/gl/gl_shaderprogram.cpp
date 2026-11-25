@@ -32,7 +32,8 @@
 #include "cmdlib.h"
 
 #if ANDROID
-extern bool gEnableSpirvCross;
+#include <atomic>
+extern std::atomic<bool> gEnableSpirvCross;
 #endif
 
 namespace OpenGLRenderer

@@ -72,6 +72,24 @@ namespace
 	bool LegacyFilesRemoved = false;
 	std::atomic<bool> TrimPending{ false };
 
+	// UZDoom_SetShaderCacheDirectory comes from the launcher's thread (JNA): it only publishes the folder (a copy that
+	// is never freed), the render thread switches to it at its next use of the cache (SyncDirectory)
+	std::atomic<const char *> PendingRoot{ nullptr };
+	const char *AppliedRoot = nullptr;
+
+	void SyncDirectory()
+	{
+		const char *pending = PendingRoot.load(std::memory_order_acquire);
+		if (pending == AppliedRoot)
+			return;
+		AppliedRoot = pending;
+		RootOverride = pending != nullptr ? pending : "";
+		PreparedDirs.clear();
+		Lru.clear();
+		LruIndex.clear();
+		LruBytes = 0;
+	}
+
 	FString HexDigest(const uint8_t *digest, int bytes)
 	{
 		static const char hex[] = "0123456789abcdef";
@@ -101,6 +119,7 @@ namespace
 
 	std::string RootDirectory()
 	{
+		SyncDirectory();
 		if (!RootOverride.empty())
 			return RootOverride;
 		FString path = M_GetCachePath(true);
@@ -126,6 +145,7 @@ namespace
 	// Returns <root>/<ns>/<driverhash>, creating it and deleting the directories of other drivers.
 	const std::string &DriverDirectory(const char *ns, const char *driver)
 	{
+		SyncDirectory();	// (before any look up: it empties the RAM copies)
 		std::string id = std::string(ns) + "/" + driver;
 		auto found = PreparedDirs.find(id);
 		if (found != PreparedDirs.end())
@@ -414,11 +434,8 @@ __attribute__((used)) __attribute__((visibility("default")))
 #endif
 void UZDoom_SetShaderCacheDirectory(const char *path)
 {
-	RootOverride = (path && *path) ? path : "";
-	PreparedDirs.clear();
-	Lru.clear();
-	LruIndex.clear();
-	LruBytes = 0;
+	// (null or empty: back to the default folder)
+	PendingRoot.store(strdup(path != nullptr ? path : ""), std::memory_order_release);
 }
 
 CCMD(r_programcache_stats)

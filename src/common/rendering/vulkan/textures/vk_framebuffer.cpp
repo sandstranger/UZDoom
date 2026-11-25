@@ -30,9 +30,11 @@
 
 CVAR(Bool, vk_hdr, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 #ifdef ANDROID
+#include <atomic>
 static bool vk_exclusivefullscreen = true;
-static bool isApplicationPaused = false;
-static bool needToRecreaseVulkanSurfaces = false;
+// (atomics: the launcher sets them through JNA from its own thread)
+static std::atomic<bool> isApplicationPaused{false};
+static std::atomic<bool> needToRecreaseVulkanSurfaces{false};
 #else
 CVAR(Bool, vk_exclusivefullscreen, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 #endif
@@ -53,13 +55,18 @@ VkFramebufferManager::~VkFramebufferManager()
 
 #ifdef ANDROID
 extern "C" {
+__attribute__((used)) __attribute__((visibility("default")))
 void DestroyVulkanSwapChain() {
     isApplicationPaused = true;
 }
 
+__attribute__((used)) __attribute__((visibility("default")))
 void RecreateVulkanSwapChain() {
-    needToRecreaseVulkanSurfaces = isApplicationPaused;
-    isApplicationPaused = false;
+    // The recreation is asked before the pause ends: a game thread that sees the pause over also sees it
+    if (isApplicationPaused) {
+        needToRecreaseVulkanSurfaces = true;
+        isApplicationPaused = false;
+    }
 }
 }
 #endif
@@ -88,9 +95,8 @@ void VkFramebufferManager::AcquireImage()
 		CurrentExclusiveFullscreen = exclusiveFullscreen;
 
 #ifdef ANDROID
-        if (needToRecreaseVulkanSurfaces){
+        if (needToRecreaseVulkanSurfaces.exchange(false)){
             fb->RecreateSurface();
-            needToRecreaseVulkanSurfaces = false;
         }
 #endif
 		SwapChain->Create(CurrentWidth, CurrentHeight, CurrentVSync ? 2 : 3, CurrentVSync, CurrentHdr, CurrentExclusiveFullscreen);

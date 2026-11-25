@@ -394,7 +394,8 @@ std::unique_ptr<VulkanShader> VkShaderManager::LoadVertShader(FString shadername
 }
 
 #ifdef ANDROID
-extern bool gl_lite_shader;
+#include <atomic>
+extern std::atomic<bool> gl_lite_shader;
 #endif
 
 std::unique_ptr<VulkanShader> VkShaderManager::LoadFragShader(FString shadername, const char *frag_lump, const char *material_lump, const char *light_lump, const char *defines, bool alphatest, bool gbufferpass, AllShaderIndex type)

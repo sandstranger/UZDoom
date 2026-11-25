@@ -56,13 +56,15 @@ EXTERN_CVAR(Bool, r_skipmats)
 EXTERN_CVAR(Int, gl_ssao)
 #ifdef ANDROID
 EXTERN_CVAR(Bool, gl_customshader)
-extern bool gl_lite_shader;
-bool gEnableSpirvCross = false;
+#include <atomic>
+extern std::atomic<bool> gl_lite_shader;
+// (atomic: the launcher sets it through JNA from its own thread)
+std::atomic<bool> gEnableSpirvCross{false};
 
 extern "C" {
 __attribute__((used)) __attribute__((visibility("default")))
-void setSpirvCrossState(const bool enableSpirvCross) {
-    gEnableSpirvCross = enableSpirvCross;
+void setSpirvCrossState(const int enableSpirvCross) {
+    gEnableSpirvCross = enableSpirvCross != 0;
 }
 }
 #endif

@@ -437,6 +437,7 @@ EXTERN_CVAR(Bool, haptics_do_menus)
 
 #if ANDROID
 bool engineInitialized = false;
+void I_PublishAndroidFrameState();
 #endif
 
 extern bool setmodeneeded;
@@ -1676,6 +1677,9 @@ void D_DoomLoop ()
 			statDatabase.update();
 			D_ProcessEvents();
 			D_Display ();
+#if ANDROID
+			I_PublishAndroidFrameState(); // (the menus' state for the launcher's JNA calls)
+#endif
 			S_UpdateMusic();
 
 			if (gameloop_abort)

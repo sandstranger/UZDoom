@@ -62,9 +62,29 @@ using namespace std;
 extern "C" int cc_install_handlers(int, char**, int, int*, const char*, int(*)(char*, char*));
 
 #if ANDROID
+#include <atomic>
+#include <string.h>
+
+// The engine's copies of the launcher's folders, made at the start of SDL_main
 string g_pathToUserFolder;
-string g_pathToSDLControllerDB;
 string gPathToCacheFolder;
+
+// What the launcher gives through JNA, from its own thread: published atomically as copies that are never freed
+// (the game may still be using the one a later call replaces)
+static std::atomic<const char*> g_launcherUserFolder{nullptr};
+static std::atomic<const char*> g_launcherCacheFolder{nullptr};
+static std::atomic<const char*> g_launcherControllerDB{nullptr};
+
+static void PublishLauncherString(std::atomic<const char*>& target, const char* value)
+{
+	if (value != nullptr)
+		target.store(strdup(value), std::memory_order_release);
+}
+
+const char* I_AndroidControllerDBPath()
+{
+	return g_launcherControllerDB.load(std::memory_order_acquire);
+}
 
 namespace OpenGLRenderer
 {
@@ -214,7 +234,15 @@ int main (int argc, char **argv)
 #endif // !__APPLE__
 
 #ifdef ANDROID
-    chdir(g_pathToUserFolder.c_str());
+	// The launcher gives its folders (setPathsToFolders) before it starts the game: wait a little if they are late
+	for (int i = 0; i < 500 && g_launcherUserFolder.load(std::memory_order_acquire) == nullptr; i++)
+		usleep(10000);
+	if (const char* userFolder = g_launcherUserFolder.load(std::memory_order_acquire))
+		g_pathToUserFolder = userFolder;
+	const char* cacheFolder = g_launcherCacheFolder.load(std::memory_order_acquire);
+	gPathToCacheFolder = cacheFolder != nullptr ? cacheFolder : g_pathToUserFolder;
+	if (g_pathToUserFolder.empty() || chdir(g_pathToUserFolder.c_str()) != 0)
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "No game folder from the launcher (setPathsToFolders)");
 #endif
 
 	signal(SIGINT, SignalHandler);
@@ -287,13 +315,24 @@ int main (int argc, char **argv)
 #include "menustate.h"
 #include "i_soundinternal.h"
 extern bool StartScreenRendered;
-bool gl_lite_shader = false;
+// (atomic: the launcher sets it through JNA from its own thread, the renderers read it when they build shaders)
+std::atomic<bool> gl_lite_shader{false};
 extern bool AppActive;
 
+// menuactive as the launcher's thread sees it: the game loop publishes it once a frame (menuactive itself, also
+// written by the scripts, is only for the game thread)
+static std::atomic<int> g_launcherMenuActive{MENU_Off};
+
+void I_PublishAndroidFrameState()
+{
+	g_launcherMenuActive.store(menuactive, std::memory_order_relaxed);
+}
+
+// JNA, called from the launcher's thread. JNA passes and reads a Java boolean as a 32 bit int: explicit ints here.
 extern "C"{
 __attribute__((used)) __attribute__((visibility("default")))
-void UpdateGLLiteShaderState (bool enableGLLiteShader){
-    gl_lite_shader = enableGLLiteShader;
+void UpdateGLLiteShaderState (int enableGLLiteShader){
+    gl_lite_shader.store(enableGLLiteShader != 0, std::memory_order_relaxed);
 }
 
 __attribute__((used)) __attribute__((visibility("default")))
@@ -303,29 +342,30 @@ __attribute__((used)) __attribute__((visibility("default")))
 void onNativePause() {
 }
 __attribute__((used)) __attribute__((visibility("default")))
-bool needToShowScreenControls() {
-    return menuactive == MENU_Off;
+int needToShowScreenControls() {
+    return g_launcherMenuActive.load(std::memory_order_relaxed) == MENU_Off ? 1 : 0;
 }
 __attribute__((used)) __attribute__((visibility("default")))
-bool needToInvokeMouseButtonsEvents(){
-    return menuactive!=MENU_Off;
+int needToInvokeMouseButtonsEvents(){
+    return g_launcherMenuActive.load(std::memory_order_relaxed) != MENU_Off ? 1 : 0;
 }
 __attribute__((used)) __attribute__((visibility("default")))
-bool needToReInitGameControllers (){
-    return false;
+int needToReInitGameControllers (){
+    return 0;
 }
 __attribute__((used)) __attribute__((visibility("default")))
 void setPathsToFolders (const char *pathToUserFolder, const char* pathToCacheFolder) {
-    g_pathToUserFolder = pathToUserFolder;
-	gPathToCacheFolder = pathToCacheFolder;
+    // (null-safe; the engine copies them at the start of SDL_main)
+    PublishLauncherString(g_launcherUserFolder, pathToUserFolder);
+    PublishLauncherString(g_launcherCacheFolder, pathToCacheFolder);
 }
 
 __attribute__((used)) __attribute__((visibility("default")))
 void setPathToSDLControllerDB (const char *pathToSDLControllerDB){
-    g_pathToSDLControllerDB = pathToSDLControllerDB;
+    PublishLauncherString(g_launcherControllerDB, pathToSDLControllerDB);
 }
 __attribute__((used)) __attribute__((visibility("default")))
-void setUseGLES2_0State(const bool useGLES2_0) {
+void setUseGLES2_0State(const int useGLES2_0) {
 }
 }
 
