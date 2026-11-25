@@ -487,7 +487,8 @@ public:
 
 		if constexpr (std::is_trivially_copyable<T>::value)
 		{
-			memcpy(Array + start,item.Array,item.Size() * sizeof(T));
+			if (item.Size() > 0)	// (an empty array may have no buffer: no memcpy from null)
+				memcpy(Array + start,item.Array,item.Size() * sizeof(T));
 		}
 		else
 		{
@@ -508,7 +509,8 @@ public:
 
 		if constexpr (std::is_trivially_copyable<T>::value)
 		{
-			memcpy(Array + start,item.Array,item.Size() * sizeof(T));
+			if (item.Size() > 0)	// (an empty array may have no buffer: no memcpy from null)
+				memcpy(Array + start,item.Array,item.Size() * sizeof(T));
 		}
 		else
 		{
