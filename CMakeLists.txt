@@ -60,6 +60,12 @@ if (ANDROID)
     include_directories(SYSTEM ${SDL2_INCLUDE_DIR})
 endif ()
 
+# char is unsigned on ARM (Android, Linux): the engine, its libraries and the games' data handling were written and
+# tested with a signed char (x86, MSVC). Same char everywhere.
+if (NOT MSVC)
+	add_compile_options(-fsigned-char)
+endif ()
+
 if(NOT FORCE_NO_LTO)
 	include(CheckIPOSupported)
 	check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)

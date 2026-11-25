@@ -47,7 +47,8 @@ FMultiPatchTexture::FMultiPatchTexture(int w, int h, const TArray<TexPartBuild> 
  	bTextual = textual;
 	Parts = (TexPart*)ImageArena.Alloc(sizeof(TexPart) * parts.Size());
 	NumParts = parts.Size();
-	memcpy(Parts, parts.Data(), sizeof(TexPart) * parts.Size());
+	if (parts.Size() > 0)	// (a texture without patches: no memcpy from a null array)
+		memcpy(Parts, parts.Data(), sizeof(TexPart) * parts.Size());
 	for (unsigned i = 0; i < parts.Size(); i++)
 	{
 		Parts[i].Image = parts[i].TexImage->GetImage();
