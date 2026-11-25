@@ -2308,7 +2308,7 @@ static void CreatePackedBlockmap (TArray<int> &BlockMap, TArray<int> *blocks, in
 			buckets[hash] = i;
 			BlockMap[4+i] = BlockMap.Size ();
 			BlockMap.Push (zero);
-			array = &(*block)[0];
+			array = block->Data();	// (an empty block has no element 0)
 			for (size_t j = 0; j < block->Size(); ++j)
 			{
 				BlockMap.Push (array[j]);

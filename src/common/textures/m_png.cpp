@@ -127,14 +127,15 @@ const float png_gamma = 0;
 bool M_CreatePNG (FileWriter *file, const uint8_t *buffer, const PalEntry *palette,
 				  ESSType color_type, int width, int height, int pitch, float gamma)
 {
-	uint8_t work[8 +				// signature
+	// (aligned for the signature words and IHDR; gAMA and PLTE lie at odd offsets: bytes)
+	alignas(4) uint8_t work[8 +				// signature
 			  12+2*4+5 +		// IHDR
 			  12+4 +			// gAMA
 			  12+256*3];		// PLTE
 	uint32_t *const sig = (uint32_t *)&work[0];
 	IHDR *const ihdr = (IHDR *)&work[8 + 8];
-	uint32_t *const gama = (uint32_t *)((uint8_t *)ihdr + 2*4+5 + 12);
-	uint8_t *const plte = (uint8_t *)gama + 4 + 12;
+	uint8_t *const gama = (uint8_t *)ihdr + 2*4+5 + 12;
+	uint8_t *const plte = gama + 4 + 12;
 	size_t work_len;
 
 	sig[0] = MAKE_ID(137,'P','N','G');
