@@ -774,7 +774,8 @@ void InitModels()
 
 	// create a hash table for quick access
 	SpriteModelHash.Resize(SpriteModelFrames.Size ());
-	memset(SpriteModelHash.Data(), 0xff, SpriteModelFrames.Size () * sizeof(int));
+	if (SpriteModelFrames.Size() > 0)
+		memset(SpriteModelHash.Data(), 0xff, SpriteModelFrames.Size () * sizeof(int));
 
 	for (unsigned int i = 0; i < SpriteModelFrames.Size (); i++)
 	{

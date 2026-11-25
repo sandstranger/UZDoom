@@ -1,5 +1,8 @@
 #define STB_SPRINTF_IMPLEMENTATION
 #define STB_SPRINTF_UTF8_CHARS
+// No 32 bit stores to unaligned addresses (undefined behaviour; on 32 bit ARM the compiler may pair them into
+// instructions that fault on unaligned addresses)
+#define STB_SPRINTF_NOUNALIGNED
 #include "stb_sprintf.h"
 
 // We still need our own wrappers because they use a size_t for count, not an int.

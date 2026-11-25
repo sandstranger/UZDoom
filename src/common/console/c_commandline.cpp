@@ -51,6 +51,7 @@ static size_t ParseCommandLine(const char* args, int* argc, char** argv, bool no
 	int count;
 	char* buffstart;
 	char* buffplace;
+	size_t needed = 0;	// (counted apart: without argv, buffplace is null and must not move)
 
 	count = 0;
 	buffstart = NULL;
@@ -104,9 +105,9 @@ static size_t ParseCommandLine(const char* args, int* argc, char** argv, bool no
 				}
 				if (argv != NULL)
 				{
-					*buffplace = stuff;
+					*buffplace++ = stuff;
 				}
-				buffplace++;
+				needed++;
 			} while (stuff);
 		}
 		else
@@ -127,16 +128,13 @@ static size_t ParseCommandLine(const char* args, int* argc, char** argv, bool no
 			{
 				end = args;
 			}
+			needed += end - start + 1;
 			if (argv != NULL)
 			{
 				argv[count] = buffplace;
 				while (start < end)
 					*buffplace++ = *start++;
 				*buffplace++ = 0;
-			}
-			else
-			{
-				buffplace += end - start + 1;
 			}
 			count++;
 		}
@@ -145,7 +143,7 @@ static size_t ParseCommandLine(const char* args, int* argc, char** argv, bool no
 	{
 		*argc = count;
 	}
-	return (buffplace - buffstart);
+	return needed;
 }
 
 FCommandLine::FCommandLine (const char *commandline, bool no_escapes)

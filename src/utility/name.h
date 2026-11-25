@@ -29,7 +29,9 @@
 
 #include "absl/container/flat_hash_map.h"
 
-enum ENamedName
+// (int based: FName passes any name index through it - converted to an enum without a fixed type, the indexes of the
+// names made at run time were out of its range, undefined behaviour)
+enum ENamedName : int
 {
 #define xx(n) NAME_##n,
 #define xy(n, s) NAME_##n,

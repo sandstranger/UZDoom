@@ -48,6 +48,12 @@ public:
 	// This allows initializing the flagset with 0, as 0 implicitly converts into a null pointer.
 	constexpr TFlags (ZeroDummy*) : Value (0) {}
 
+private:
+	// (FromInt: the value as it is - converted to the enum first, combinations like ~flag were outside its range)
+	struct FromIntTag {};
+	constexpr TFlags (FromIntTag, TT value) : Value (value) {}
+public:
+
 	// Relation operators
 	constexpr Self operator| (const Self& other) const { return Self::FromInt (Value | other.GetValue()); }
 	constexpr Self operator& (const Self& other) const { return Self::FromInt (Value & other.GetValue()); }
@@ -73,7 +79,7 @@ public:
 
 	// Set the value of the flagset manually with an integer.
 	// Please think twice before using this.
-	static constexpr Self FromInt (TT value) { return Self (static_cast<T> (value)); }
+	static constexpr Self FromInt (TT value) { return Self (FromIntTag(), value); }
 
 private:
 	template<typename X> constexpr Self operator| (X value) const { return Self::FromInt (Value | value); }

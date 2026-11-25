@@ -75,12 +75,9 @@ static PClassActor *FindClassTentative(const char *name, PClass *ancestor, bool 
 //==========================================================================
 void ModActorFlag(AActor *actor, FFlagDef *fd, bool set)
 {
-	// Little-Endian machines only need one case, because all field sizes
-	// start at the same address. (Unless the machine has unaligned access
-	// exceptions, in which case you'll need multiple cases for it too.)
-#ifdef __BIG_ENDIAN__
+	// Each field at its own width: a 32 bit access to a 1 or 2 byte field (the little endian shortcut) was
+	// unaligned - undefined behaviour, a fault on CPUs without unaligned access - and reached past the field.
 	if (fd->fieldsize == 4)
-#endif
 	{
 		uint32_t *flagvar = (uint32_t *)((char *)actor + fd->structoffset);
 		if (set)
@@ -92,7 +89,6 @@ void ModActorFlag(AActor *actor, FFlagDef *fd, bool set)
 			*flagvar &= ~fd->flagbit;
 		}
 	}
-#ifdef __BIG_ENDIAN__
 	else if (fd->fieldsize == 2)
 	{
 		uint16_t *flagvar = (uint16_t *)((char *)actor + fd->structoffset);
@@ -118,7 +114,6 @@ void ModActorFlag(AActor *actor, FFlagDef *fd, bool set)
 			*flagvar &= ~fd->flagbit;
 		}
 	}
-#endif
 }
 
 //==========================================================================
@@ -200,14 +195,11 @@ INTBOOL CheckActorFlag(AActor *owner, FFlagDef *fd)
 	{
 		return CheckDeprecatedFlags(owner, fd->flagbit);
 	}
-	else
-#ifdef __BIG_ENDIAN__
-	if (fd->fieldsize == 4)
-#endif
+	// (each field at its own width, as in ModActorFlag)
+	else if (fd->fieldsize == 4)
 	{
 		return fd->flagbit & *(uint32_t *)(((char*)owner) + fd->structoffset);
 	}
-#ifdef __BIG_ENDIAN__
 	else if (fd->fieldsize == 2)
 	{
 		return fd->flagbit & *(uint16_t *)(((char*)owner) + fd->structoffset);
@@ -217,7 +209,6 @@ INTBOOL CheckActorFlag(AActor *owner, FFlagDef *fd)
 		assert(fd->fieldsize == 1);
 		return fd->flagbit & *(uint8_t *)(((char*)owner) + fd->structoffset);
 	}
-#endif
 }
 
 INTBOOL CheckActorFlag(AActor *owner, const char *flagname, bool printerror)

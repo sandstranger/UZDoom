@@ -2441,7 +2441,8 @@ void FDynamicBuffer::SetData(const uint8_t *data, int len)
 	if (data != nullptr)
 	{
 		m_Len = len;
-		memcpy(m_Data, data, len);
+		if (len > 0)
+			memcpy(m_Data, data, len);
 	}
 	else
 	{

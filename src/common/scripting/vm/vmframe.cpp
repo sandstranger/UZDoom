@@ -159,11 +159,14 @@ void VMScriptFunction::Alloc(int numops, int numkonstd, int numkonstf, int numko
 	assert(numkonsts >= 0 && numkonsts <= 65535);
 	assert(numkonsta >= 0 && numkonsta <= 65535);
 	assert(numlinenumbers >= 0 && numlinenumbers <= 65535);
+	// The double, string and pointer tables each start at their type's alignment (after an odd number of 4 byte ops
+	// and ints they were misaligned - undefined behaviour; the arena only aligns to a pointer's size): room for that
+	auto alignUp = [](void *p, size_t align) { return (void *)(((uintptr_t)p + align - 1) & ~(uintptr_t)(align - 1)); };
 	void *mem = ClassDataAllocator.Alloc(numops * sizeof(VMOP) +
 						 numkonstd * sizeof(int) +
-						 numkonstf * sizeof(double) +
-						 numkonsts * sizeof(FString) +
-						 numkonsta * sizeof(FVoidObj) +
+						 numkonstf * sizeof(double) + alignof(double) - 1 +
+						 numkonsts * sizeof(FString) + alignof(FString) - 1 +
+						 numkonsta * sizeof(FVoidObj) + alignof(FVoidObj) - 1 +
 						 numlinenumbers * sizeof(FStatementInfo));
 	Code = (VMOP *)mem;
 	mem = (void *)((VMOP *)mem + numops);
@@ -190,8 +193,8 @@ void VMScriptFunction::Alloc(int numops, int numkonstd, int numkonstf, int numko
 	}
 	if (numkonstf > 0)
 	{
-		KonstF = (double *)mem;
-		mem = (void *)((double *)mem + numkonstf);
+		KonstF = (double *)alignUp(mem, alignof(double));
+		mem = (void *)(KonstF + numkonstf);
 	}
 	else
 	{
@@ -199,12 +202,12 @@ void VMScriptFunction::Alloc(int numops, int numkonstd, int numkonstf, int numko
 	}
 	if (numkonsts > 0)
 	{
-		KonstS = (FString *)mem;
+		KonstS = (FString *)alignUp(mem, alignof(FString));
 		for (int i = 0; i < numkonsts; ++i)
 		{
 			::new(&KonstS[i]) FString;
 		}
-		mem = (void *)((FString *)mem + numkonsts);
+		mem = (void *)(KonstS + numkonsts);
 	}
 	else
 	{
@@ -212,7 +215,7 @@ void VMScriptFunction::Alloc(int numops, int numkonstd, int numkonstf, int numko
 	}
 	if (numkonsta > 0)
 	{
-		KonstA = (FVoidObj *)mem;
+		KonstA = (FVoidObj *)alignUp(mem, alignof(FVoidObj));
 	}
 	else
 	{

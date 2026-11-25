@@ -499,8 +499,6 @@ void PClassActor::InitializeDefaults()
 				memset(Meta, 0, MetaSize);
 			}
 
-			if (MetaSize > 0) memcpy(Meta, ParentClass->Meta, ParentClass->MetaSize);
-			else memset(Meta, 0, MetaSize);
 		}
 	}
 	PClass::InitializeDefaults();
