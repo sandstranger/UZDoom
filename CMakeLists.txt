@@ -66,6 +66,15 @@ if (NOT MSVC)
 	add_compile_options(-fsigned-char)
 endif ()
 
+# 32 bit ARM: the engine reads ints at unaligned addresses (the ACS VM's byte packed bytecode, chunks of lumps). A single
+# LDR / STR takes any address on ARMv7, but the load/store optimizer pairs neighbouring accesses into LDRD / LDM, which
+# fault on them (SIGBUS): pc[0] and pc[1] of the ACS VM became one LDRD. Accesses whose alignment is not proven stay
+# single. At the link too: with LTO the code is generated there.
+if (ANDROID AND ANDROID_ABI STREQUAL "armeabi-v7a")
+	add_compile_options("SHELL:-mllvm -arm-assume-misaligned-load-store")
+	add_link_options("SHELL:-Wl,-mllvm,-arm-assume-misaligned-load-store")
+endif ()
+
 if(NOT FORCE_NO_LTO)
 	include(CheckIPOSupported)
 	check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
