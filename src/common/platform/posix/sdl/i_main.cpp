@@ -219,6 +219,7 @@ void I_StartupJoysticks();
 
 #ifdef ANDROID
 #include "hw_programcache.h"
+#include "etc2cache.h"
 static int SDLCALL AndroidLifeCycleEventFilter(void*, SDL_Event* event);
 
 int SDL_main(int argc, char **argv)
@@ -383,6 +384,7 @@ static int SDLCALL AndroidLifeCycleEventFilter(void*, SDL_Event* event){
 		case SDL_APP_LOWMEMORY:
 			// may arrive on another thread: only flag it, the renderer trims at the end of a frame
 			ProgramBinaryCache::RequestTrim();
+			ETC2Cache::TryClearRam();	// (the transcoded textures' RAM copies; skipped if a loader is using them)
 			break;
 	}
 	return 1;

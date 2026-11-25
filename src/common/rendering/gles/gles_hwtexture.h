@@ -41,6 +41,7 @@ class FTexture;
 #include "hw_ihwtexture.h"
 
 class FCanvasTexture;
+class FImageSource;
 
 namespace OpenGLESRenderer
 {
@@ -92,6 +93,7 @@ public:
 	uint8_t* MapBuffer();
 
 	unsigned int CreateTexture(unsigned char* buffer, int w, int h, int texunit, bool mipmap, const char* name, bool noGLSwizzle = false);
+	bool CreateCompressed(FImageSource* src, int texunit);
 	unsigned int CreateCompressedTexture(unsigned char* buffer, int w, int h, int texunit, bool mipmap, CompressionFormat format, const char* name);
 	void Finalize() { }
 	unsigned int GetTextureHandle()

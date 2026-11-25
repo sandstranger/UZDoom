@@ -134,6 +134,13 @@ namespace OpenGLESRenderer
 		// Capability table of the context actually created (not of the requested mode)
 		int esVersion;			// 200, 300, 310, 320 for OpenGL ES contexts, 0 for desktop GL
 		bool bgraTextures;		// EXT_texture_format_BGRA8888
+		// Compressed textures (the BC images of DDS): kept as they are where the GPU has the format (S3TC: BC1/BC3,
+		// BPTC: BC7), else transcoded to ETC2 on the GLES 3.0 path, else decoded (the GLES 2.0 path)
+		bool s3tcTextures;
+		bool s3tcSRGBTextures;
+		bool bptcTextures;
+		bool etc2Textures;
+		bool texMaxLevel;		// GL_TEXTURE_MAX_LEVEL (not on the GLES 2.0 path: a mip chain must be complete)
 		bool textureSwizzle;	// GL_TEXTURE_SWIZZLE_* (GLES 3.0 / desktop GL 3.3)
 		bool syncObjects;		// glFenceSync & co (GLES 3.0 / desktop GL 3.2)
 		bool bufferStorage;		// GL_EXT_buffer_storage, GLES 3.0 mode: persistent mappings (used non-coherent, explicitly flushed)

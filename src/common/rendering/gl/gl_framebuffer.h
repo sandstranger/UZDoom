@@ -102,6 +102,7 @@ struct GlTexLoadOut {
 	unsigned char* pixels		= nullptr;		// Returned when we can't upload in the backghround thread
 	size_t pixelsSize = 0, totalDataSize = 0;
 	int pixelW = 0, pixelH = 0, mipLevels = -1;
+	int glFormat = 0;		// compressed images: the format of pixels (an ETC2 transcode the loader thread made)
 	GLTexLoadField flags;
 	GLsync uploadFence;
 	int lump = -1;

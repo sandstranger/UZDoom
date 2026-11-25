@@ -48,6 +48,9 @@ class FCanvasTexture;
 namespace OpenGLRenderer
 {
 
+// A BC compressed image the GPU cannot take transcoded in place to ETC2 (etcpak): returns the format to upload it in
+int PrepareCompressedUpload(unsigned char* buffer, size_t totalSize, int w, int h, int numMips, int format);
+
 class FHardwareTexture : public IHardwareTexture
 {
 public:

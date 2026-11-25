@@ -33,13 +33,18 @@
 #include "gl_renderstate.h"
 #include "gl_samplers.h"
 #include "gl_hwtexture.h"
+#include "bctranscode.h"
+#include "etc2cache.h"
 
 #include "image.h"
 #include "filesystem.h"
 
+EXTERN_CVAR(Int, gl_texture_etc2_transcode)
+
 namespace OpenGLRenderer
 {
 
+static int UploadForcedETC2(const unsigned char* bgra, int w, int h, bool mipmaps);
 
 TexFilter_s TexFilter[] = {
 	{GL_NEAREST,					GL_NEAREST,		false},
@@ -182,7 +187,14 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, swapRB ? GL_RED : GL_BLUE);
 	}
 
-	if (!firstCall && glBufferID > 0)
+	// Forced ETC2: the textures with data (not the copies and render targets, the 1 byte ones, Selaco's lightmaps)
+	int etc2Levels = 0;
+	if (firstCall && glBufferID == 0 && !noData && !noGLSwizzle && (glTextureBytes == 0 || glTextureBytes == 4))
+		etc2Levels = UploadForcedETC2(buffer, rw, rh, mipmap && TexFilter[gl_texture_filter].mipmapping && !forcenofilter);
+
+	if (etc2Levels > 0)
+		;
+	else if (!firstCall && glBufferID > 0)
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, rw, rh, sourcetype, GL_UNSIGNED_BYTE, buffer);
 	else
 		glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, buffer);
@@ -202,7 +214,11 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 	}
 
-	if (mipmap && TexFilter[gl_texture_filter].mipmapping && !forcenofilter)
+	if (etc2Levels > 0)
+	{
+		mipmapped = true;	// (the levels it has; never glGenerateMipmap on a compressed texture)
+	}
+	else if (mipmap && TexFilter[gl_texture_filter].mipmapping && !forcenofilter)
 	{
 		glGenerateMipmap(GL_TEXTURE_2D);
 		mipmapped = true;
@@ -288,12 +304,87 @@ void FHardwareTexture::CreateInvalid(int texUnit) {
 
 
 static inline uint32_t GetFormatBlockSize(int format) {
-	return format == GL_COMPRESSED_RGB_S3TC_DXT1_EXT || format == GL_COMPRESSED_SRGB_S3TC_DXT1_EXT ? 8 : 16;
+	// 8 byte blocks: BC1 (DXT1) and its ETC2 transcode (RGB8); 16: BC3, BC7, ETC2 RGBA8 EAC
+	return format == GL_COMPRESSED_RGB_S3TC_DXT1_EXT || format == GL_COMPRESSED_SRGB_S3TC_DXT1_EXT ||
+		format == BCT_RGBA_S3TC_DXT1 || format == BCT_SRGB_ALPHA_S3TC_DXT1 || format == BCT_RGB8_ETC2 || format == BCT_SRGB8_ETC2 ? 8 : 16;
+}
+
+
+//===========================================================================
+//
+// The BC compressed images (DDS: BC1, BC3, BC7) on GPUs without their format (OpenGL ES: S3TC and BPTC are
+// rare there - Selaco's textures are BC7): transcoded in place to the ETC2 format with the same block size
+// (etcpak, bctranscode.cpp), the size and mip layout stay. A transcode is made once: it is kept in RAM and on
+// disk (etc2cache.cpp) and taken from there next time. Returns the format to upload the buffer in.
+//
+//===========================================================================
+
+//===========================================================================
+//
+// Forced ETC2 (OpenGL ES: setForceETC2Textures, on by default; desktop GL: gl_texture_etc2_transcode 1): a
+// texture with data uploaded as ETC2 RGBA8 EAC, a quarter of RGBA8's memory, its mip levels built on the CPU
+// (glGenerateMipmap takes no compressed textures); made once, then from the ETC2 cache. The texture is bound.
+// Returns the levels uploaded, 0 when not forced.
+//
+//===========================================================================
+
+static int UploadForcedETC2(const unsigned char* bgra, int w, int h, bool mipmaps)
+{
+	if (!gl.texetc2 || bgra == nullptr || w <= 0 || h <= 0 ||
+		!((gl.esversion > 0 && ETC2Cache::ForceAll()) || gl_texture_etc2_transcode == 1))
+		return 0;
+	const int levels = mipmaps ? BCT_FullMipLevels(w, h) : 1;
+	std::vector<uint8_t> etc2;
+	ETC2Cache::EncodeBGRA(bgra, w, h, levels, etc2);
+
+	size_t pos = 0;
+	int lw = w, lh = h;
+	for (int level = 0; level < levels; level++)
+	{
+		const size_t size = (size_t)std::max(1, (lw + 3) / 4) * std::max(1, (lh + 3) / 4) * 16;
+		glCompressedTexImage2D(GL_TEXTURE_2D, level, BCT_RGBA8_ETC2_EAC, lw, lh, 0, (GLsizei)size, etc2.data() + pos);
+		pos += size;
+		lw = std::max(1, lw >> 1);
+		lh = std::max(1, lh >> 1);
+	}
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels - 1);
+	if (gl.esversion > 0)
+	{
+		// the ETC2 data is in RGBA order: no red / blue swizzle
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_RED);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_BLUE);
+	}
+	return levels;
+}
+
+int PrepareCompressedUpload(unsigned char* buffer, size_t totalSize, int w, int h, int numMips, int format)
+{
+	const int kind = BCT_Kind(format);
+	if (kind == 0 || !gl.texetc2 || buffer == nullptr || totalSize == 0)
+		return format;
+	const bool supported = kind == 7 ? gl.texbptc : (gl.texs3tc && (!BCT_IsSRGB(format) || gl.texs3tcsrgb));
+	if (supported && gl_texture_etc2_transcode == 0)
+		return format;	// (the GPU takes the BC format: kept)
+
+	const bool cached = ETC2Cache::Enabled();
+	uint64_t hash = 0;
+	if (cached)
+	{
+		hash = ETC2Cache::Hash(buffer, totalSize, w, h, format, numMips);
+		if (ETC2Cache::Get(hash, buffer, totalSize))
+			return BCT_ETC2Format(format);
+	}
+	if (BCT_TranscodeToETC2(buffer, totalSize, w, h, numMips, format) <= 0)
+		return format;
+	if (cached)
+		ETC2Cache::Put(hash, buffer, totalSize);
+	return BCT_ETC2Format(format);
 }
 
 // Add a BC7 compressed texture and mipmaps
 unsigned int FHardwareTexture::BackgroundCreateCompressedTexture(GLsync* fence, unsigned char* buffer, uint32_t dataSize, uint32_t totalSize, int w, int h, int format, int texunit, int numMips, const char* name, bool forceNoMips, bool allowQualityReduction) {
 	int rh, rw;
+	format = PrepareCompressedUpload(buffer, totalSize, w, h, numMips, format);
 	uint32_t blockSize = GetFormatBlockSize(format);
 
 	glGetError();
@@ -381,6 +472,7 @@ unsigned int FHardwareTexture::BackgroundCreateCompressedTexture(GLsync* fence, 
 
 unsigned int FHardwareTexture::CreateCompressedTexture(unsigned char* buffer, uint32_t dataSize, uint32_t totalSize, int w, int h, int format, int texunit, int numMips, const char* name, bool forceNoMips, bool allowQualityReduction) {
 	int rh, rw;
+	format = PrepareCompressedUpload(buffer, totalSize, w, h, numMips, format);
 	uint32_t blockSize = GetFormatBlockSize(format);
 	
 	glGetError();
@@ -534,11 +626,18 @@ unsigned int FHardwareTexture::BackgroundCreateTexture(GLsync* fence, unsigned c
 	}
 
 
-	glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, buffer);
+	// Forced ETC2 (see UploadForcedETC2)
+	const int etc2Levels = indexed ? 0 : UploadForcedETC2(buffer, rw, rh, mipmap && TexFilter[gl_texture_filter].mipmapping && !forceNoMips);
+	if (etc2Levels == 0)
+		glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, buffer);
 
 	if (deletebuffer && buffer) free(buffer);
 
-	if (mipmap && TexFilter[gl_texture_filter].mipmapping && !forceNoMips)
+	if (etc2Levels > 0)
+	{
+		glInfo.mipmapped = true;
+	}
+	else if (mipmap && TexFilter[gl_texture_filter].mipmapping && !forceNoMips)
 	{
 		glGenerateMipmap(GL_TEXTURE_2D);
 		glInfo.mipmapped = true;

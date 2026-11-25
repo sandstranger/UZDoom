@@ -641,6 +641,9 @@ if( ANDROID )
 	add_subdirectory( libraries/miniz )
 endif()
 
+# etcpak (submodule): BC -> ETC2 transcoding of compressed textures for GPUs without the BC formats
+add_subdirectory( libraries/etcpak-lib )
+
 if( NOT CMAKE_CROSSCOMPILING )
 	export(TARGETS ${CROSS_EXPORTS} FILE "${CMAKE_BINARY_DIR}/ImportExecutables.cmake" )
 endif()

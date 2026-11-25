@@ -160,6 +160,10 @@ static void LoadESCapabilities()
 
 	gl.floatlinear = CheckExtension("GL_OES_texture_float_linear");
 	gl.bgra = CheckExtension("GL_EXT_texture_format_BGRA8888");
+	gl.texbptc = CheckExtension("GL_EXT_texture_compression_bptc");
+	gl.texs3tc = CheckExtension("GL_EXT_texture_compression_s3tc");
+	gl.texs3tcsrgb = CheckExtension("GL_EXT_texture_compression_s3tc_srgb");
+	gl.texetc2 = true;
 	gl.colorbuffer32f = CheckExtension("GL_EXT_color_buffer_float");
 	gl.colorbuffer16f = gl.colorbuffer32f || CheckExtension("GL_EXT_color_buffer_half_float");
 
@@ -281,6 +285,10 @@ void gl_LoadExtensions()
 	// first test for optional features
 	if (CheckExtension("GL_ARB_texture_compression")) gl.flags |= RFL_TEXTURE_COMPRESSION;
 	if (CheckExtension("GL_EXT_texture_compression_s3tc")) gl.flags |= RFL_TEXTURE_COMPRESSION_S3TC;
+	gl.texs3tc = !!(gl.flags & RFL_TEXTURE_COMPRESSION_S3TC);
+	gl.texs3tcsrgb = gl.texs3tc;
+	gl.texbptc = gl_version >= 4.2f || CheckExtension("GL_ARB_texture_compression_bptc");
+	gl.texetc2 = gl_version >= 4.3f || CheckExtension("GL_ARB_ES3_compatibility");
 
 	if (CheckExtension("GL_ATI_meminfo")) gl.flags |= RFL_ATI_MEM;
 	if (CheckExtension("GL_NVX_gpu_memory_info")) gl.flags |= RFL_NV_MEM;

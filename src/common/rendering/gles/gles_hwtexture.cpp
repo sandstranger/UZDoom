@@ -32,6 +32,17 @@
 #include "gles_renderstate.h"
 #include "gles_hwtexture.h"
 #include "printf.h"
+#include "bctranscode.h"
+#include "etc2cache.h"
+#include "filesystem.h"
+#include "image.h"
+#include <algorithm>
+
+EXTERN_CVAR(Int, gl_texture_etc2_transcode)
+
+#ifndef GL_TEXTURE_MAX_LEVEL
+#define GL_TEXTURE_MAX_LEVEL 0x813D	// (GLES 3.0 / desktop GL; the compressed path runs on those only)
+#endif
 
 namespace OpenGLESRenderer
 {
@@ -69,6 +80,7 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 	int rh,rw;
 	int texformat = GL_RGBA;// TexFormat[gl_texture_format];
 	bool deletebuffer=false;
+	bool noData = false;
 
 	// When running in SW mode buffer will be null, so set it to the texBuffer already created
 	// There could be other use cases I do not know about which means this is a bad idea..
@@ -97,6 +109,7 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		mipmapped = false;
 		buffer=(unsigned char *)calloc(4,rw * (rh+1));
 		deletebuffer=true;
+		noData = true;
 		//texheight=-h;
 	}
 	else
@@ -195,7 +208,31 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		}
 	}
 
-	glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, swapped ? swapped : buffer);
+	// Forced ETC2 on the GLES 3.0 path (setForceETC2Textures, on by default; desktop GL: gl_texture_etc2_transcode 1):
+	// the textures with data (not the copies and render targets, the 1 byte ones, Selaco's lightmaps) as ETC2 RGBA8
+	// EAC, a quarter of the memory, with mip levels built on the CPU (glGenerateMipmap takes no compressed textures)
+	int etc2Levels = 0;
+	if (gles.etc2Textures && gles.texMaxLevel && !noData && !noGLSwizzle && glTextureBytes == 4 &&
+		((gles.esVersion > 0 && ETC2Cache::ForceAll()) || gl_texture_etc2_transcode == 1))
+	{
+		etc2Levels = mipmap && TexFilter[gl_texture_filter].mipmapping ? BCT_FullMipLevels(rw, rh) : 1;
+		std::vector<uint8_t> etc2;
+		ETC2Cache::EncodeBGRA(buffer, rw, rh, etc2Levels, etc2);
+		size_t pos = 0;
+		int lw = rw, lh = rh;
+		for (int level = 0; level < etc2Levels; level++)
+		{
+			const size_t size = (size_t)std::max(1, (lw + 3) / 4) * std::max(1, (lh + 3) / 4) * 16;
+			glCompressedTexImage2D(GL_TEXTURE_2D, level, BCT_RGBA8_ETC2_EAC, lw, lh, 0, (GLsizei)size, etc2.data() + pos);
+			pos += size;
+			lw = std::max(1, lw >> 1);
+			lh = std::max(1, lh >> 1);
+		}
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, etc2Levels - 1);
+		swapRB = false;		// (RGBA order: no swizzle)
+	}
+	else
+		glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, swapped ? swapped : buffer);
 	if (swapped) free(swapped);
 
 	if (gles.esVersion > 0 && gles.textureSwizzle)
@@ -232,7 +269,11 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 
 	if (deletebuffer && buffer) free(buffer);
 
-	if (mipmap && TexFilter[gl_texture_filter].mipmapping)
+	if (etc2Levels > 0)
+	{
+		mipmapped = true;	// (the levels it has; never glGenerateMipmap on a compressed texture)
+	}
+	else if (mipmap && TexFilter[gl_texture_filter].mipmapping)
 	{
 		glGenerateMipmap(GL_TEXTURE_2D);
 		mipmapped = true;
@@ -355,6 +396,117 @@ void FHardwareTexture::BindToFrameBuffer(int width, int height)
 //
 //===========================================================================
 
+//===========================================================================
+//
+// A GPU only image (DDS: BC1 / BC3 / BC7 - Selaco's textures): uploaded as it is where the GPU has its format;
+// else, on the GLES 3.0 path, transcoded to ETC2 (etcpak; made once, then taken from the ETC2 cache). Returns
+// false for the rest (the GLES 2.0 path without the format): they go through the CPU, decoded to RGBA.
+//
+//===========================================================================
+
+bool FHardwareTexture::CreateCompressed(FImageSource *src, int texunit)
+{
+	const int bcFormat = src->getGLFormat();
+	const int kind = BCT_Kind(bcFormat);
+	const int w = src->GetWidth(), h = src->GetHeight();
+	if (kind == 0 || w <= 0 || h <= 0 || w > gles.max_texturesize || h > gles.max_texturesize || gl_texture_etc2_transcode == 2)
+		return false;
+
+	bool native = gl_texture_etc2_transcode == 0 &&
+		(kind == 7 ? gles.bptcTextures : (gles.s3tcTextures && (!BCT_IsSRGB(bcFormat) || gles.s3tcSRGBTextures)));
+	const bool etc2 = !native && gles.etc2Textures;
+	if (!native && !etc2)
+		return false;
+
+	FileReader reader = fileSystem.OpenFileReader(src->LumpNum(), FileSys::EReaderType::READER_SHARED, 0);
+	if (!reader.isOpen())
+		return false;
+	unsigned char *data = nullptr;
+	size_t totalSize = 0, level0Size = 0;
+	int mips = 0;
+	src->ReadCompressedPixels(&reader, &data, totalSize, level0Size, mips);
+	if (data == nullptr || totalSize == 0)
+	{
+		free(data);
+		return false;
+	}
+
+	const size_t blockBytes = kind == 1 ? 8 : 16;
+	if (!gles.texMaxLevel)
+	{
+		// GLES 2.0 path: no GL_TEXTURE_MAX_LEVEL - the levels must go down to 1x1 (or be decoded and mipmapped)
+		int fullLevels = 1, needed = 0, lw = w, lh = h;
+		while (lw > 1 || lh > 1) { lw = std::max(1, lw >> 1); lh = std::max(1, lh >> 1); fullLevels++; }
+		size_t chain = 0;
+		lw = w, lh = h;
+		for (int level = 0; level < fullLevels; level++, needed++)
+		{
+			chain += (size_t)std::max(1, (lw + 3) / 4) * std::max(1, (lh + 3) / 4) * blockBytes;
+			lw = std::max(1, lw >> 1); lh = std::max(1, lh >> 1);
+		}
+		const bool pow2 = (w & (w - 1)) == 0 && (h & (h - 1)) == 0;
+		if (mips < fullLevels || totalSize < chain || (!pow2 && !gles.npotAvailable))
+		{
+			free(data);
+			return false;
+		}
+	}
+
+	int uploadFormat = bcFormat;
+	if (!native)
+	{
+		const bool cached = ETC2Cache::Enabled();
+		uint64_t hash = 0;
+		bool ok = false;
+		if (cached)
+		{
+			hash = ETC2Cache::Hash(data, totalSize, w, h, bcFormat, mips);
+			ok = ETC2Cache::Get(hash, data, totalSize);
+		}
+		if (!ok)
+		{
+			ok = BCT_TranscodeToETC2(data, totalSize, w, h, mips, bcFormat) > 0;
+			if (ok && cached)
+				ETC2Cache::Put(hash, data, totalSize);
+		}
+		if (!ok)
+		{
+			free(data);
+			return false;
+		}
+		uploadFormat = BCT_ETC2Format(bcFormat);
+	}
+
+	if (glTexID == 0)
+		glGenTextures(1, &glTexID);
+	if (texunit > 0) glActiveTexture(GL_TEXTURE0 + texunit);
+	if (texunit >= 0) lastbound[texunit] = glTexID;
+	glBindTexture(GL_TEXTURE_2D, glTexID);
+
+	size_t pos = 0;
+	int levels = 0, lw = w, lh = h;
+	for (int level = 0; level < std::max(mips, 1); level++)
+	{
+		const size_t size = (size_t)std::max(1, (lw + 3) / 4) * std::max(1, (lh + 3) / 4) * blockBytes;
+		if (totalSize - pos < size)
+			break;
+		glCompressedTexImage2D(GL_TEXTURE_2D, level, uploadFormat, lw, lh, 0, (GLsizei)size, data + pos);
+		pos += size;
+		levels++;
+		lw = std::max(1, lw >> 1);
+		lh = std::max(1, lh >> 1);
+	}
+	// (the levels there are: complete for any filter; never glGenerateMipmap on a compressed texture)
+	if (gles.texMaxLevel)
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, std::max(levels - 1, 0));
+	mipmapped = true;
+	glTextureBytes = 4;
+
+	if (texunit > 0) glActiveTexture(GL_TEXTURE0);
+	free(data);
+	return levels > 0;
+}
+
 bool FHardwareTexture::BindOrCreate(FTexture *tex, int texunit, int clampmode, int translation, int flags)
 {
 	bool needmipmap = (clampmode <= CLAMP_XY) && !forcenofilter;
@@ -373,6 +525,14 @@ bool FHardwareTexture::BindOrCreate(FTexture *tex, int texunit, int clampmode, i
 		// Create this texture
 
 		FTextureBuffer texbuffer;
+		FImageSource *src = tex->GetImage();
+
+		if (src && src->IsGPUOnly() && !(flags & CTF_Indexed) && !tex->isHardwareCanvas() && CreateCompressed(src, texunit))
+		{
+			if (forcenofilter && clampmode <= CLAMP_XY) clampmode += CLAMP_NOFILTER - CLAMP_NONE;
+			GLRenderer->mSamplerManager->Bind(texunit, clampmode, 255);
+			return true;
+		}
 
 		if (!tex->isHardwareCanvas())
 		{

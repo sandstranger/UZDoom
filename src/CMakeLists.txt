@@ -324,6 +324,7 @@ if (NOT ANDROID)
 endif()
 list( APPEND PROJECT_LIBRARIES "zwidget" )
 list( APPEND PROJECT_LIBRARIES "${WEBP_TARGET}" )
+list( APPEND PROJECT_LIBRARIES etcpak )
 
 message("Building for target architecture: ${TARGET_ARCHITECTURE}")
 
@@ -1059,6 +1060,8 @@ set (PCH_SOURCES
 	common/textures/bitmap.cpp
 	common/textures/m_png.cpp
 	common/textures/texture.cpp
+	common/textures/bctranscode.cpp
+	common/textures/etc2cache.cpp
 	common/textures/gametexture.cpp
 	common/textures/image.cpp
 	common/textures/imagetexture.cpp

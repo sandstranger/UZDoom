@@ -39,6 +39,12 @@ struct RenderContext
 	// Capability table (desktop GL: all true / not applicable)
 	bool floatlinear;		// 32-bit float textures can be sampled with linear filtering
 	bool bgra;				// BGRA uploads (EXT_texture_format_BGRA8888 on GLES; desktop: always)
+	// Compressed texture formats: BC7 (BPTC), BC1/BC3 (S3TC), ETC2 (core in GLES 3.0). The BC ones the GPU lacks are
+	// transcoded to ETC2 (bctranscode.cpp).
+	bool texbptc;
+	bool texs3tc;
+	bool texs3tcsrgb;		// the sRGB S3TC formats (GLES: their own extension)
+	bool texetc2;
 	bool colorbuffer16f;	// R16F/RG16F/RGBA16F are color-renderable (EXT_color_buffer_half_float/_float)
 	bool colorbuffer32f;	// R32F/RG32F/RGBA32F are color-renderable (EXT_color_buffer_float)
 	int msrtt;				// multisampled render-to-texture: 0 none, 1 EXT, 2 IMG

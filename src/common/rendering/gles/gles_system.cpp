@@ -281,6 +281,16 @@ namespace OpenGLESRenderer
 		gles.nv_vram_ext = CheckExtension("GL_NVX_gpu_memory_info");
 		gles.ati_vram_ext = CheckExtension("GL_ATI_meminfo");
 
+		// Compressed texture formats. ETC2 only on the GLES 3.0 path (and desktop GL 3.3+ with ES3 compatibility):
+		// the GLES 2.0 path uses GLES 2.0 features only, the BC images it cannot take as they are get decoded.
+		gles.s3tcTextures = CheckExtension("GL_EXT_texture_compression_s3tc");
+		gles.s3tcSRGBTextures = gles.esVersion > 0 ? CheckExtension("GL_EXT_texture_compression_s3tc_srgb") : gles.s3tcTextures;
+		gles.bptcTextures = gles.esVersion > 0 ? CheckExtension("GL_EXT_texture_compression_bptc") :
+			(glVersion >= 4.2 || CheckExtension("GL_ARB_texture_compression_bptc"));
+		gles.texMaxLevel = gles.glesMode == GLES_MODE_GLES3 || gles.glesMode == GLES_MODE_OGL3;
+		gles.etc2Textures = gles.glesMode == GLES_MODE_GLES3 ||
+			(gles.glesMode == GLES_MODE_OGL3 && (glVersion >= 4.3 || CheckExtension("GL_ARB_ES3_compatibility")));
+
 		if (gles.glesMode == GLES_MODE_GLES)
 		{
 			Printf("GLES choosing mode: GLES_MODE_GLES\n");

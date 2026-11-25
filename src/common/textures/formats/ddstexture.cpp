@@ -47,6 +47,8 @@
 #include "engineerrors.h"
 #include "texturemanager.h"
 #include "printf.h"
+#include "bctranscode.h"
+#include <algorithm>
 
 // Since we want this to compile under Linux too, we need to define this
 // stuff ourselves instead of including a DirectX header.
@@ -560,12 +562,12 @@ FDDSTexture::FDDSTexture (FileReader &lump, int lumpnum, void *vsurfdesc, void* 
 		case DXGI_FORMAT_BC3_TYPELESS:
 		case DXGI_FORMAT_BC3_UNORM:
 			vkFormat = 137;		// VK_FORMAT_BC3_UNORM_BLOCK
-			glFormat = 0x83F2;  // GL_COMPRESSED_RGBA_S3TC_DXT3_EXT
+			glFormat = 0x83F3;  // GL_COMPRESSED_RGBA_S3TC_DXT5_EXT (BC3 is DXT5)
 			BlockSize = 16;
 			break;
 		case DXGI_FORMAT_BC3_UNORM_SRGB:
 			vkFormat = 138;		// VK_FORMAT_BC3_SRGB_BLOCK
-			glFormat = 0x8C4E;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT
+			glFormat = 0x8C4F;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
 			BlockSize = 16;
 			break;
 		case DXGI_FORMAT_BC7_UNORM_SRGB:
@@ -1135,6 +1137,17 @@ int FDDSTexture::CopyPixels(FBitmap *bmp, int conversion, int frame)
 	else if (Format == ID_DXT5 || Format == ID_DXT4)
 	{
 		DecompressDXT5 (lump, Format == ID_DXT4, TexBuffer, PIX_ARGB);
+	}
+	else if (Format == ID_DX10)
+	{
+		// The GPU compressed images (BC1, BC3, BC7) for the paths that need pixels (the OpenGL ES 2 renderer, the
+		// software renderer): level 0 decoded. They had no pixels at all.
+		lump.Seek(sizeof(DDSURFACEDESC2) + 4 + (hasDX10Header ? sizeof(DDHEADERDX10) : 0), FileReader::SeekSet);
+		const size_t level0 = (size_t)std::max(1, (Width + 3) / 4) * std::max(1, (Height + 3) / 4) * BlockSize;
+		TArray<uint8_t> blocks(level0, true);
+		if (lump.Read(blocks.Data(), (long)level0) == (long)level0)
+			BCT_DecodeToBGRA(blocks.Data(), level0, Width, Height, glFormat, TexBuffer, bmp->GetPitch());
+		return -1;
 	}
 
 	return -1;
