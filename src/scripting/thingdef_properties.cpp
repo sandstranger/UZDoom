@@ -75,6 +75,25 @@ static PClassActor *FindClassTentative(const char *name, PClass *ancestor, bool 
 //==========================================================================
 void ModActorFlag(AActor *actor, FFlagDef *fd, bool set)
 {
+	if (fd->varflags & VARF_Meta)
+	{
+		// A flag on a meta field: the class' flag, in its meta data. Only the class' defaults set it, it is the same
+		// for all the class' actors (it used to change a bit of the actor at the meta field's offset).
+		auto cls = actor->GetClass();
+		if ((uint8_t *)actor != cls->Defaults || cls->Meta == nullptr)
+			return;
+		uint32_t *flagvar = (uint32_t *)(cls->Meta + fd->structoffset);
+		if (set)
+		{
+			*flagvar |= fd->flagbit;
+		}
+		else
+		{
+			*flagvar &= ~fd->flagbit;
+		}
+		return;
+	}
+
 	// Each field at its own width: a 32 bit access to a 1 or 2 byte field (the little endian shortcut) was
 	// unaligned - undefined behaviour, a fault on CPUs without unaligned access - and reached past the field.
 	if (fd->fieldsize == 4)
@@ -194,6 +213,12 @@ INTBOOL CheckActorFlag(AActor *owner, FFlagDef *fd)
 	if (fd->structoffset == -1)
 	{
 		return CheckDeprecatedFlags(owner, fd->flagbit);
+	}
+	else if (fd->varflags & VARF_Meta)
+	{
+		// (a flag of the class, in its meta data)
+		auto meta = owner->GetClass()->Meta;
+		return meta != nullptr ? fd->flagbit & *(uint32_t *)(meta + fd->structoffset) : 0;
 	}
 	// (each field at its own width, as in ModActorFlag)
 	else if (fd->fieldsize == 4)

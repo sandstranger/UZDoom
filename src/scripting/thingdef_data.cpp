@@ -528,6 +528,8 @@ FFlagDef *FindFlag (const PClass *type, const char *part1, const char *part2, bo
 				forInternalFlags.flagbit = field->Offset? 1 << field->bitval : field->bitval;
 				forInternalFlags.structoffset = field->Offset? (int)field->Offset->Offset : -1;
 				forInternalFlags.varflags = field->Offset == nullptr && field->bitval > 0? VARF_Deprecated : 0;
+				if (field->Offset != nullptr && (field->Offset->Flags & VARF_Meta))
+					forInternalFlags.varflags |= VARF_Meta;	// (a flag of the class, in its meta data)
 				return &forInternalFlags;
 			}
 		}
@@ -546,6 +548,8 @@ FFlagDef *FindFlag (const PClass *type, const char *part1, const char *part2, bo
 				forInternalFlags.flagbit = field->Offset ? 1 << field->bitval : field->bitval;
 				forInternalFlags.structoffset = field->Offset ? (int)field->Offset->Offset : -1;
 				forInternalFlags.varflags = field->Offset == nullptr && field->bitval > 0? VARF_Deprecated : 0;
+				if (field->Offset != nullptr && (field->Offset->Flags & VARF_Meta))
+					forInternalFlags.varflags |= VARF_Meta;	// (a flag of the class, in its meta data)
 				return &forInternalFlags;
 			}
 		}

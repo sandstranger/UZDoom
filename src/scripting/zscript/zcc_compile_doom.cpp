@@ -201,8 +201,11 @@ bool ZCCDoomCompiler::CompileFlagDefs(PClass *type, TArray<ZCC_FlagDef *> &Prope
 				}
 			}
 
+			// (a flag on a meta field is a meta flag: read from the class' meta data - it used to be read from the
+			// actor at the meta field's offset, whatever was there; Selaco's EffectActor destroyed actors that way)
 			if (field != nullptr)
-				type->VMType->AddNativeField(FStringf("b%s", name.GetChars()), TypeSInt32, field->Offset, 0, 1 << p->BitValue);
+				type->VMType->AddNativeField(FStringf("b%s", name.GetChars()), TypeSInt32, field->Offset,
+					field->Flags & (VARF_Meta | VARF_Static | VARF_ReadOnly), 1 << p->BitValue);
 		}
 	}
 	return true;
