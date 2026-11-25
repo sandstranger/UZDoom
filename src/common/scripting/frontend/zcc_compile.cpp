@@ -2714,6 +2714,14 @@ void ZCCCompiler::CompileFunction(ZCC_StructWork *c, ZCC_FuncDeclarator *f, bool
 						{
 							elementcount = 4;
 						}
+						// An 'out' vector is passed by its address: one slot, as NumArgs counts it. With one default per
+						// element the default list ran out of step with the slots: a call to a function with an 'out'
+						// vector before a defaulted parameter was given that default on top (7 slots for 5), which the
+						// interpreter took for its parameters (the JIT happened to read the right ones).
+						if (flags & VARF_Out)
+						{
+							elementcount = 1;
+						}
 					}
 					if (type->GetRegType() == REGT_NIL && type != TypeVector2 && type != TypeVector3 && type != TypeVector4 && type != TypeQuaternion && type != TypeFVector2 && type != TypeFVector3 && type != TypeFVector4 && type != TypeFQuaternion)
 					{

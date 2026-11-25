@@ -10208,7 +10208,8 @@ FxExpression *FxVMFunctionCall::Resolve(FCompileContext& ctx)
 					}
 				}
 
-				defaults_index += argtypes[i + implicit]->GetRegCount();
+				// (an 'out' parameter has one slot in the defaults: its address)
+				defaults_index += (argflags[i + implicit] & VARF_Out) ? 1 : argtypes[i + implicit]->GetRegCount();
 			}
 
 			assert(ArgList[i]);
