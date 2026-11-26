@@ -17,6 +17,13 @@ Mouse3 useability
 Mouse4 +reload
 capslock "codex"
 
+// The Android launcher's on-screen buttons: attack and crouch send the keys UZDoom's own binds give them
+// (engine/commonbinds.txt, defbinds.txt); aim / alt fire and the ability, mouse buttons here, keys of their own
+enter +attack
+x crouch
+v +altattack
+b useability
+
 
 // Movement
 w +forward
