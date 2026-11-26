@@ -134,7 +134,9 @@ extern DVector3			FramePosOffset;
 
 inline constexpr int R_PointOnSide (fixed_t x, fixed_t y, const node_t *node)
 {
-	return DMulScale (y-node->y, node->dx, node->x-x, node->dy, 32) > 0;
+	// (the differences wrap around as they always did - Selaco's large levels have points more than 32768 units
+	// from a node - but defined: signed overflow is undefined behaviour)
+	return DMulScale ((fixed_t)((uint32_t)y - (uint32_t)node->y), node->dx, (fixed_t)((uint32_t)node->x - (uint32_t)x), node->dy, 32) > 0;
 }
 inline int R_PointOnSide(double x, double y, const node_t *node)
 {

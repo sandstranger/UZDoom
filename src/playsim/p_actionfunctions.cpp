@@ -1737,9 +1737,10 @@ DEFINE_ACTION_FUNCTION(AActor, A_SpawnDefinedParticle)
 	PARAM_INT	(flags)
 	PARAM_POINTER(refActor, AActor);
 
+	// (declared 'native bool': whether a particle was spawned - nothing was returned, the caller read a stale register)
 	if (!definitionClass)
 	{
-		return 0;
+		ACTION_RETURN_BOOL(false);
 	}
 
 	if (DParticleDefinition* definition = dynamic_cast<DParticleDefinition*>(definitionClass->LevelInstance))
@@ -1770,9 +1771,10 @@ DEFINE_ACTION_FUNCTION(AActor, A_SpawnDefinedParticle)
 		{
 			particle->angle = (float)angle.Degrees();
 		}
+		ACTION_RETURN_BOOL(particle != nullptr);
 	}
 
-	return 0;
+	ACTION_RETURN_BOOL(false);
 }
 
 particledata_t* SpawnMissileParticle(AActor* source, double z, DParticleDefinition* definition, DAngle angle, double vz, double speed)
@@ -1934,9 +1936,7 @@ DEFINE_ACTION_FUNCTION(AActor, A_SpawnDefinedParticleProjectile)
 	PARAM_ANGLE(pitch)
 	PARAM_INT(ptr);
 
-	A_SpawnDefinedParticleProjectile(self, definitionClass, spawnHeight, spawnofs_xy, angle, flags, pitch, ptr);
-
-	return 0;
+	ACTION_RETURN_BOOL(A_SpawnDefinedParticleProjectile(self, definitionClass, spawnHeight, spawnofs_xy, angle, flags, pitch, ptr) != nullptr);
 }
 
 DEFINE_ACTION_FUNCTION(AActor, A_SpawnDefinedParticleProjectileSpeed)
@@ -1951,9 +1951,7 @@ DEFINE_ACTION_FUNCTION(AActor, A_SpawnDefinedParticleProjectileSpeed)
 	PARAM_ANGLE(pitch)
 	PARAM_INT(ptr);
 
-	A_SpawnDefinedParticleProjectile(self, definitionClass, spawnHeight, spawnofs_xy, angle, flags, pitch, ptr, speedMulti);
-
-	return 0;
+	ACTION_RETURN_BOOL(A_SpawnDefinedParticleProjectile(self, definitionClass, spawnHeight, spawnofs_xy, angle, flags, pitch, ptr, speedMulti) != nullptr);
 }
 
 //===========================================================================

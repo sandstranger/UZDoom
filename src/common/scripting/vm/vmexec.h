@@ -898,6 +898,8 @@ static int ExecScriptFunc(VMFrameStack *stack, VMReturn *ret, int numret)
 				numret1 = sfunc1->ScriptCall(sfunc1, reg.param + f->NumParam - b, b, returns, C);
 			}
 #ifndef ANDROID
+			if (numret1 != C)
+				fprintf(stderr, "%s returned %d values, %s expected %d\n", call->PrintableName, numret1, f->Func->PrintableName, (int)C);
 			assert(numret1 == C && "Number of parameters returned differs from what was expected by the caller");
 #endif
 			f->NumParam -= B;

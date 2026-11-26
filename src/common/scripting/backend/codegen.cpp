@@ -10081,7 +10081,8 @@ FxExpression *FxVMFunctionCall::Resolve(FCompileContext& ctx)
 					else
 					{
 						FName name = static_cast<FxNamedNode *>(ArgList[i])->name;
-						if(argnames[index + implicit] != name)
+						// (past the last parameter there is no name to compare with: argnames ends there)
+						if(index >= count || argnames[index + implicit] != name)
 						{
 							unsigned j;
 

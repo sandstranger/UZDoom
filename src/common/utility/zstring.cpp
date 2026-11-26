@@ -1349,7 +1349,7 @@ double FString::ToDouble () const
 
 void FString::StrCopy (char *to, const char *from, size_t len)
 {
-	memcpy (to, from, len*sizeof(char));
+	if (len > 0) memcpy (to, from, len*sizeof(char));	// (from may be null then: e.g. an empty lump's data)
 	to[len] = 0;
 }
 

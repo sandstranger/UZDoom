@@ -1867,8 +1867,10 @@ static int R_PointOnSideSlow(double xx, double yy, node_t *node)
 		return node->dx > 0;
 	}
 
-	auto dx = (x - node->x);
-	auto dy = (y - node->y);
+	// (wrapping around as they always did - Selaco's large levels have points more than 32768 units from a node -
+	// but defined: signed overflow is undefined behaviour)
+	fixed_t dx = (fixed_t)((uint32_t)x - (uint32_t)node->x);
+	fixed_t dy = (fixed_t)((uint32_t)y - (uint32_t)node->y);
 
 	// Try to quickly decide by looking at sign bits.
 	if ((node->dy ^ node->dx ^ dx ^ dy) & 0x80000000)

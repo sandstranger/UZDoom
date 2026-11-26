@@ -321,9 +321,10 @@ DEFINE_ACTION_FUNCTION(DParticleDefinition, SpawnParticle)
 	PARAM_INT(flags)
 	PARAM_POINTER(refActor, AActor);
 
+	// (declared 'native bool': whether a particle was spawned - nothing was returned, the caller read a stale register)
 	if (!definitionClass || !currentVMLevel)
 	{
-		return 0;
+		ACTION_RETURN_BOOL(false);
 	}
 
 	if (DParticleDefinition* definition = dynamic_cast<DParticleDefinition*>(definitionClass->LevelInstance))
@@ -363,10 +364,10 @@ DEFINE_ACTION_FUNCTION(DParticleDefinition, SpawnParticle)
 			vel.Y = xvel * s - yvel * c;
 		}
 
-		P_SpawnDefinedParticle(currentVMLevel, definition, refActor ? refActor->Vec3Offset(pos) : pos, vel, scale, flags, refActor);
+		ACTION_RETURN_BOOL(P_SpawnDefinedParticle(currentVMLevel, definition, refActor ? refActor->Vec3Offset(pos) : pos, vel, scale, flags, refActor) != nullptr);
 	}
 
-	return 0;
+	ACTION_RETURN_BOOL(false);
 }
 
 static void DParticleDefinition_Emit(DParticleDefinition* definition, AActor* master, double chance, int numTries, double angle, double pitch, double speed, double offsetX, double offsetY, double offsetZ, double velocityX, double velocityY, double velocityZ, int flags, double scaleBoost, int particleSpawnOffsets, double particleLifetimeModifier, double additionalAngleScale, double additionalAngleChance)
@@ -1288,7 +1289,9 @@ void DParticleDefinition::CallOnCreateParticle(particledata_t* particle)
 {
 	IFVIRTUAL(DParticleDefinition, OnCreateParticle)
 	{
-		VMValue params[] = { this, particle };
+		// OnCreateParticle(in out ParticleData particle, Actor refActor): refActor is the particle's master (Emit's
+		// master, SpawnParticle's refActor). It was missing here - VMCall read a third parameter from past the array.
+		VMValue params[] = { this, particle, particle->master };
 		VMCall(func, params, 3, nullptr, 0);
 	}
 }

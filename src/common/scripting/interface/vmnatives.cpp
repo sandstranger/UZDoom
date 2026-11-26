@@ -1276,7 +1276,7 @@ DEFINE_ACTION_FUNCTION(_CVar, ResetToDefault)
 	}
 
 	self->ResetToDefault();
-	return 0;
+	ACTION_RETURN_INT(0);	// (declared 'native int': nothing was returned, the caller read a stale register)
 }
 
 DEFINE_ACTION_FUNCTION(_CVar, FindCVar)
