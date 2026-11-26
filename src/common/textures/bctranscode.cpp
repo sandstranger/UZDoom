@@ -8,8 +8,19 @@
 #include <algorithm>
 #include <vector>
 #include "bctranscode.h"
+#ifdef UZDOOM_ETCPAK	// (Android's only: a PC's GPU takes the BC formats, nothing is transcoded or decoded there)
 #include "ProcessRGB.hpp"
 #include "bcdec.h"
+#endif
+
+bool BCT_Available()
+{
+#ifdef UZDOOM_ETCPAK
+	return true;
+#else
+	return false;
+#endif
+}
 
 int BCT_Kind(int glFormat)
 {
@@ -56,6 +67,7 @@ static inline size_t BCT_BlockBytes(int kind)
 	return kind == 1 ? 8 : 16;
 }
 
+#ifdef UZDOOM_ETCPAK
 // One block, RGBA out at the pitch (bytes)
 static inline void BCT_DecodeBlock(int kind, const uint8_t *block, uint8_t *rgba, int pitch)
 {
@@ -147,6 +159,17 @@ bool BCT_DecodeToBGRA(const uint8_t *data, size_t size, int w, int h, int glForm
 	}
 	return true;
 }
+#else
+int BCT_TranscodeToETC2(uint8_t *, size_t, int, int, int, int)
+{
+	return 0;
+}
+
+bool BCT_DecodeToBGRA(const uint8_t *, size_t, int, int, int, uint8_t *, int)
+{
+	return false;
+}
+#endif
 
 int BCT_FullMipLevels(int w, int h)
 {
@@ -174,6 +197,9 @@ size_t BCT_ETC2ChainSize(int w, int h, int levels)
 
 void BCT_EncodeBGRAToETC2(const uint8_t *bgra, int w, int h, int levels, uint8_t *out)
 {
+#ifndef UZDOOM_ETCPAK
+	memset(out, 0, BCT_ETC2ChainSize(w, h, levels));	// (never asked for: BCT_Available() is false)
+#else
 	std::vector<uint8_t> level(bgra, bgra + (size_t)w * h * 4), next, padded;
 	for (int l = 0; l < levels; l++)
 	{
@@ -215,4 +241,5 @@ void BCT_EncodeBGRAToETC2(const uint8_t *bgra, int w, int h, int levels, uint8_t
 			h = nh;
 		}
 	}
+#endif
 }

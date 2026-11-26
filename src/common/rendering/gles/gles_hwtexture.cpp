@@ -212,7 +212,7 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 	// the textures with data (not the copies and render targets, the 1 byte ones, Selaco's lightmaps) as ETC2 RGBA8
 	// EAC, a quarter of the memory, with mip levels built on the CPU (glGenerateMipmap takes no compressed textures)
 	int etc2Levels = 0;
-	if (gles.etc2Textures && gles.texMaxLevel && !noData && !noGLSwizzle && glTextureBytes == 4 &&
+	if (BCT_Available() && gles.etc2Textures && gles.texMaxLevel && !noData && !noGLSwizzle && glTextureBytes == 4 &&
 		((gles.esVersion > 0 && ETC2Cache::ForceAll()) || gl_texture_etc2_transcode == 1))
 	{
 		etc2Levels = mipmap && TexFilter[gl_texture_filter].mipmapping ? BCT_FullMipLevels(rw, rh) : 1;
@@ -304,7 +304,7 @@ unsigned int FHardwareTexture::CreateCompressedTexture(unsigned char* buffer, in
 	const int bcFormat = 0x8E8C;	// GL_COMPRESSED_RGBA_BPTC_UNORM
 	const size_t size = (size_t)((w + 3) / 4) * ((h + 3) / 4) * 16;
 	const bool native = gles.bptcTextures && gles.texMaxLevel && gl_texture_etc2_transcode == 0;
-	const bool etc2 = !native && gles.etc2Textures && gles.texMaxLevel && gl_texture_etc2_transcode != 2;
+	const bool etc2 = !native && BCT_Available() && gles.etc2Textures && gles.texMaxLevel && gl_texture_etc2_transcode != 2;
 
 	if (!native && !etc2)
 	{

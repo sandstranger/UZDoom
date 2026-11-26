@@ -24,6 +24,10 @@ enum
 	BCT_SRGB8_ALPHA8_ETC2_EAC = 0x9279,
 };
 
+// Whether anything is transcoded or decoded: etcpak is Android's only (UZDOOM_ETCPAK); on a PC the GPU takes the BC
+// formats and the functions below do nothing (0 / false)
+bool BCT_Available();
+
 // The kind of BC format (1 = BC1, 3 = BC3, 7 = BC7), 0 for any other format
 int BCT_Kind(int glFormat);
 

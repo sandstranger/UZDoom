@@ -330,7 +330,7 @@ static inline uint32_t GetFormatBlockSize(int format) {
 
 static int UploadForcedETC2(const unsigned char* bgra, int w, int h, bool mipmaps)
 {
-	if (!gl.texetc2 || bgra == nullptr || w <= 0 || h <= 0 ||
+	if (!BCT_Available() || !gl.texetc2 || bgra == nullptr || w <= 0 || h <= 0 ||
 		!((gl.esversion > 0 && ETC2Cache::ForceAll()) || gl_texture_etc2_transcode == 1))
 		return 0;
 	const int levels = mipmaps ? BCT_FullMipLevels(w, h) : 1;
@@ -360,7 +360,7 @@ static int UploadForcedETC2(const unsigned char* bgra, int w, int h, bool mipmap
 int PrepareCompressedUpload(unsigned char* buffer, size_t totalSize, int w, int h, int numMips, int format)
 {
 	const int kind = BCT_Kind(format);
-	if (kind == 0 || !gl.texetc2 || buffer == nullptr || totalSize == 0)
+	if (kind == 0 || !BCT_Available() || !gl.texetc2 || buffer == nullptr || totalSize == 0)
 		return format;
 	const bool supported = kind == 7 ? gl.texbptc : (gl.texs3tc && (!BCT_IsSRGB(format) || gl.texs3tcsrgb));
 	if (supported && gl_texture_etc2_transcode == 0)

@@ -324,7 +324,10 @@ if (NOT ANDROID)
 endif()
 list( APPEND PROJECT_LIBRARIES "zwidget" )
 list( APPEND PROJECT_LIBRARIES "${WEBP_TARGET}" )
-list( APPEND PROJECT_LIBRARIES etcpak )
+if( ANDROID )
+	list( APPEND PROJECT_LIBRARIES etcpak )	# (BC -> ETC2: Android's only, bctranscode.cpp)
+	add_definitions( -DUZDOOM_ETCPAK )
+endif()
 
 message("Building for target architecture: ${TARGET_ARCHITECTURE}")
 
