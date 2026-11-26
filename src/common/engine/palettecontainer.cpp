@@ -76,7 +76,7 @@ void PaletteContainer::SetPalette(const uint8_t* colors, int transparent_index)
 		uniqueRemaps[0]->Palette[transparent_index] = 0;
 	}
 
-	uniqueRemaps[0]->crc32 = CalcCRC32((uint8_t*)uniqueRemaps[0]->Palette, sizeof(uniqueRemaps[0]->Palette));
+	uniqueRemaps[0]->PaletteCRC = CalcCRC32((uint8_t*)uniqueRemaps[0]->Palette, sizeof(uniqueRemaps[0]->Palette));
 
 
 	// Find white and black from the original palette so that they can be
@@ -191,11 +191,11 @@ FRemapTable* PaletteContainer::AddRemap(FRemapTable* remap)
 {
 	if (!remap) return uniqueRemaps[0];
 
-	remap->crc32 = CalcCRC32((uint8_t*)remap->Palette, sizeof(remap->Palette));
+	remap->PaletteCRC = CalcCRC32((uint8_t*)remap->Palette, sizeof(remap->Palette));
 
 	for (auto uremap : uniqueRemaps)
 	{
-		if (uremap->crc32 == remap->crc32 && uremap->NumEntries == remap->NumEntries && *uremap == *remap && remap->Inactive == uremap->Inactive)
+		if (uremap->PaletteCRC == remap->PaletteCRC && uremap->NumEntries == remap->NumEntries && *uremap == *remap && remap->Inactive == uremap->Inactive)
 			return uremap;
 	}
 	auto newremap = (FRemapTable*)remapArena.Alloc(sizeof(FRemapTable));

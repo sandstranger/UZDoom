@@ -55,7 +55,7 @@ struct FRemapTable
 
 	uint8_t Remap[256];				// For the software renderer
 	PalEntry Palette[256];			// The ideal palette this maps to
-	int crc32;
+	int PaletteCRC;					// (not 'crc32': miniz.h #defines crc32, so the field had another name in the files including it - an ODR violation)
 	int Index;
 	int NumEntries;				// # of elements in this table (usually 256)
 	bool Inactive = false;				// This table is inactive and should be treated as if it was passed as NULL

@@ -67,6 +67,17 @@ extern "C" {
 #define OPL_WRITEBUF_SIZE   2048
 #define OPL_WRITEBUF_DELAY  2
 
+/* (UZDoom: the same type names as nuked/nukedopl3.h with other layouts - two definitions of one type in the C++ files
+   including either, an ODR violation (GCC -Wodr with LTO). Names of their own; only this fork's files include this.) */
+#define _opl3_slot _opl3fast_slot
+#define _opl3_channel _opl3fast_channel
+#define _opl3_chip _opl3fast_chip
+#define _opl3_writebuf _opl3fast_writebuf
+#define opl3_slot opl3fast_slot
+#define opl3_channel opl3fast_channel
+#define opl3_chip opl3fast_chip
+#define opl3_writebuf opl3fast_writebuf
+
 typedef struct _opl3_slot opl3_slot;
 typedef struct _opl3_channel opl3_channel;
 typedef struct _opl3_chip opl3_chip;

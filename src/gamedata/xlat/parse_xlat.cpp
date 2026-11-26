@@ -138,7 +138,15 @@ struct XlatParseContext : public FParseContext
 	FTranslator *Translator;
 };
 
+// A lemon parser's internal types have the same names in every parser (zcc-parse.c's in zcc_parser.cpp too): two
+// different 'struct yyParser' in one program are an ODR violation (GCC -Wodr with LTO). Names of their own here.
+#define yyParser XlatyyParser
+#define yyStackEntry XlatyyStackEntry
+#define YYMINORTYPE XlatYYMINORTYPE
 #include "xlat_parser.c"
+#undef yyParser
+#undef yyStackEntry
+#undef YYMINORTYPE
 
 
 //==========================================================================
