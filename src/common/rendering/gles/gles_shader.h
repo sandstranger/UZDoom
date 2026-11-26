@@ -278,6 +278,7 @@ public:
 	// As compile-time flags, so the defaults cost nothing: the GL renderer has them as uniforms.
 	int lightBlendMode = 0;			// MAPINFO lightblendmode: 0 clamped, 1 color-correct clamping, 2 unclamped
 	bool vanillaLighting = false;	// software lighting with vanilla Doom's colormap equations (light mode 16)
+	bool lightmaps = false;			// Selaco's lightmaps (the level has them, not while they are composited)
 };
 
 class FShader
@@ -385,7 +386,7 @@ public: class ShaderVariantData
 		unsigned int GetHandle() const { return hShader; }
 	};
 
-	std::map<uint32_t, ShaderVariantData*> variants;
+	std::map<uint64_t, ShaderVariantData*> variants;
 
 	ShaderVariantData* cur = 0;
 
@@ -404,11 +405,11 @@ public:
 	void LoadVariant();
 
 
-	uint32_t CreateShaderTag(ShaderFlavourData &flavour)
+	uint64_t CreateShaderTag(ShaderFlavourData &flavour)
 	{
 		// Every field has bits of its own: blendFlags (3 bits from bit 6) used to overlap
 		// twoDFog and fogEnabled, so different variants could share one compiled program.
-		uint32_t tag = 0;
+		uint64_t tag = 0;
 		tag |= (flavour.textureMode & 0x7);
 
 		tag |= (flavour.texFlags & 7) << 3;
@@ -441,6 +442,7 @@ public:
 		tag |= (flavour.instancing & 3) << 27;
 		tag |= uint32_t(flavour.lightBlendMode & 3) << 29;
 		tag |= uint32_t(flavour.vanillaLighting ? 1 : 0) << 31;
+		tag |= uint64_t(flavour.lightmaps ? 1 : 0) << 32;
 
 		return tag;
 	}

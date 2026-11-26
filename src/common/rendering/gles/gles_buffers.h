@@ -97,6 +97,7 @@ public:
 	GLVertexBuffer();
 	void SetFormat(int numBindingPoints, int numAttributes, size_t stride, const FVertexBufferAttribute *attrs) override;
 	void Bind(int *offsets);
+	bool HasAttribute(int location) const { return location >= 0 && location < VATTR_MAX && mAttributeInfo[location].size != 0; }
 };
 
 class GLIndexBuffer : public IIndexBuffer, public GLBuffer

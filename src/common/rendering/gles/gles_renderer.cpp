@@ -22,6 +22,7 @@
 */
 
 #include "gles_system.h"
+#include "printf.h"
 #include "files.h"
 #include "v_video.h"
 #include "m_png.h"
@@ -86,6 +87,7 @@ FGLRenderer::~FGLRenderer()
 	TexMan.FlushAll();
 	if (mShaderManager != nullptr) delete mShaderManager;
 	if (mFBID != 0) glDeleteFramebuffers(1, &mFBID);
+	DeleteLightmaps();
 
 	if (mSaveBuffers) delete mSaveBuffers;
 	if (mScreenBuffers) delete mScreenBuffers;
@@ -98,6 +100,109 @@ FGLRenderer::~FGLRenderer()
 //
 //
 //===========================================================================
+
+//===========================================================================
+//
+// Selaco's master lightmaps: RGBA8 render targets (P_RenderLightGroups draws the base lightmaps and
+// the light groups into them), linear filtering, no mipmaps
+//
+//===========================================================================
+
+void FGLRenderer::CreateLightmaps(int width, int height, int count)
+{
+	if (!gles.lightmapArrays && count > gles.lightmapUnitCount)
+	{
+		Printf(TEXTCOLOR_ORANGE "This level has %d master lightmaps, OpenGL ES 2.0 can show %d of them\n", count, gles.lightmapUnitCount);
+		count = gles.lightmapUnitCount;
+	}
+	if (width == mLightMapWidth && height == mLightMapHeight && count == mLightMapCount)
+		return;	// (the next level's are drawn over these)
+	DeleteLightmaps();
+	if (count <= 0 || width <= 0 || height <= 0)
+		return;
+
+	GLint activeTex = 0;
+	glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTex);
+	glActiveTexture(GL_TEXTURE0 + gles.lightmapUnit);
+	if (gles.lightmapArrays)
+	{
+		glGenTextures(1, &mLightMapArray);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, mLightMapArray);
+		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, width, height, count, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		mLightMapArrayBound = true;
+	}
+	else
+	{
+		glGenTextures(count, mLightMapTextures);
+		for (int i = 0; i < count; i++)
+		{
+			glBindTexture(GL_TEXTURE_2D, mLightMapTextures[i]);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		glBindTexture(GL_TEXTURE_2D, 0);
+		FHardwareTexture::lastbound[gles.lightmapUnit] = 0;
+	}
+	glActiveTexture(activeTex);
+
+	mLightMapWidth = width;
+	mLightMapHeight = height;
+	mLightMapCount = count;
+}
+
+void FGLRenderer::DeleteLightmaps()
+{
+	if (mLightMapArray)
+		glDeleteTextures(1, &mLightMapArray);
+	for (auto &tex : mLightMapTextures)
+	{
+		if (tex)
+		{
+			for (int unit = 0; unit < IHardwareTexture::MAX_TEXTURES; unit++)
+			{
+				if (FHardwareTexture::lastbound[unit] == tex)
+					FHardwareTexture::lastbound[unit] = 0;
+			}
+			glDeleteTextures(1, &tex);
+		}
+		tex = 0;
+	}
+	mLightMapArray = 0;
+	mLightMapArrayBound = false;
+	mLightMapWidth = mLightMapHeight = mLightMapCount = 0;
+}
+
+void FGLRenderer::BindLightmaps()
+{
+	if (gles.lightmapArrays)
+	{
+		// (the material binding only unbinds GL_TEXTURE_2D: the array stays bound once it is)
+		if (mLightMapArrayBound)
+			return;
+		glActiveTexture(GL_TEXTURE0 + gles.lightmapUnit);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, mLightMapArray);
+		glActiveTexture(GL_TEXTURE0);
+		mLightMapArrayBound = true;
+		return;
+	}
+	for (int i = 0; i < mLightMapCount; i++)
+	{
+		const int unit = gles.lightmapUnit + i;
+		if (FHardwareTexture::lastbound[unit] == mLightMapTextures[i])
+			continue;
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D, mLightMapTextures[i]);
+		FHardwareTexture::lastbound[unit] = mLightMapTextures[i];
+		glActiveTexture(GL_TEXTURE0);
+	}
+}
 
 bool FGLRenderer::StartOffscreen()
 {

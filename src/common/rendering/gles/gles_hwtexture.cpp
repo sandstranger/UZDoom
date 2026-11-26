@@ -285,17 +285,78 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 }
 
 
+//===========================================================================
+//
+// Selaco's compressed lightmaps (BC7, one level): as they are where the GPU has BPTC, else transcoded to
+// ETC2 RGBA8 EAC on the GLES 3.0 path (through the ETC2 cache), else (the GLES 2.0 path) decoded to RGBA.
+// Sampled with the material samplers: one level that is complete for any filter (GL_TEXTURE_MAX_LEVEL 0);
+// the decoded ones get mipmaps, the GLES 2.0 path has no other way to be complete for a mipmap filter.
+//
+//===========================================================================
+
 unsigned int FHardwareTexture::CreateCompressedTexture(unsigned char* buffer, int w, int h, int texunit, bool mipmap, CompressionFormat format, const char* name)
 {
-	// (Selaco: compressed lightmaps) Not supported by this backend, which renders no lightmaps:
-	// not fatal, so that a level with such data still loads.
-	static bool warned = false;
-	if (!warned)
+	if (format == IHardwareTexture::COMPRESSION_NONE)
+		return CreateTexture(buffer, w, h, texunit, mipmap, name, true);
+	if (format != IHardwareTexture::COMPRESSION_BC7_UNORM || buffer == nullptr || w <= 0 || h <= 0)
+		return 0;
+
+	const int bcFormat = 0x8E8C;	// GL_COMPRESSED_RGBA_BPTC_UNORM
+	const size_t size = (size_t)((w + 3) / 4) * ((h + 3) / 4) * 16;
+	const bool native = gles.bptcTextures && gles.texMaxLevel && gl_texture_etc2_transcode == 0;
+	const bool etc2 = !native && gles.etc2Textures && gles.texMaxLevel && gl_texture_etc2_transcode != 2;
+
+	if (!native && !etc2)
 	{
-		Printf(TEXTCOLOR_ORANGE "FHardwareTexture::CreateCompressedTexture is not currently supported in OpenGLES!\n");
-		warned = true;
+		TArray<uint8_t> bgra(size_t(w) * h * 4, true);
+		if (!BCT_DecodeToBGRA(buffer, size, w, h, bcFormat, bgra.Data(), w * 4))
+			return 0;
+		return CreateTexture(bgra.Data(), w, h, texunit, true, name);
 	}
-	return 0;
+
+	TArray<uint8_t> data;
+	const uint8_t* upload = buffer;
+	int uploadFormat = bcFormat;
+	if (etc2)
+	{
+		data.Resize((unsigned)size);
+		memcpy(data.Data(), buffer, size);
+		const bool cached = ETC2Cache::Enabled();
+		uint64_t hash = 0;
+		bool ok = false;
+		if (cached)
+		{
+			hash = ETC2Cache::Hash(data.Data(), size, w, h, bcFormat, 1);
+			ok = ETC2Cache::Get(hash, data.Data(), size);
+		}
+		if (!ok)
+		{
+			ok = BCT_TranscodeToETC2(data.Data(), size, w, h, 1, bcFormat) > 0;
+			if (ok && cached)
+				ETC2Cache::Put(hash, data.Data(), size);
+		}
+		if (!ok)
+			return 0;
+		upload = data.Data();
+		uploadFormat = BCT_ETC2Format(bcFormat);
+	}
+
+	if (glTexID == 0)
+		glGenTextures(1, &glTexID);
+	int textureBinding = 0;
+	if (texunit == -1) glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
+	if (texunit > 0) glActiveTexture(GL_TEXTURE0 + texunit);
+	if (texunit >= 0) lastbound[texunit] = glTexID;
+	glBindTexture(GL_TEXTURE_2D, glTexID);
+
+	glCompressedTexImage2D(GL_TEXTURE_2D, 0, uploadFormat, w, h, 0, (GLsizei)size, upload);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+	mipmapped = true;	// (never glGenerateMipmap on a compressed texture)
+	glTextureBytes = 4;
+
+	if (texunit > 0) glActiveTexture(GL_TEXTURE0);
+	else if (texunit == -1) glBindTexture(GL_TEXTURE_2D, textureBinding);
+	return glTexID;
 }
 
 void FHardwareTexture::AllocateBuffer(int w, int h, int texelsize)

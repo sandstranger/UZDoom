@@ -367,6 +367,17 @@ namespace OpenGLESRenderer
 			gles.bufferStorage = gles.pBufferStorage != nullptr;
 		}
 		gles.integerAttribs = core3 && glVertexAttribIPointer;
+
+		// Selaco's lightmaps: on the last units (the material layers have 0-11: 'tex' and texture2..texture12)
+		{
+			GLint units = 8;
+			glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
+			if (units > 16) units = 16;	// (IHardwareTexture::MAX_TEXTURES: the units the binding tracking knows)
+			gles.lightmapArrays = core3 && glTexImage3D && glFramebufferTextureLayer;
+			gles.lightmapUnitCount = gles.lightmapArrays ? 1 : 4;
+			gles.lightmapUnit = units - gles.lightmapUnitCount;
+			if (gles.lightmapUnit < 1) gles.lightmapUnit = 1;
+		}
 		gles.invalidateFramebuffer = es3 && glInvalidateFramebuffer;
 		gles.pDiscardFramebuffer = nullptr;
 		if (!es3 && gles.esVersion > 0)

@@ -141,6 +141,11 @@ namespace OpenGLESRenderer
 		bool bptcTextures;
 		bool etc2Textures;
 		bool texMaxLevel;		// GL_TEXTURE_MAX_LEVEL (not on the GLES 2.0 path: a mip chain must be complete)
+		// Selaco's lightmaps: the master lightmaps in a 2D array texture on one unit (GLES 3.0 / desktop GL 3.3),
+		// else (GLES 2.0 path) one 2D texture each on units of their own, up to lightmapUnitCount of them
+		bool lightmapArrays;
+		int lightmapUnit;		// the (first) unit
+		int lightmapUnitCount;
 		bool textureSwizzle;	// GL_TEXTURE_SWIZZLE_* (GLES 3.0 / desktop GL 3.3)
 		bool syncObjects;		// glFenceSync & co (GLES 3.0 / desktop GL 3.2)
 		bool bufferStorage;		// GL_EXT_buffer_storage, GLES 3.0 mode: persistent mappings (used non-coherent, explicitly flushed)

@@ -54,7 +54,25 @@ varying mediump vec4 vWorldNormal;
 varying mediump vec4 vEyeNormal;
 #endif
 
+#ifdef LIGHTMAPS
+// Selaco's lightmaps: texture coordinates and the master lightmap (-1: none), the light the lightmap
+// bakes in for this point. The masters are a 2D array texture (GLES 3.0 / desktop GL 3.3) or 2D
+// textures of their own (the GLES 2.0 path, up to 4).
+varying vec3 vLightmap;
 
+vec3 LightmapColor(vec3 lm)
+{
+#ifdef LIGHTMAP_ARRAY
+	return texture(LightMap, lm).rgb;
+#else
+	if (lm.z < 0.5) return texture2D(LightMap0, lm.xy).rgb;
+	if (lm.z < 1.5) return texture2D(LightMap1, lm.xy).rgb;
+	if (lm.z < 2.5) return texture2D(LightMap2, lm.xy).rgb;
+	if (lm.z < 3.5) return texture2D(LightMap3, lm.xy).rgb;
+	return vec3(0.0);
+#endif
+}
+#endif
 
 struct Material
 {
@@ -683,6 +701,16 @@ vec4 getLightColor(Material material, float fogdist, float fogfactor)
 	//
 	color = ProcessLight(material, color);
 
+#ifdef LIGHTMAPS
+	//
+	// apply lightmaps
+	//
+	if (vLightmap.z >= 0.0)
+	{
+		color.rgb += LightmapColor(vLightmap);
+	}
+#endif
+
 	//
 	// apply dynamic lights
 	//
@@ -737,7 +765,10 @@ void main()
 	if (index != 2) discard;
 #endif
 
-	#if (DEF_FOG_2D == 0)	// check for special 2D 'fog' mode.
+	#if defined(DIRECT_COPY)
+		// the texel as it is (Selaco's lightmap composite: the base lightmaps and the light groups drawn
+		// into the master lightmaps)
+	#elif (DEF_FOG_2D == 0)	// check for special 2D 'fog' mode.
 	{
 		float fogdist = 0.0;
 		float fogfactor = 0.0;
@@ -798,7 +829,7 @@ void main()
 	}
 	#endif  // (DEF_2D_FOG == 0)
 
-#if (DEF_USE_COLOR_MAP == 1) // This mostly works but doesn't look great because of the blending.
+#if (DEF_USE_COLOR_MAP == 1) && !defined(DIRECT_COPY) // This mostly works but doesn't look great because of the blending.
 	{
 		frag.rgb = clamp(pow(frag.rgb, vec3(uFixedColormapStart.a)), 0.0, 1.0);
 		if (uFixedColormapRange.a == 0.0)

@@ -105,6 +105,21 @@ public:
 
 	void BindToFrameBuffer(FTexture* tex);
 
+	// Selaco's master lightmaps (the light groups are composited into them, the walls and flats sample them):
+	// a 2D array texture (gles.lightmapArrays) or one 2D texture per master (the GLES 2.0 path, up to
+	// gles.lightmapUnitCount), on the units from gles.lightmapUnit
+	void CreateLightmaps(int width, int height, int count);
+	void DeleteLightmaps();
+	void BindLightmaps();		// where they are not bound yet (the material binding unbinds every unit)
+	bool LightmapsActive() const { return mLightMapCount > 0 && !mInLightmapPass; }
+	unsigned int mLightMapArray = 0;
+	bool mLightMapArrayBound = false;
+	unsigned int mLightMapTextures[4] = {};
+	int mLightMapWidth = 0;
+	int mLightMapHeight = 0;
+	int mLightMapCount = 0;		// the masters there are textures for
+	bool mInLightmapPass = false;
+
 private:
 	// Camera views: depth/stencil from the render target pool while one renders.
 	void AttachOffscreenDepth(int width, int height);

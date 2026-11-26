@@ -237,6 +237,56 @@ void OpenGLFrameBuffer::RenderTextureView(FCanvasTexture* tex, std::function<voi
 
 //===========================================================================
 //
+// Selaco's lightmaps: the master lightmaps of a level (their contents come
+// from P_RenderLightGroups, through RenderLightmapSlice)
+//
+//===========================================================================
+
+void OpenGLFrameBuffer::InitLightmap(IVector2 LMTextureSize, int LMTextureCount, TArray<uint8_t>& LMTextureData, bool LMCompressed)
+{
+	if (LMTextureData.Size() > 0)
+	{
+		GLRenderer->CreateLightmaps(LMTextureSize.X, LMTextureSize.Y, LMTextureCount);
+		LMTextureData.Reset(); // We no longer need this, release the memory
+	}
+	else
+	{
+		GLRenderer->DeleteLightmaps();	// a level without them: not kept (a few hundred MB on some levels)
+	}
+	gl_RenderState.ClearLastMaterial();
+}
+
+void OpenGLFrameBuffer::RenderLightmapSlice(int slice, std::function<void(IntRect&)> renderFunc)
+{
+	if (slice < 0 || slice >= GLRenderer->mLightMapCount)
+		return;
+
+	GLRenderer->StartOffscreen();
+	gl_RenderState.ClearLastMaterial();
+	if (gles.lightmapArrays)
+		glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GLRenderer->mLightMapArray, 0, slice);
+	else
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, GLRenderer->mLightMapTextures[slice], 0);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+
+	IntRect bounds;
+	bounds.left = bounds.top = 0;
+	bounds.width = GLRenderer->mLightMapWidth;
+	bounds.height = GLRenderer->mLightMapHeight;
+
+	// (the composite shaders do not sample the master lightmaps: the one drawn to is attached)
+	GLRenderer->mInLightmapPass = true;
+	renderFunc(bounds);
+	GLRenderer->mInLightmapPass = false;
+
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+	GLRenderer->EndOffscreen();
+	gl_RenderState.ClearLastMaterial();
+}
+
+//===========================================================================
+//
 //
 //
 //===========================================================================

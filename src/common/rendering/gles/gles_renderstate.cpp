@@ -218,6 +218,13 @@ bool FGLRenderState::ApplyShader()
 
 	flavour.instancing = mInstancedVariant;
 
+	// Selaco's lightmaps: the level has them and the vertices have lightmap coordinates (walls, flats, sprites:
+	// not the 2D drawing, the instanced walls and sprites or the lightmap composite pass itself)
+	flavour.lightmaps = GLRenderer->LightmapsActive() && mSpecialEffect <= EFF_NONE && mInstancedVariant == 0 &&
+		mVertexBuffer != nullptr && static_cast<GLVertexBuffer*>(mVertexBuffer)->HasAttribute(VATTR_LIGHTMAP);
+	if (flavour.lightmaps)
+		GLRenderer->BindLightmaps();
+
 	auto previous = activeShader ? activeShader->cur : nullptr;
 	if (mSpecialEffect > EFF_NONE)
 	{
@@ -251,6 +258,8 @@ bool FGLRenderState::ApplyShader()
 
 	glVertexAttrib4fv(VATTR_COLOR, &mStreamData.uVertexColor.X);
 	glVertexAttrib4fv(VATTR_NORMAL, &mStreamData.uVertexNormal.X);
+	if (flavour.lightmaps)
+		glVertexAttrib4f(VATTR_LIGHTMAP, 0.f, 0.f, -1.f, 1.f);	// (no lightmap where a buffer has no coordinates)
 
 	activeShader->cur->muDesaturation.Set(mStreamData.uDesaturationFactor);
 

@@ -67,6 +67,11 @@ varying mediump vec4 vWorldNormal;
 #ifdef USER_SHADER
 varying mediump vec4 vEyeNormal;	// no built-in shader reads it
 #endif
+#ifdef LIGHTMAPS
+// Selaco's lightmaps: texture coordinates and the master lightmap (-1: none)
+attribute vec3 aLightmap;
+varying vec3 vLightmap;
+#endif
 #endif
 
 
@@ -182,6 +187,10 @@ void main()
 	#ifndef SIMPLE
 		pixelpos.xyz = worldcoord.xyz;
 		pixelpos.w = -eyeCoordPos.z/eyeCoordPos.w;
+
+	#ifdef LIGHTMAPS
+		vLightmap = aLightmap;
+	#endif
 
 #if VARYING_GLOW
 		if (uGlowTopColor.a > 0.0 || uGlowBottomColor.a > 0.0)

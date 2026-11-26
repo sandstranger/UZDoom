@@ -201,6 +201,7 @@ static bool BuildProgram(GLuint program, const FString &vertexSource, const FStr
 	glBindAttribLocation(program, VATTR_NORMAL2, "aNormal2");
 	glBindAttribLocation(program, VATTR_BONEWEIGHT, "aBoneWeight");
 	glBindAttribLocation(program, VATTR_BONESELECTOR, "aBoneSelector");
+	glBindAttribLocation(program, VATTR_LIGHTMAP, "aLightmap");
 	// instance attributes (only present in the instanced flavours)
 	glBindAttribLocation(program, VATTR_INSTANCE0 + 0, "aInstXform0");
 	glBindAttribLocation(program, VATTR_INSTANCE0 + 1, "aInstXform1");
@@ -415,6 +416,19 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		uniform sampler2D texture10;
 		uniform sampler2D texture11;
 		uniform sampler2D texture12;	// the last unit a mod's shader can have a texture of its own on, as with GL
+
+		// Selaco's master lightmaps (main.fp)
+		#if defined(LIGHTMAPS) && defined(LIGHTMAP_ARRAY)
+		#ifdef GL_ES
+		precision mediump sampler2DArray;
+		#endif
+		uniform sampler2DArray LightMap;
+		#elif defined(LIGHTMAPS)
+		uniform sampler2D LightMap0;
+		uniform sampler2D LightMap1;
+		uniform sampler2D LightMap2;
+		uniform sampler2D LightMap3;
+		#endif
 
 		// timer data
 		uniform float timer;
@@ -802,6 +816,17 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 	int shadowmapindex = glGetUniformLocation(shaderData->hShader, "ShadowMap");
 	if (shadowmapindex >= 0) glUniform1i(shadowmapindex, 16);
 
+	// Selaco's master lightmaps
+	int lightmapindex = glGetUniformLocation(shaderData->hShader, "LightMap");
+	if (lightmapindex >= 0) glUniform1i(lightmapindex, gles.lightmapUnit);
+	for (int i = 0; i < 4; i++)
+	{
+		char stringbuf[20];
+		mysnprintf(stringbuf, 20, "LightMap%d", i);
+		int index = glGetUniformLocation(shaderData->hShader, stringbuf);
+		if (index >= 0) glUniform1i(index, gles.lightmapUnit + std::min(i, gles.lightmapUnitCount - 1));
+	}
+
 	glUseProgram(0);
 
 	cur = shaderData;
@@ -817,7 +842,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 
 FShader::~FShader()
 {
-	std::map<uint32_t, ShaderVariantData*>::iterator it = variants.begin();
+	auto it = variants.begin();
 
 	while (it != variants.end())
 	{
@@ -880,11 +905,13 @@ static FString VariantConfig(const ShaderFlavourData &flavour)
 	variantConfig.AppendFormat("#define DEF_VANILLA_LIGHTING %d\n", flavour.vanillaLighting);
 	if (flavour.instancing && gles.essl300)
 		variantConfig << "#define INSTANCING\n" << (flavour.instancing == 1 ? "#define INSTANCED_QUADS\n" : (flavour.instancing == 2 ? "#define INSTANCED_MODELS\n" : "#define INSTANCED_WALLS\n"));
+	if (flavour.lightmaps)
+		variantConfig << "#define LIGHTMAPS\n" << (gles.lightmapArrays ? "#define LIGHTMAP_ARRAY\n" : "");
 	return variantConfig;
 }
 
 // A flavour as it is written to the list of the variants used (variants.txt), every field in full
-static const int FlavourFieldCount = 24;
+static const int FlavourFieldCount = 25;
 
 static void FlavourToInts(const ShaderFlavourData &f, int *v)
 {
@@ -900,7 +927,7 @@ static void FlavourToInts(const ShaderFlavourData &f, int *v)
 	v[i++] = 0;
 #endif
 	v[i++] = f.hasSpotLight; v[i++] = f.paletteInterpolate; v[i++] = f.instancing;
-	v[i++] = f.lightBlendMode; v[i++] = f.vanillaLighting;
+	v[i++] = f.lightBlendMode; v[i++] = f.vanillaLighting; v[i++] = f.lightmaps;
 	assert(i == FlavourFieldCount);
 }
 
@@ -918,7 +945,7 @@ static void FlavourFromInts(const int *v, ShaderFlavourData &f)
 	i++;
 #endif
 	f.hasSpotLight = v[i++] != 0; f.paletteInterpolate = v[i++] != 0; f.instancing = v[i++];
-	f.lightBlendMode = v[i++]; f.vanillaLighting = v[i++] != 0;
+	f.lightBlendMode = v[i++]; f.vanillaLighting = v[i++] != 0; f.lightmaps = v[i++] != 0;
 	assert(i == FlavourFieldCount);
 }
 
@@ -981,7 +1008,7 @@ int FShader::PrewarmVariants(const TArray<FString> &recorded)
 			continue;	// written by another build
 		ShaderFlavourData flavour;
 		FlavourFromInts(v, flavour);
-		const uint32_t tag = CreateShaderTag(flavour);
+		const uint64_t tag = CreateShaderTag(flavour);
 		if (variants.find(tag) != variants.end())
 			continue;
 		if (ShaderVariantData *data = BuildVariant(flavour))
@@ -995,7 +1022,7 @@ int FShader::PrewarmVariants(const TArray<FString> &recorded)
 
 bool FShader::Bind(ShaderFlavourData& flavour)
 {
-	uint32_t tag = CreateShaderTag(flavour);
+	uint64_t tag = CreateShaderTag(flavour);
 
 	auto pos = variants.find(tag);
 
