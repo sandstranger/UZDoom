@@ -251,7 +251,7 @@ void FMapInfoParser::ParseDoomEdNums()
 }
 
 // Selaco: the engine pk3's own MAPINFO names other games' classes, some of which are not compiled for Selaco
-// (zcc_parser.cpp, IsSelacoSkippedEngineScript) - not an error then.
+// (zcc_parser.cpp, RemoveSelacoClashingClasses) - not an error then.
 static bool SelacoSkippedEngineClass(const FString& filename)
 {
 	if (!g_SelacoMode) return false;

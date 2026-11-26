@@ -593,6 +593,13 @@ size_t VMFunctionBuilder::GetAddress()
 size_t VMFunctionBuilder::Emit(int opcode, int opa, int opb, int opc)
 {
 	static uint8_t opcodes[] = { OP_LK, OP_LKF, OP_LKS, OP_LKP };
+	auto registerLimitExceeded = [&]()
+	{
+		I_Error("Register limit exceeded (opcode %d, operands %d %d %d; registers used int %d float %d string %d pointer %d; "
+			"constants int %u float %u string %u pointer %u)", opcode, opa, opb, opc,
+			Registers[REGT_INT].MostUsed, Registers[REGT_FLOAT].MostUsed, Registers[REGT_STRING].MostUsed, Registers[REGT_POINTER].MostUsed,
+			IntConstantList.Size(), FloatConstantList.Size(), StringConstantList.Size(), AddressConstantList.Size());
+	};
 
 	assert(opcode >= 0 && opcode < NUM_OPS);
 	assert(opa >= 0);
@@ -612,7 +619,7 @@ size_t VMFunctionBuilder::Emit(int opcode, int opa, int opb, int opc)
 	{
 		if (opRemap[opcode].kReg != 1 || opa > 32767)
 		{
-			I_Error("Register limit exceeded");
+			registerLimitExceeded();
 		}
 		int regtype = opRemap[opcode].kType;
 		ExpEmit emit(this, regtype);
@@ -625,7 +632,7 @@ size_t VMFunctionBuilder::Emit(int opcode, int opa, int opb, int opc)
 	{
 		if (opRemap[opcode].kReg != 2 || opb > 32767)
 		{
-			I_Error("Register limit exceeded");
+			registerLimitExceeded();
 		}
 		int regtype = opRemap[opcode].kType;
 		ExpEmit emit(this, regtype);
@@ -638,7 +645,7 @@ size_t VMFunctionBuilder::Emit(int opcode, int opa, int opb, int opc)
 	{
 		if (opRemap[opcode].kReg != 4 || opc > 32767)
 		{
-			I_Error("Register limit exceeded");
+			registerLimitExceeded();
 		}
 		int regtype = opRemap[opcode].kType;
 		ExpEmit emit(this, regtype);
@@ -1166,7 +1173,19 @@ ExpEmit FunctionCallEmitter::EmitCall(VMFunctionBuilder *build, TArray<ExpEmit> 
 	{
 		ExpEmit funcreg(build, REGT_POINTER);
 
-		build->Emit(OP_VTBL, funcreg.RegNum, virtualselfreg, target->VirtualIndex);
+		if (target->VirtualIndex <= 255)
+		{
+			build->Emit(OP_VTBL, funcreg.RegNum, virtualselfreg, target->VirtualIndex);
+		}
+		else
+		{
+			// VTBL's index has 8 bits; a class can have more virtual functions (Selaco Chapter 2's actors,
+			// with UZDoom's Actor below them): funcreg = self->GetClass()->Virtuals[index] in three steps,
+			// with the same null check (CLSS) and the same result
+			build->Emit(OP_CLSS, funcreg.RegNum, virtualselfreg);
+			build->Emit(OP_LP, funcreg.RegNum, funcreg.RegNum, build->GetConstantInt(int(myoffsetof(PClass, Virtuals) + myoffsetof(FArray, Array))));
+			build->Emit(OP_LP, funcreg.RegNum, funcreg.RegNum, build->GetConstantInt(int(target->VirtualIndex * sizeof(VMFunction*))));
+		}
 		build->Emit(OP_CALL, funcreg.RegNum, paramcount, vm_jit? target->Proto->ReturnTypes.Size() : returns.Size());
 	}
 

@@ -265,6 +265,14 @@ PFunction *FindBuiltinFunction(FName funcname)
 
 static bool AreCompatibleFnPtrTypes(PPrototype *to, PPrototype *from);
 
+// Selaco's WeaponBase is the engine's Weapon (GZSelaco renamed the class; here WeaponBase derives from Weapon and has
+// no fields of its own - weapons.zs): while Selaco is the game, a Weapon (and a class<Weapon>) can go where its scripts
+// take a WeaponBase, e.g. 'WeaponBase w = player.PendingWeapon;' (Selaco Chapter 2)
+static bool IsSelacoWeaponBaseAlias(PClass *fromcls, PClass *tocls)
+{
+	return g_SelacoMode && fromcls != nullptr && tocls != nullptr && tocls->TypeName == NAME_WeaponBase && fromcls->TypeName == NAME_Weapon;
+}
+
 bool AreCompatiblePointerTypes(PType *dest, PType *source, bool forcompare)
 {
 	if (dest->isPointer() && source->isPointer())
@@ -283,14 +291,14 @@ bool AreCompatiblePointerTypes(PType *dest, PType *source, bool forcompare)
 			auto fromcls = static_cast<PObjectPointer*>(source)->PointedClass();
 			auto tocls = static_cast<PObjectPointer*>(dest)->PointedClass();
 			if (forcompare && tocls->IsDescendantOf(fromcls)) return true;
-			return (fromcls->IsDescendantOf(tocls));
+			return (fromcls->IsDescendantOf(tocls)) || IsSelacoWeaponBaseAlias(fromcls, tocls);
 		}
 		else if (source->isClassPointer() && dest->isClassPointer())
 		{	// The same rules apply to class pointers. A child type can be assigned to a variable of a parent type.
 			auto fromcls = static_cast<PClassPointer*>(source)->ClassRestriction;
 			auto tocls = static_cast<PClassPointer*>(dest)->ClassRestriction;
 			if (forcompare && tocls->IsDescendantOf(fromcls)) return true;
-			return (fromcls->IsDescendantOf(tocls));
+			return (fromcls->IsDescendantOf(tocls)) || IsSelacoWeaponBaseAlias(fromcls, tocls);
 		}
 		else if(source->isFunctionPointer() && dest->isFunctionPointer())
 		{
@@ -12613,8 +12621,8 @@ FxExpression *FxClassTypeCast::Resolve(FCompileContext &ctx)
 
 			if (cls == nullptr || cls->VMType == nullptr)
 			{
-				// Selaco: the engine pk3's own scripts may name classes of the files skipped for Selaco (zcc_parser.cpp,
-				// IsSelacoSkippedEngineScript): those other games' functions are never used there - null and a warning.
+				// Selaco: the engine pk3's own scripts may name classes left out for Selaco (zcc_parser.cpp,
+				// RemoveSelacoClashingClasses): those other games' functions are never used there - null and a warning.
 				const bool selacoSkipped = g_SelacoMode && IsEngineScriptPosition(ScriptPosition);
 				/* lax */
 				// Since this happens in released WADs it must pass without a terminal error... :(

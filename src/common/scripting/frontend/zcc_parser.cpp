@@ -411,27 +411,172 @@ parse_end:
 
 //**---------------------------------------------------------------------------
 //
-// Selaco (an IWAD of its own, see selaco.h) defines classes with the same names as some of the other games' classes
-// in the engine pk3 - Stimpack, PlasmaRifle, Dart, MetalPot, WaterBottle (GZSelaco had removed all game content).
-// While Selaco is the game, the engine scripts declaring those are not compiled; everything else stays available.
+// Selaco (an IWAD of its own, see selaco.h) declares classes with the same names as some of the other games' classes
+// in the engine pk3 - Stimpack, PlasmaRifle, Dart, MetalPot, WaterBottle, Meat; Chapter 2: Chicken, Sentinel
+// (GZSelaco had removed all game content). While Selaco is the game, those classes of the engine are not compiled,
+// nor the ones deriving from them (chex: from doomhealth's and weaponplasma's); everything else stays available.
+// The game's scripts are scanned for their class declarations, so a new version of the game with more of these
+// names needs no change here.
 //
 //**---------------------------------------------------------------------------
 
-static bool IsSelacoSkippedEngineScript(const FString& include)
+// The names of the classes a script lump declares ("class Name" at the top level - not 'extend class', 'mixin class'
+// or class<T>) and the scripts it includes declare, as the parser resolves their paths. A lexer of its own, not
+// FScanner: only the top level is looked at, and what is inside braces (state frames like VILE [\], which FScanner
+// only takes in the state mode the grammar switches on) is skipped over.
+static void ScanScriptClasses(int lump, TMap<FName, bool>& classes, TArray<int>& visited)
 {
-	static const char* const files[] = {
-		"zscript/actors/doom/doomhealth.zs",			// Stimpack
-		"zscript/actors/doom/weaponplasma.zs",			// PlasmaRifle
-		"zscript/actors/hexen/scriptprojectiles.zs",	// Dart
-		"zscript/actors/strife/strifestuff.zs",			// MetalPot, WaterBottle
-		"zscript/actors/chex/chexitems.zs",				// (derive from doomhealth's classes)
-		"zscript/actors/chex/chexweapons.zs",			// (derives from PlasmaRifle)
-	};
-	for (auto file : files)
+	if (lump < 0 || visited.Find(lump) < visited.Size())
+		return;
+	visited.Push(lump);
+
+	TArray<FString> includes;
+	const FString scriptName = fileSystem.GetFileFullPath(lump).c_str();	// (as FScanner names it)
+	const FString text = GetStringFromLump(lump);
+	const char* p = text.GetChars();
+	const char* const end = p + text.Len();
+
+	auto isIdent = [](char c) { return isalnum((unsigned char)c) || c == '_'; };
+	auto skipQuoted = [&](char quote)	// p at the opening quote
 	{
-		if (include.CompareNoCase(file) == 0) return true;
+		for (p++; p < end && *p != quote; p++)
+			if (*p == '\\' && p + 1 < end) p++;
+		if (p < end) p++;
+	};
+
+	// the top level tokens: 'class' (not after 'extend' or 'mixin') -> the name; '#include' -> the path.
+	// Anything else in between ends a declaration (class<T> is none).
+	enum { Other, ClassKeyword, Include } state = Other;
+	FString previousWord;
+	int depth = 0;
+	while (p < end)
+	{
+		const char c = *p;
+		if (c == '/' && p + 1 < end && p[1] == '/')
+		{
+			while (p < end && *p != '\n') p++;
+			continue;
+		}
+		if (c == '/' && p + 1 < end && p[1] == '*')
+		{
+			p += 2;
+			while (p + 1 < end && !(p[0] == '*' && p[1] == '/')) p++;
+			p = p + 2 < end ? p + 2 : end;
+			continue;
+		}
+		if (isspace((unsigned char)c))
+		{
+			p++;
+			continue;
+		}
+		if (c == '"' || c == '\'')
+		{
+			const char* start = p + 1;
+			skipQuoted(c);
+			if (depth == 0 && state == Include && c == '"')
+				includes.Push(ResolveIncludePath(FString(start, size_t(p - start - 1)), scriptName));
+			if (depth == 0) { state = Other; previousWord = ""; }
+			continue;
+		}
+		if (c == '{' || c == '}')
+		{
+			depth = c == '{' ? depth + 1 : (depth > 0 ? depth - 1 : 0);
+			state = Other;
+			previousWord = "";
+			p++;
+			continue;
+		}
+		if (depth > 0)
+		{
+			p++;
+			continue;
+		}
+		if (isIdent(c) || c == '#')
+		{
+			const char* start = p++;
+			while (p < end && isIdent(*p)) p++;
+			const FString word(start, size_t(p - start));
+			if (state == ClassKeyword && isIdent(word[0]))
+			{
+				classes.Insert(FName(word.GetChars()), true);
+				state = Other;
+			}
+			else if (word.CompareNoCase("class") == 0 && previousWord.CompareNoCase("extend") != 0 && previousWord.CompareNoCase("mixin") != 0)
+				state = ClassKeyword;
+			else if (word.CompareNoCase("#include") == 0)
+				state = Include;
+			else
+				state = Other;
+			previousWord = word;
+			continue;
+		}
+		state = Other;
+		previousWord = "";
+		p++;
 	}
-	return false;
+
+	for (auto& include : includes)
+		ScanScriptClasses(fileSystem.CheckNumForFullName(include.GetChars(), true), classes, visited);
+}
+
+// While Selaco is the game: the classes of the engine's syntax tree that the game's scripts declare as well, and
+// those deriving from them, are taken out of it (with 'extend class' blocks of theirs) before it is compiled.
+// The rest of their files stays - e.g. strife/sentinel.zs extends Actor with A_SentinelBob for other classes.
+static void RemoveSelacoClashingClasses(ZCCParseState& state)
+{
+	if (state.TopNode == nullptr)
+		return;
+
+	TMap<FName, bool> gameClasses;
+	TArray<int> visited;
+	const int iwad = fileSystem.GetIwadNum();
+	int lump, lastlump = 0;
+	while ((lump = fileSystem.FindLump("ZSCRIPT", &lastlump)) != -1)
+	{
+		if (fileSystem.GetFileContainer(lump) == iwad)
+			ScanScriptClasses(lump, gameClasses, visited);
+	}
+
+	TArray<ZCC_Class*> classes;
+	ZCC_TreeNode* node = state.TopNode;
+	do
+	{
+		if (node->NodeType == AST_Class)
+			classes.Push(static_cast<ZCC_Class*>(node));
+		node = node->SiblingNext;
+	} while (node != state.TopNode);
+
+	TMap<FName, bool> removed;
+	bool changed = true;
+	while (changed)
+	{
+		changed = false;
+		for (auto cls : classes)
+		{
+			const FName name = cls->NodeName;
+			if ((cls->Flags & ZCC_Extension) || removed.CheckKey(name))
+				continue;
+			const FName parent = cls->ParentName ? FName(cls->ParentName->Id) : FName(NAME_None);
+			if (gameClasses.CheckKey(name) || (parent != NAME_None && removed.CheckKey(parent)))
+			{
+				removed.Insert(name, true);
+				changed = true;
+			}
+		}
+	}
+
+	for (auto cls : classes)
+	{
+		if (!removed.CheckKey(FName(cls->NodeName)))
+			continue;
+		if (!(cls->Flags & ZCC_Extension))
+			DPrintf(DMSG_NOTIFY, "Selaco: the engine's class %s is not compiled (the game has its own)\n", FName(cls->NodeName).GetChars());
+		if (state.TopNode == cls)
+			state.TopNode = cls->SiblingNext != cls ? cls->SiblingNext : nullptr;
+		cls->SiblingPrev->SiblingNext = cls->SiblingNext;
+		cls->SiblingNext->SiblingPrev = cls->SiblingPrev;
+		cls->SiblingNext = cls->SiblingPrev = cls;
+	}
 }
 
 PNamespace *ParseOneScript(const int baselump, ZCCParseState &state)
@@ -509,10 +654,6 @@ PNamespace *ParseOneScript(const int baselump, ZCCParseState &state)
 	ParseSingleFile(&sc, nullptr, lumpnum, parser, state);
 	for (unsigned i = 0; i < Includes.Size(); i++)
 	{
-		if (fileno == 0 && g_SelacoMode && IsSelacoSkippedEngineScript(Includes[i]))
-		{
-			continue;
-		}
 		lumpnum = fileSystem.CheckNumForFullName(Includes[i].GetChars(), true);
 		if (lumpnum == -1)
 		{
@@ -545,6 +686,9 @@ PNamespace *ParseOneScript(const int baselump, ZCCParseState &state)
 	{
 		I_Error("%d errors while parsing %s", FScriptPosition::ErrorCounter, fileSystem.GetFileFullPath(baselump).c_str());
 	}
+
+	if (fileno == 0 && g_SelacoMode)
+		RemoveSelacoClashingClasses(state);
 
 #ifndef NDEBUG
 	if (f != nullptr)

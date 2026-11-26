@@ -436,6 +436,10 @@ void ParseScripts()
 			// handled elsewhere when those classes are created.
 			for (auto cls : PClass::AllClasses)
 			{
+				// (not the classes only referenced so far, without defaults: e.g. Selaco's Chicken, named by
+				// artiegg.zs while the engine's class of that name is left out, comes with the game's scripts)
+				if (cls->Size == TentativeClass || cls->Defaults == nullptr)
+					continue;
 				if (cls->IsDescendantOf(NAME_Actor) && (GetDefaultByType(cls)->renderflags & RF_ZDOOMTRANS))
 					AutoTrans[cls->TypeName] = true;
 			}
