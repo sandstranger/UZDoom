@@ -283,7 +283,11 @@ namespace OpenGLESRenderer
 
 		// Compressed texture formats. ETC2 only on the GLES 3.0 path (and desktop GL 3.3+ with ES3 compatibility):
 		// the GLES 2.0 path uses GLES 2.0 features only, the BC images it cannot take as they are get decoded.
-		gles.s3tcTextures = CheckExtension("GL_EXT_texture_compression_s3tc");
+		// (ANGLE's S3TC: GL_EXT_texture_compression_dxt1 and GL_ANGLE_texture_compression_dxt5, the same formats - see
+		// gl_interface.cpp)
+		gles.s3tcTextures = CheckExtension("GL_EXT_texture_compression_s3tc") ||
+			(gles.esVersion > 0 && CheckExtension("GL_EXT_texture_compression_dxt1") &&
+				CheckExtension("GL_ANGLE_texture_compression_dxt5"));
 		gles.s3tcSRGBTextures = gles.esVersion > 0 ? CheckExtension("GL_EXT_texture_compression_s3tc_srgb") : gles.s3tcTextures;
 		gles.bptcTextures = gles.esVersion > 0 ? CheckExtension("GL_EXT_texture_compression_bptc") :
 			(glVersion >= 4.2 || CheckExtension("GL_ARB_texture_compression_bptc"));

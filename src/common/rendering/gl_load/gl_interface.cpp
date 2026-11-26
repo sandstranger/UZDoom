@@ -161,7 +161,11 @@ static void LoadESCapabilities()
 	gl.floatlinear = CheckExtension("GL_OES_texture_float_linear");
 	gl.bgra = CheckExtension("GL_EXT_texture_format_BGRA8888");
 	gl.texbptc = CheckExtension("GL_EXT_texture_compression_bptc");
-	gl.texs3tc = CheckExtension("GL_EXT_texture_compression_s3tc");
+	// S3TC (BC1, BC3): ANGLE names it its own way - GL_EXT_texture_compression_dxt1 and GL_ANGLE_texture_compression_dxt5
+	// (dxt3 too), not GL_EXT_texture_compression_s3tc - with the same formats (0x83F0-0x83F3): the BC images (Selaco's)
+	// are kept as they are there too, not transcoded to ETC2
+	gl.texs3tc = CheckExtension("GL_EXT_texture_compression_s3tc") ||
+		(CheckExtension("GL_EXT_texture_compression_dxt1") && CheckExtension("GL_ANGLE_texture_compression_dxt5"));
 	gl.texs3tcsrgb = CheckExtension("GL_EXT_texture_compression_s3tc_srgb");
 	gl.texetc2 = true;
 	gl.colorbuffer32f = CheckExtension("GL_EXT_color_buffer_float");
