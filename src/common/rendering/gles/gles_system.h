@@ -153,6 +153,8 @@ namespace OpenGLESRenderer
 		bool integerAttribs;	// glVertexAttribIPointer (GLES 3.0 / desktop GL 3.0)
 		bool invalidateFramebuffer;	// glInvalidateFramebuffer (GLES 3.0)
 		void *pDiscardFramebuffer;	// glDiscardFramebufferEXT (GLES 2.0 + EXT_discard_framebuffer)
+		bool programBinaryOES;	// GLES 2.0 path + GL_OES_get_program_binary: glProgramBinary/glGetProgramBinary are the OES ones
+		bool programBinaryHint;	// glProgramParameteri(GL_PROGRAM_BINARY_RETRIEVABLE_HINT) exists (GLES 3.0 / desktop GL), not with OES
 		int msrtt;				// multisampled render-to-texture: 0 none, 1 EXT, 2 IMG
 		int msrttMaxSamples;
 		void *pFramebufferTexture2DMultisample;

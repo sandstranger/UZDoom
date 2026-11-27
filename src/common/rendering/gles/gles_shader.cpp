@@ -72,10 +72,11 @@ bool IsShaderCacheActive()
 	if (!glProgramBinary || !glGetProgramBinary)
 		return false;
 #ifdef ANDROID
-	// GLES 2.0 path: glProgramBinary is ES 3.0 core; the OES entry points are not loaded.
-	if (gles.glesMode != GLES_MODE_GLES3)
+	// GLES 3.0 core, or the GLES 2.0 path with GL_OES_get_program_binary (gles_system.cpp loads its entry points
+	// in place of the core ones; GL_NUM_PROGRAM_BINARY_FORMATS has the same value as the _OES enum)
+	if (gles.glesMode != GLES_MODE_GLES3 && !gles.programBinaryOES)
 		return false;
-	// ES 3.0 core, but a driver may expose zero binary formats (then every binary is refused).
+	// A driver may expose zero binary formats (then every binary is refused).
 	static int numFormats = -1;
 	if (numFormats < 0)
 	{
@@ -211,7 +212,7 @@ static bool BuildProgram(GLuint program, const FString &vertexSource, const FStr
 	glBindAttribLocation(program, VATTR_INSTANCE_DYNLIGHT, "aInstDynLight");
 	glBindAttribLocation(program, VATTR_INSTANCE_COLORS, "aInstColors");
 
-	if (IsShaderCacheActive() && glProgramParameteri)
+	if (IsShaderCacheActive() && gles.programBinaryHint)	// (not with OES_get_program_binary: binaries are always retrievable)
 		glProgramParameteri(program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 	glLinkProgram(program);
 

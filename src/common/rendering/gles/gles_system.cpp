@@ -382,6 +382,26 @@ namespace OpenGLESRenderer
 			gles.lightmapUnit = units - gles.lightmapUnitCount;
 			if (gles.lightmapUnit < 1) gles.lightmapUnit = 1;
 		}
+		// The shader cache (program binaries): GLES 3.0 core, or on the GLES 2.0 path GL_OES_get_program_binary - the
+		// same calls and enums with an OES suffix. Its entry points take the place of the core ones there (which are
+		// not to be called on a GLES 2.0 context; without the extension the cache stays off).
+		gles.programBinaryOES = false;
+		gles.programBinaryHint = glProgramParameteri && !(!es3 && gles.esVersion > 0);
+		if (!es3 && gles.esVersion > 0)
+		{
+			_ptrc_glProgramBinary = nullptr;
+			_ptrc_glGetProgramBinary = nullptr;
+			if (CheckExtension("GL_OES_get_program_binary"))
+			{
+				_ptrc_glProgramBinary = (decltype(_ptrc_glProgramBinary))GetProc("glProgramBinaryOES");
+				_ptrc_glGetProgramBinary = (decltype(_ptrc_glGetProgramBinary))GetProc("glGetProgramBinaryOES");
+				gles.programBinaryOES = _ptrc_glProgramBinary && _ptrc_glGetProgramBinary;
+				if (!gles.programBinaryOES)
+					_ptrc_glProgramBinary = nullptr, _ptrc_glGetProgramBinary = nullptr;
+			}
+			Printf("GLES 2.0 shader cache: %s\n", gles.programBinaryOES ? "GL_OES_get_program_binary" : "not available");
+		}
+
 		gles.invalidateFramebuffer = es3 && glInvalidateFramebuffer;
 		gles.pDiscardFramebuffer = nullptr;
 		if (!es3 && gles.esVersion > 0)

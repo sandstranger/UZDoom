@@ -229,7 +229,7 @@ void FShaderProgram::Link(const char *name)
 		if (!mFailed) CompileShader(Fragment);
 		if (mFailed) return;
 
-		if (IsShaderCacheActive() && glProgramParameteri)
+		if (IsShaderCacheActive() && gles.programBinaryHint)	// (not with OES_get_program_binary: binaries are always retrievable)
 			glProgramParameteri(mProgram, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 		glLinkProgram(mProgram);
 
