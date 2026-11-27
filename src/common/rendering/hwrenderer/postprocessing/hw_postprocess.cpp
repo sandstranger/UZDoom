@@ -78,7 +78,7 @@ void PPBloom::UpdateTextures(int width, int height)
 void PPBloom::RenderBloom(PPRenderState *renderstate, int sceneWidth, int sceneHeight, int fixedcm)
 {
 	// Only bloom things if enabled and no special fixed light mode is active
-	if (!gl_bloom || fixedcm != CM_DEFAULT || gl_ssao_debug || sceneWidth <= 0 || sceneHeight <= 0)
+	if (HW_NO_HEAVY_EFFECTS || !gl_bloom || fixedcm != CM_DEFAULT || gl_ssao_debug || sceneWidth <= 0 || sceneHeight <= 0)
 	{
 		return;
 	}
@@ -304,7 +304,7 @@ void PPBloom::ComputeBlurSamples(int sampleCount, float blurAmount, float *sampl
 
 void PPLensDistort::Render(PPRenderState *renderstate)
 {
-	if (gl_lens == 0)
+	if (HW_NO_HEAVY_EFFECTS || gl_lens == 0)
 	{
 		return;
 	}
@@ -434,7 +434,7 @@ FString PPFXAA::GetDefines()
 void PPCameraExposure::Render(PPRenderState *renderstate, int sceneWidth, int sceneHeight)
 {
 	CameraTexture.KeepBackend = true;	// the exposure adapts from the previous frame's value
-	if (!gl_bloom)
+	if (HW_NO_HEAVY_EFFECTS || !gl_bloom)
 	{
 		return;
 	}
@@ -726,7 +726,7 @@ void PPAmbientOcclusion::UpdateTextures(int width, int height)
 
 void PPAmbientOcclusion::Render(PPRenderState *renderstate, float m5, int sceneWidth, int sceneHeight)
 {
-	if (gl_ssao == 0 || sceneWidth == 0 || sceneHeight == 0 || level_noAmbientOcclusion)
+	if (HW_NO_HEAVY_EFFECTS || gl_ssao == 0 || sceneWidth == 0 || sceneHeight == 0 || level_noAmbientOcclusion)
 	{
 		return;
 	}

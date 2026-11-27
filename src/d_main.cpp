@@ -4074,6 +4074,38 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<FileSys::ResourceN
 		}
 	}
 
+#ifdef __ANDROID__
+	// Android: Selaco's graphics settings are its "Low" preset (MENUDEF's GFXPresetLow) at every start. Its defaults
+	// (CVARINFO.defaults) are its "High": SSAO, shadow maps, bloom, lens, reflections, mirrors two deep, fog and film
+	// grain shaders, the most lights, particles and decals, xBRZ-upscaled textures - near 0 fps on a Mali G57.
+	// (SSAO, shadow maps, bloom and lens stay off in the renderer whatever is set later: HW_NO_HEAVY_EFFECTS.)
+	if (g_SelacoMode)
+	{
+		static const struct { const char *name, *value; } mobilesettings[] =
+		{
+			{ "r_shadowQuality", "1" }, { "gl_light_shadowmap", "0" }, { "gl_shadowmap_quality", "128" },
+			{ "gl_shadowmap_filter", "0" }, { "gl_fxaa", "0" }, { "r_waterquality", "1" }, { "gl_ssao", "0" },
+			{ "r_reflections", "0" }, { "cl_maxdecals", "250" }, { "r_ThingLOD", "700" }, { "smokeeffects", "0" },
+			{ "r_smokequality", "1" }, { "r_rainquality", "0" }, { "r_particleIntensity", "1" },
+			{ "r_particleLifespan", "1" }, { "r_BloodQuality", "0" }, { "lightingquality", "1" }, { "r_fogeffects", "0" },
+			{ "gl_bloom", "0" }, { "r_filmgrain", "0" }, { "gl_lens", "0" }, { "g_gamedetail", "1" },
+			{ "r_mirror_recursions", "1" }, { "r_muzzleflashShadows", "0" }, { "r_flashlightshadows", "0" },
+			{ "r_smokedensity", "1" }, { "gl_link_playerlights", "0" },
+			// not in the preset, Selaco's defaults: every texture upscaled (xBRZ) and 16x anisotropy
+			{ "gl_texture_hqresizemode", "0" }, { "gl_texture_filter_anisotropic", "4" },
+		};
+		for (auto& setting : mobilesettings)
+		{
+			if (auto cv = FindCVar(setting.name, nullptr))
+			{
+				UCVarValue val;
+				val.String = setting.value;
+				cv->SetGenericRep(val, CVAR_String);
+			}
+		}
+	}
+#endif
+
 	CLOCK_START
 	// [RH] Initialize localizable strings.
 	GStrings.LoadStrings(fileSystem, language);

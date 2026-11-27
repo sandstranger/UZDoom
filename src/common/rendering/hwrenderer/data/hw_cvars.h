@@ -26,6 +26,16 @@
 
 #include "c_cvars.h"
 
+// Android (tile-based GPUs): no screen space ambient occlusion, no shadow maps for dynamic lights, no bloom, no lens
+// distortion, whatever the settings say. Each is extra full screen passes over the scene (SSAO a G-buffer and several
+// blurs, shadow maps a pass per light) and a tiler pays them in memory bandwidth: with Selaco's defaults (SSAO 2,
+// shadow maps, bloom, lens) a Mali G57 was near 0 fps.
+#ifdef __ANDROID__
+#define HW_NO_HEAVY_EFFECTS 1
+#else
+#define HW_NO_HEAVY_EFFECTS 0
+#endif
+
 EXTERN_CVAR(Bool,gl_enhanced_nightvision)
 EXTERN_CVAR(Int, screenblocks);
 EXTERN_CVAR(Int, gl_texture_filter)
