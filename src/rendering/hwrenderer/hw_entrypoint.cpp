@@ -101,7 +101,7 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 
 	R_SetupFrame(mainvp, r_viewwindow, camera);
 
-	if (!HW_NO_HEAVY_EFFECTS && mainview && (toscreen || isSavePic) && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && gl_light_shadowmap && screen->allowSSBO() && (screen->hwcaps & RFL_SHADER_STORAGE_BUFFER))
+	if (mainview && (toscreen || isSavePic) && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && gl_light_shadowmap && screen->allowSSBO() && (screen->hwcaps & RFL_SHADER_STORAGE_BUFFER))
 	{
 		screen->SetAABBTree(camera->Level->aabbTree);
 		screen->mShadowMap.SetCollectLights([=] {
@@ -134,7 +134,7 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 
 		if (mainview) // Bind the scene frame buffer and turn on draw buffers used by ssao
 		{
-			bool useSSAO = (gl_ssao != 0) && !HW_NO_HEAVY_EFFECTS;
+			bool useSSAO = (gl_ssao != 0);
 			screen->SetSceneRenderTarget(useSSAO);
 			RenderState.SetPassType(useSSAO ? GBUFFER_PASS : NORMAL_PASS);
 			RenderState.EnableDrawBuffers(RenderState.GetPassDrawBufferCount(), true);
