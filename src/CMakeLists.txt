@@ -1351,6 +1351,14 @@ set_source_files_properties( common/engine/sc_man.cpp PROPERTIES OBJECT_DEPENDS 
 set_source_files_properties( ${NOT_COMPILED_SOURCE_FILES} PROPERTIES HEADER_FILE_ONLY TRUE )
 set_source_files_properties( ${GAME_NONPCH_SOURCES} common/textures/hires/hqresize.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE )
 
+if( ANDROID AND NOT HAVE_VM_JIT )
+	# No ZScript JIT on ARM (asmjit is x86 only): the interpreter runs every script, and the app builds everything -Os
+	# (MinSizeRel, its debug builds too). The interpreter loop, the VM's calls and the calls from scripts into the
+	# engine at -O3 (the last -O on the command line wins).
+	set_source_files_properties( common/scripting/vm/vmexec.cpp common/scripting/vm/vmframe.cpp
+		scripting/vmthunks.cpp scripting/vmthunks_actors.cpp PROPERTIES COMPILE_OPTIONS "-O3" )
+endif()
+
 option(ENABLE_IWYU "Enable Include-What-You-Use analysis" ON)
 if (ENABLE_IWYU)
 	find_program(IWYU NAMES include-what-you-use iwyu)
