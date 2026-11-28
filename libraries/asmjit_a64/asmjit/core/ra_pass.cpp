@@ -753,6 +753,20 @@ Error BaseRAPass::remove_unreachable_code() noexcept {
       block->set_first(before_first->next());
       block->set_last(after_last->prev());
     }
+
+    // UZDoom: unlink the block from the predecessors of its successors. An unreachable block that falls through
+    // into a reachable one stayed its predecessor, and build_liveness() walks predecessors: such a block never got
+    // live bits (it is not in the post order view), so it read a null span - an assertion in debug builds and a
+    // null pointer read in release builds. The dominator pass skips them already (no idom).
+    for (RABlock* successor : block->successors()) {
+      for (;;) {
+        size_t index = successor->_predecessors.index_of(block);
+        if (index == SIZE_MAX) {
+          break;
+        }
+        successor->_predecessors.remove_at(index);
+      }
+    }
   }
 
   return Error::kOk;

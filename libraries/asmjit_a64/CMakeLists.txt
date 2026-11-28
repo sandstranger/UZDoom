@@ -21,3 +21,8 @@ target_compile_features( asmjit_a64 PUBLIC cxx_std_17 )
 # Scripts are compiled when they are first called (and all of them at startup with vm_jit_aot), so the compiler's
 # own speed matters; the app builds everything else -Os. The last -O on the command line wins.
 target_compile_options( asmjit_a64 PRIVATE -O2 )
+
+if( ANDROID )
+	# Assertion messages go to logcat (asmjit/core/debug_utils.cpp)
+	target_link_libraries( asmjit_a64 PRIVATE log )
+endif()
