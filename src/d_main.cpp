@@ -4512,8 +4512,8 @@ static int D_DoomMain_Internal (void)
 {
 	const char *wad;
 	FIWadManager *iwad_man;
-	cycle_t startupClock;
-	startupClock.Clock();
+	// A steady clock: cycle_t started on clock_gettime here and stopped on the CPU counter I_Init calibrates in between
+	const uint64_t startupStartNS = I_nsTime();
 
 	NetworkEntityManager::NetIDStart = MAXPLAYERS + 1;
 	GC::AddMarkerFunc(GC_MarkGameRoots);
@@ -4741,8 +4741,7 @@ static int D_DoomMain_Internal (void)
 		iwad_man = NULL;
 		if (ret != 0) return ret;
 
-		startupClock.Unclock();
-		if (g_SelacoMode && !batchrun) Printf(TEXTCOLOR_YELLOW "Full startup in %.2fms\n", startupClock.TimeMS());
+		if (g_SelacoMode && !batchrun) Printf(TEXTCOLOR_YELLOW "Full startup in %.2fms\n", (I_nsTime() - startupStartNS) / 1e6);
 
 		statDatabase.update();	// @Cockatrice - Do at least one update before the game loop
 
