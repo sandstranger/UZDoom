@@ -357,9 +357,10 @@ private:
 
 	struct OpcodeLabel
 	{
-		asmjit::BaseNode *cursor = nullptr;
+		asmjit::BaseNode *cursor = nullptr; // null for instructions that the one before consumed
 		asmjit::Label label;
 		bool inUse = false;
+		bool stubEmitted = false;
 	};
 
 	asmjit::Label GetLabel(size_t pos)

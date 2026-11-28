@@ -34,6 +34,16 @@ extern PStruct* TypeFQuaternion;
 
 static void OutputJitLog(const asmjit::StringLogger &logger);
 
+// For asmjit's assertion messages (libraries/asmjit_a64/asmjit/core/debug_utils.cpp): the function being compiled
+static const char *JitCompilingFunction = nullptr;
+extern "C" const char *UZDoomJitCompilingFunction() { return JitCompilingFunction; }
+
+struct JitCompilingScope
+{
+	JitCompilingScope(VMScriptFunction *sfunc) { JitCompilingFunction = sfunc->PrintableName; }
+	~JitCompilingScope() { JitCompilingFunction = nullptr; }
+};
+
 JitFuncPtr JitCompile(VMScriptFunction *sfunc)
 {
 #if 0
@@ -42,6 +52,7 @@ JitFuncPtr JitCompile(VMScriptFunction *sfunc)
 #endif
 
 	using namespace asmjit;
+	JitCompilingScope compiling(sfunc);
 	try
 	{
 		ThrowingErrorHandler errorHandler;
@@ -219,12 +230,36 @@ void JitCompiler::EmitOpcode()
 
 void JitCompiler::BindLabels()
 {
-	asmjit::BaseNode *cursor = cc.cursor();
+	// Jumps to an instruction that the one before consumed (the JMP of a comparison, the JMPs of an IJMP table)
+	// have no code of its own to land on. They get a stub after the function body (which ends with a return, so
+	// nothing falls into it). Binding their labels at a null cursor would put them in front of the function.
 	unsigned int size = labels.Size();
+	bool added;
+	do
+	{
+		added = false;
+		for (unsigned int i = 0; i < size; i++)
+		{
+			if (labels[i].inUse && !labels[i].cursor && !labels[i].stubEmitted)
+			{
+				labels[i].stubEmitted = true;
+				added = true;
+
+				const VMOP *slot = sfunc->Code + i;
+				if (slot->op != OP_JMP)
+					I_Error("JIT: jump into the middle of an instruction (%s at %u)", OpNames[slot->op], i);
+
+				cc.bind(labels[i].label);
+				cc.b(GetLabel(i + 1 + JMPOFS(slot))); // may put more labels in use
+			}
+		}
+	} while (added);
+
+	asmjit::BaseNode *cursor = cc.cursor();
 	for (unsigned int i = 0; i < size; i++)
 	{
 		const OpcodeLabel &label = labels[i];
-		if (label.inUse)
+		if (label.inUse && label.cursor)
 		{
 			cc.set_cursor(label.cursor);
 			cc.bind(label.label);

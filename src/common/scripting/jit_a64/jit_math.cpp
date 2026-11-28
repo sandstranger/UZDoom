@@ -91,8 +91,10 @@ void JitCompiler::EmitCMPS()
 			else       cc.cbnz(result, fail);
 		}
 		else if (method == CMP_LT) {
-			if (check) cc.tbnz(result, asmjit::Imm(31), fail);
-			else       cc.tbz(result, asmjit::Imm(31), fail);
+			// Not TBNZ/TBZ, they only reach +-32 KB
+			cc.cmp(result, asmjit::Imm(0));
+			if (check) cc.b_lt(fail);
+			else       cc.b_ge(fail);
 		}
 		else {
 			cc.cmp(result, asmjit::Imm(0));

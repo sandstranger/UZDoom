@@ -210,8 +210,10 @@ void JitCompiler::EmitVMCall(Gp vmfunc, VMFunction *target)
 	call->set_arg(4, Imm(C));
 	call->set_inline_comment(target ? target->PrintableName : "VMCall");
 
-	// A negative result means the callee failed and left its exception with JitStashException
-	cc.tbnz(result, Imm(31), ErrorExitLabel());
+	// A negative result means the callee failed and left its exception with JitStashException.
+	// Not TBNZ: it only reaches +-32 KB, and the error exit is at the end of the function.
+	cc.cmp(result, Imm(0));
+	cc.b_lt(ErrorExitLabel());
 
 	LoadInOuts();
 	LoadReturns(pc + 1, C);
