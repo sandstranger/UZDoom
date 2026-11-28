@@ -375,6 +375,9 @@ include_directories( SYSTEM "${BZIP2_INCLUDE_DIR}" "${LZMA_INCLUDE_DIR}" "${ZMUS
 
 if( ${HAVE_VM_JIT} )
 	add_definitions( -DHAVE_VM_JIT )
+	if( HAVE_VM_JIT_A64 )
+		add_definitions( -DHAVE_VM_JIT_A64 -DASMJIT_STATIC -DASMJIT_NO_X86 -DASMJIT_NO_UJIT )
+	endif()
 	include_directories( SYSTEM "${ASMJIT_INCLUDE_DIR}" )
 	set( PROJECT_LIBRARIES ${PROJECT_LIBRARIES} "${ASMJIT_LIBRARIES}")
 endif()
@@ -620,6 +623,7 @@ file( GLOB HEADER_FILES
 	common/scripting/dap/Nodes/*.h
 	common/scripting/dap/Protocol/*.h
 	common/scripting/jit/*h
+	common/scripting/jit_a64/*h
 	common/scripting/interface/*.h
 	common/scripting/backend/*.h
 	common/scripting/frontend/*.h
@@ -710,6 +714,18 @@ set( NOT_COMPILED_SOURCE_FILES
 	common/platform/win32/zutil.natvis
 )
 
+if( HAVE_VM_JIT_A64 )
+set( VM_JIT_SOURCES
+	common/scripting/jit_a64/jit.cpp
+	common/scripting/jit_a64/jit_runtime.cpp
+	common/scripting/jit_a64/jit_call.cpp
+	common/scripting/jit_a64/jit_flow.cpp
+	common/scripting/jit_a64/jit_load.cpp
+	common/scripting/jit_a64/jit_math.cpp
+	common/scripting/jit_a64/jit_move.cpp
+	common/scripting/jit_a64/jit_store.cpp
+)
+else()
 set( VM_JIT_SOURCES
 	common/scripting/jit/jit.cpp
 	common/scripting/jit/jit_runtime.cpp
@@ -720,6 +736,7 @@ set( VM_JIT_SOURCES
 	common/scripting/jit/jit_move.cpp
 	common/scripting/jit/jit_store.cpp
 )
+endif()
 
 # Enable fast math for some sources
 set( FASTMATH_SOURCES
@@ -1351,12 +1368,16 @@ set_source_files_properties( common/engine/sc_man.cpp PROPERTIES OBJECT_DEPENDS 
 set_source_files_properties( ${NOT_COMPILED_SOURCE_FILES} PROPERTIES HEADER_FILE_ONLY TRUE )
 set_source_files_properties( ${GAME_NONPCH_SOURCES} common/textures/hires/hqresize.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE )
 
-if( ANDROID AND NOT HAVE_VM_JIT )
-	# No ZScript JIT on ARM (asmjit is x86 only): the interpreter runs every script, and the app builds everything -Os
-	# (MinSizeRel, its debug builds too). The interpreter loop, the VM's calls and the calls from scripts into the
-	# engine at -O3 (the last -O on the command line wins).
+if( ANDROID )
+	# The app builds everything -Os (MinSizeRel, its debug builds too). The interpreter loop (all scripts without a JIT;
+	# with one, the functions it refuses and everything when vm_jit is off), the VM's calls and the calls from scripts
+	# into the engine at -O3 (the last -O on the command line wins).
 	set_source_files_properties( common/scripting/vm/vmexec.cpp common/scripting/vm/vmframe.cpp
 		scripting/vmthunks.cpp scripting/vmthunks_actors.cpp PROPERTIES COMPILE_OPTIONS "-O3" )
+	if( HAVE_VM_JIT_A64 )
+		# The arm64 JIT compiles scripts at startup (vm_jit_aot) and on their first call, so its own speed shows
+		set_source_files_properties( ${VM_JIT_SOURCES} PROPERTIES COMPILE_OPTIONS "-O2" )
+	endif()
 endif()
 
 option(ENABLE_IWYU "Enable Include-What-You-Use analysis" ON)

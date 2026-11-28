@@ -47,6 +47,14 @@ extern FMemArena ClassDataAllocator;
 
 void JitRelease();
 
+#ifdef HAVE_VM_JIT_A64
+class VMFunction;
+struct VMReturn;
+struct VMValue;
+// Default VMFunction::JitCall: calls ScriptCall, catches any exception and returns -1 (jit_a64/jit_runtime.cpp)
+int JitCallNoThrow(VMFunction *func, VMValue *params, int numparams, VMReturn *ret, int numret);
+#endif
+
 extern void (*VM_CastSpriteIDToString)(FString* a, unsigned int b);
 
 
@@ -446,6 +454,14 @@ public:
 	TArray<uint32_t> ArgFlags;		// Should be the same length as Proto->ArgumentTypes
 
 	int(*ScriptCall)(VMFunction *func, VMValue *params, int numparams, VMReturn *ret, int numret) = nullptr;
+
+#ifdef HAVE_VM_JIT_A64
+	// What arm64 JIT code calls instead of ScriptCall. C++ exceptions must never unwind through JIT frames: the C++
+	// runtime (libc++_shared) has its own copy of the unwinder, which never sees the unwind info registered for JIT
+	// code. So this returns -1 instead of throwing, with the exception kept aside (jit_a64/jit_runtime.cpp). A JIT
+	// compiled function points it at its raw code and ScriptCall at a wrapper that rethrows for C++ callers.
+	int(*JitCall)(VMFunction *func, VMValue *params, int numparams, VMReturn *ret, int numret) = &JitCallNoThrow;
+#endif
 
 	VMFunction(FName name = NAME_None) : ImplicitArgs(0), Name(name), Proto(NULL)
 	{
